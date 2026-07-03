@@ -1,0 +1,20 @@
+{
+  "name": "ludo-rounds-server",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Read-only API for paginated Ludo round history.",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node --watch src/server.js",
+    "check": "node --check src/server.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "dotenv": "^16.5.0",
+    "express": "^5.1.0",
+    "mongodb": "^6.16.0"
+  }
+}

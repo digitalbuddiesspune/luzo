@@ -1,0 +1,78 @@
+spring:
+  config:
+    import: optional:file:.env[.properties]
+  application:
+    name: potludo-server
+  data:
+    mongodb:
+      uri: ${MONGODB_URI:mongodb://localhost:27017/potludo}
+      database: ${MONGODB_DATABASE:potludo}
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      username: ${REDIS_USERNAME:}
+      password: ${REDIS_PASSWORD:}
+      ssl:
+        enabled: ${REDIS_SSL_ENABLED:false}
+  rabbitmq:
+    addresses: ${AMQP_URI:amqp://guest:guest@localhost:5672}
+
+server:
+  port: ${PORT:8080}
+  forward-headers-strategy: framework
+
+management:
+  endpoint:
+    health:
+      probes:
+        enabled: true
+  health:
+    livenessstate:
+      enabled: true
+    readinessstate:
+      enabled: true
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus
+
+app:
+  session:
+    ttl-days: ${APP_SESSION_TTL_DAYS:30}
+  gameplay:
+    turn-timeout-seconds: ${APP_GAMEPLAY_TURN_TIMEOUT_SECONDS:30}
+    room-max-players: ${APP_GAMEPLAY_ROOM_MAX_PLAYERS:4}
+    online-entry-fee: ${APP_GAMEPLAY_ONLINE_ENTRY_FEE:100}
+    lobby-wait-millis: ${APP_GAMEPLAY_LOBBY_WAIT_MILLIS:60000}
+    online-pvp-real-player-threshold: ${APP_GAMEPLAY_ONLINE_PVP_REAL_PLAYER_THRESHOLD:25}
+    roll-delay-millis: ${APP_GAMEPLAY_ROLL_DELAY_MILLIS:700}
+    bot-move-delay-millis: ${APP_GAMEPLAY_BOT_MOVE_DELAY_MILLIS:850}
+    advance-delay-millis: ${APP_GAMEPLAY_ADVANCE_DELAY_MILLIS:750}
+  wallet:
+    currency: ${APP_WALLET_CURRENCY:INR}
+    guest-starting-balance: ${APP_WALLET_GUEST_STARTING_BALANCE:100000}
+    payout-rake-basis-points: ${APP_WALLET_PAYOUT_RAKE_BASIS_POINTS:0}
+    house-user-id: ${APP_WALLET_HOUSE_USER_ID:house}
+  operator:
+    base-url: ${APP_OPERATOR_BASE_URL:https://sp.adminsportal.com}
+    login-path: ${APP_OPERATOR_LOGIN_PATH:/operator/user/login}
+    user-detail-path: ${APP_OPERATOR_USER_DETAIL_PATH:/service/user/detail}
+    balance-path: ${APP_OPERATOR_BALANCE_PATH:/service/operator/user/balance/v2}
+    credit-exchange: ${APP_OPERATOR_CREDIT_EXCHANGE:/games/admin}
+    credit-queue-name: ${APP_OPERATOR_CREDIT_QUEUE_NAME:games_cashout}
+    credit-routing-key: ${APP_OPERATOR_CREDIT_ROUTING_KEY:games_cashout}
+    game-id: ${APP_OPERATOR_GAME_ID:2}
+  instance:
+    id: ${APP_INSTANCE_ID:}
+    lock-key-prefix: ${APP_INSTANCE_LOCK_KEY_PREFIX:potludo:lock}
+    heartbeat-key-prefix: ${APP_INSTANCE_HEARTBEAT_KEY_PREFIX:potludo:instance}
+    lock-ttl-millis: ${APP_INSTANCE_LOCK_TTL_MILLIS:5000}
+    heartbeat-ttl-millis: ${APP_INSTANCE_HEARTBEAT_TTL_MILLIS:15000}
+  realtime:
+    redis-channel: ${APP_REALTIME_REDIS_CHANNEL:potludo:realtime}
+    web-rtc:
+      ice-servers: ${APP_REALTIME_WEB_RTC_ICE_SERVERS:stun:stun.l.google.com:19302}
+      turn-username: ${APP_REALTIME_WEB_RTC_TURN_USERNAME:}
+      turn-credential: ${APP_REALTIME_WEB_RTC_TURN_CREDENTIAL:}
+  web:
+    allowed-origin-patterns: ${APP_WEB_ALLOWED_ORIGIN_PATTERNS:http://localhost:3000,http://127.0.0.1:3000,http://localhost:3005,http://127.0.0.1:3005,https://*.vercel.app}
