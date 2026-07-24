@@ -1,8 +1,8 @@
 @import "tailwindcss";
 
 :root {
-  --desktop-frame-width: 462px;
-  --screen-content-max-width: 27.5rem;
+  --desktop-frame-width: 520px;
+  --screen-content-max-width: 32rem;
   --app-background-image: url("/assets/MenuBg.png");
   --app-background-position: center top;
   --app-background-size: cover;
@@ -156,20 +156,19 @@ img {
   height: 100dvh;
   min-height: 100dvh;
   max-height: 100dvh;
-  overflow-x: hidden;
-  overflow-y: auto;
+  overflow: hidden;
   background: transparent;
 }
 
 .screen-board-match > .screen-content-shell {
-  --screen-pad-top: calc(0.95rem + env(safe-area-inset-top));
-  --screen-pad-right: calc(0.35rem + env(safe-area-inset-right));
-  --screen-pad-bottom: calc(1rem + env(safe-area-inset-bottom));
-  --screen-pad-left: calc(0.35rem + env(safe-area-inset-left));
+  --screen-pad-top: calc(0.55rem + env(safe-area-inset-top));
+  --screen-pad-right: calc(0.28rem + env(safe-area-inset-right));
+  --screen-pad-bottom: calc(0.7rem + env(safe-area-inset-bottom));
+  --screen-pad-left: calc(0.28rem + env(safe-area-inset-left));
   display: flex;
   flex-direction: column;
-  min-height: 100svh;
-  min-height: 100dvh;
+  min-height: 0;
+  height: 100%;
   padding-top: var(--screen-pad-top);
   padding-right: var(--screen-pad-right);
   padding-bottom: var(--screen-pad-bottom);
@@ -2088,8 +2087,8 @@ img {
   grid-template-rows: auto minmax(0, 1fr) auto;
   justify-items: center;
   align-items: stretch;
-  gap: 0.88rem;
-  padding-top: 2rem;
+  gap: 0.42rem;
+  padding-top: 0.55rem;
 }
 
 .screen-board-scrollable .board-screen-mobile {
@@ -2102,29 +2101,30 @@ img {
   grid-template-columns: repeat(2, minmax(0, 1fr));
   align-items: stretch;
   justify-content: space-between;
-  gap: 0.72rem;
+  gap: 0.55rem;
   width: 100%;
-  min-height: 9.45rem;
+  min-height: 0;
   padding-inline: 0;
 }
 
 .board-player-row-top {
-  margin-top: 0.2rem;
-  margin-bottom: 0.58rem;
+  margin-top: 0;
+  margin-bottom: 0.18rem;
 }
 
 .board-player-row-bottom {
-  margin-top: 0.26rem;
+  margin-top: 0.12rem;
 }
 
 .board-player-card {
   position: relative;
-  min-height: 9.45rem;
+  min-height: 0;
   display: flex;
   flex-direction: column;
-  padding: 0.64rem 0.68rem 0.95rem;
+  justify-content: center;
+  padding: 0.42rem 0.5rem 0.58rem;
   border: 0.13rem solid #72a9ff;
-  border-radius: 0.82rem;
+  border-radius: 0.72rem;
   background:
     radial-gradient(circle at 78% 18%, rgba(96, 151, 255, 0.18), transparent 42%),
     linear-gradient(180deg, rgba(44, 78, 156, 0.98) 0%, rgba(32, 66, 139, 0.98) 100%);
@@ -2183,7 +2183,7 @@ img {
 }
 
 .board-player-card-spacer {
-  min-height: 9.45rem;
+  min-height: 0;
 }
 
 .board-player-card.color-red {
@@ -2204,27 +2204,19 @@ img {
 
 .player-card-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(3.92rem, 42%);
-  align-items: start;
-  gap: 0.58rem;
-}
-
-.player-photo {
-  width: 100%;
-  aspect-ratio: 1;
-  border: 0;
-  border-radius: 0;
-  background: transparent;
-  object-fit: contain;
-  box-shadow: none;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.42rem;
 }
 
 .player-turn-column {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 0.42rem;
-  padding-top: 0.05rem;
+  gap: 0.22rem;
+  width: 3.15rem;
+  flex: 0 0 auto;
+  padding-top: 0;
 }
 
 .die-slot,
@@ -2234,59 +2226,44 @@ img {
   place-items: center;
   width: 100%;
   aspect-ratio: 1;
-  padding: 0.42rem;
-  border-radius: 0.72rem;
-  border: 0.12rem solid rgba(246, 219, 212, 0.95);
-  background: linear-gradient(
-    180deg,
-    rgba(255, 236, 231, 0.98) 0%,
-    rgba(226, 183, 177, 0.96) 100%
-  );
-  box-shadow:
-    inset 0 0 0 0.04rem rgba(255, 255, 255, 0.28),
-    0 0.26rem 0.58rem rgba(5, 20, 68, 0.2);
+  padding: 0.08rem;
+  border-radius: 0.55rem;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
   overflow: visible;
-  perspective: 14rem;
-  perspective-origin: 50% 20%;
-  transform-style: preserve-3d;
 }
 
-.die-face {
-  position: relative;
-  width: 82%;
+.die-image {
+  display: block;
+  width: 100%;
+  height: auto;
   aspect-ratio: 1;
-  border-radius: 0.82rem;
-  border: 0.16rem solid #c9151d;
-  background:
-    radial-gradient(circle at 34% 24%, rgba(255, 116, 116, 0.62), transparent 44%),
-    linear-gradient(135deg, #ff343b 0%, #ff4a4d 48%, #e72a2f 100%);
-  box-shadow:
-    inset 0.18rem 0.14rem 0.28rem rgba(255, 255, 255, 0.14),
-    inset -0.22rem -0.18rem 0.34rem rgba(147, 0, 12, 0.22),
-    0 0.16rem 0.32rem rgba(80, 0, 10, 0.18);
-  transform-origin: center;
-  transform-style: preserve-3d;
+  object-fit: contain;
+  filter: drop-shadow(0 0.18rem 0.28rem rgba(5, 20, 68, 0.28));
+  user-select: none;
+  pointer-events: none;
 }
 
-.die-face-shell.is-active {
-  box-shadow:
-    inset 0 0 0 0.05rem rgba(255, 255, 255, 0.28),
-    0 0 0.85rem rgba(182, 255, 213, 0.22);
+.die-face-shell.is-active .die-image {
+  filter: drop-shadow(0 0 0.55rem rgba(182, 255, 213, 0.42))
+    drop-shadow(0 0.18rem 0.28rem rgba(5, 20, 68, 0.28));
 }
 
 .die-roll-button {
   position: relative;
   animation: diceTapPulse 1.1s ease-in-out infinite;
   touch-action: manipulation;
+  cursor: pointer;
 }
 
 .die-roll-button::before {
   content: "";
   position: absolute;
-  inset: -0.18rem;
+  inset: -0.12rem;
   z-index: -1;
-  border-radius: 0.9rem;
-  background: rgba(255, 236, 126, 0.24);
+  border-radius: 0.72rem;
+  background: rgba(255, 236, 126, 0.22);
   box-shadow:
     0 0 0 0 rgba(255, 240, 150, 0.44),
     0 0 0.72rem rgba(255, 226, 93, 0.34);
@@ -2299,79 +2276,9 @@ img {
   animation: dicePlatformRoll 520ms ease-in-out infinite;
 }
 
-.die-face-shell.is-rolling::after {
-  content: "";
-  position: absolute;
-  left: 24%;
-  right: 24%;
-  bottom: 19%;
-  height: 0.42rem;
-  border-radius: 999px;
-  background: rgba(70, 0, 12, 0.34);
-  filter: blur(0.16rem);
-  animation: diceLiftShadow 520ms ease-in-out infinite;
-}
-
-.die-cube {
-  --die-cube-depth: clamp(1.16rem, 5.7vw, 1.52rem);
-  position: relative;
-  z-index: 2;
-  width: 78%;
-  aspect-ratio: 1;
-  transform-style: preserve-3d;
-  animation: diceCubeTumble 680ms cubic-bezier(0.18, 0.02, 0.18, 1) infinite;
-  filter: drop-shadow(0 0.5rem 0.34rem rgba(63, 0, 10, 0.34));
+.die-image.is-tumbling {
+  animation: diceFaceTumble 680ms cubic-bezier(0.18, 0.02, 0.18, 1) infinite;
   will-change: transform;
-}
-
-.die-cube-face {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  backface-visibility: hidden;
-  box-shadow:
-    inset 0.18rem 0.14rem 0.28rem rgba(255, 255, 255, 0.2),
-    inset -0.22rem -0.18rem 0.34rem rgba(147, 0, 12, 0.28),
-    0 0.22rem 0.46rem rgba(80, 0, 10, 0.28);
-}
-
-.die-cube-face-2,
-.die-cube-face-5 {
-  filter: brightness(0.9);
-}
-
-.die-cube-face-3 {
-  filter: brightness(1.08);
-}
-
-.die-cube-face-4,
-.die-cube-face-6 {
-  filter: brightness(0.82);
-}
-
-.die-cube-face-1 {
-  transform: translateZ(var(--die-cube-depth));
-}
-
-.die-cube-face-2 {
-  transform: rotateY(90deg) translateZ(var(--die-cube-depth));
-}
-
-.die-cube-face-3 {
-  transform: rotateX(90deg) translateZ(var(--die-cube-depth));
-}
-
-.die-cube-face-4 {
-  transform: rotateX(-90deg) translateZ(var(--die-cube-depth));
-}
-
-.die-cube-face-5 {
-  transform: rotateY(-90deg) translateZ(var(--die-cube-depth));
-}
-
-.die-cube-face-6 {
-  transform: rotateY(180deg) translateZ(var(--die-cube-depth));
 }
 
 @keyframes diceTapPulse {
@@ -2430,132 +2337,57 @@ img {
   }
 }
 
-@keyframes diceLiftShadow {
-  0%,
-  100% {
-    opacity: 0.34;
-    transform: scaleX(1);
-  }
-
-  35% {
-    opacity: 0.18;
-    transform: scaleX(0.58);
-  }
-
-  70% {
-    opacity: 0.24;
-    transform: scaleX(0.74);
-  }
-}
-
-@keyframes diceCubeTumble {
+@keyframes diceFaceTumble {
   0% {
-    transform: translate3d(0, -0.28rem, 1.2rem) rotateX(-22deg) rotateY(18deg)
-      rotateZ(0deg);
+    transform: translateY(-0.12rem) rotate(-18deg) scale(1.02);
   }
 
-  18% {
-    transform: translate3d(0.06rem, -0.74rem, 1.9rem) rotateX(104deg)
-      rotateY(142deg) rotateZ(21deg);
+  25% {
+    transform: translateY(-0.38rem) rotate(42deg) scale(1.08);
   }
 
-  38% {
-    transform: translate3d(-0.08rem, -0.52rem, 1.62rem) rotateX(218deg)
-      rotateY(264deg) rotateZ(-18deg);
+  50% {
+    transform: translateY(-0.2rem) rotate(118deg) scale(1.04);
   }
 
-  62% {
-    transform: translate3d(0.08rem, -0.82rem, 2.05rem) rotateX(336deg)
-      rotateY(388deg) rotateZ(28deg);
-  }
-
-  82% {
-    transform: translate3d(-0.04rem, -0.46rem, 1.48rem) rotateX(454deg)
-      rotateY(516deg) rotateZ(-14deg);
+  75% {
+    transform: translateY(-0.42rem) rotate(212deg) scale(1.1);
   }
 
   100% {
-    transform: translate3d(0, -0.28rem, 1.2rem) rotateX(576deg)
-      rotateY(648deg) rotateZ(0deg);
+    transform: translateY(-0.12rem) rotate(342deg) scale(1.02);
   }
 }
 
 @media (prefers-reduced-motion: reduce) {
   .die-face-shell.is-rolling,
-  .die-cube {
+  .die-image.is-tumbling {
     animation-duration: 900ms;
   }
-}
-
-.die-pip {
-  position: absolute;
-  width: 0.36rem;
-  height: 0.36rem;
-  border-radius: 50%;
-  background: #f8ece4;
-  box-shadow:
-    inset 0 -0.04rem 0 rgba(129, 20, 24, 0.22),
-    0 0 0 0.05rem rgba(168, 14, 22, 0.8);
-}
-
-.pip-tl {
-  left: 20%;
-  top: 20%;
-}
-
-.pip-tr {
-  right: 20%;
-  top: 20%;
-}
-
-.pip-c {
-  left: 50%;
-  top: 50%;
-  transform: translate(-50%, -50%);
-}
-
-.pip-bl {
-  left: 20%;
-  bottom: 20%;
-}
-
-.pip-br {
-  right: 20%;
-  bottom: 20%;
-}
-
-.pip-ml {
-  left: 20%;
-  top: 50%;
-  transform: translateY(-50%);
-}
-
-.pip-mr {
-  right: 20%;
-  top: 50%;
-  transform: translateY(-50%);
 }
 
 .player-card-copy {
   display: flex;
   flex-direction: column;
-  min-height: 2.18rem;
-  gap: 0.12rem;
-  margin-top: 0.52rem;
+  min-height: 0;
+  gap: 0;
+  margin-top: 0;
+  min-width: 0;
 }
 
 .player-card-name-row {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 0.5rem;
+  justify-content: flex-start;
+  gap: 0.35rem;
+  min-width: 0;
 }
 
 .player-card-copy strong {
-  min-height: 1.85rem;
-  font-size: clamp(1.05rem, 5.2vw, 1.42rem);
+  min-height: 0;
+  font-size: clamp(0.92rem, 3.8vw, 1.12rem);
   font-weight: 800;
-  line-height: 1.08;
+  line-height: 1.1;
   color: #f5f1e7;
   white-space: nowrap;
   overflow: hidden;
@@ -2582,8 +2414,8 @@ img {
   position: absolute;
   left: 0.02rem;
   right: 0.02rem;
-  bottom: -0.72rem;
-  height: 0.16rem;
+  bottom: -0.42rem;
+  height: 0.14rem;
   overflow: hidden;
   border-radius: 999px;
   background: rgba(135, 177, 255, 0.72);
@@ -2622,13 +2454,13 @@ img {
 .player-token-dots {
   display: flex;
   justify-content: center;
-  gap: 0.34rem;
-  min-height: 0.64rem;
+  gap: 0.2rem;
+  min-height: 0.42rem;
 }
 
 .player-token-dots span {
-  width: 0.58rem;
-  height: 0.58rem;
+  width: 0.42rem;
+  height: 0.42rem;
   border-radius: 999px;
   box-shadow:
     inset 0 0.08rem 0.12rem rgba(255, 255, 255, 0.24),
@@ -2671,8 +2503,8 @@ img {
 }
 
 .ludo-board-frame {
-  width: min(100%, 27.6rem);
-  max-width: min(100%, 27.6rem);
+  width: min(100%, 32rem);
+  max-width: min(100%, 32rem);
   max-height: 100%;
   aspect-ratio: 1;
   display: flex;
@@ -2835,8 +2667,9 @@ img {
   left: 50%;
   top: 50%;
   display: block;
-  width: 76%;
-  height: 90%;
+  width: 62%;
+  height: auto;
+  aspect-ratio: 100 / 125;
   object-fit: contain;
   object-position: center center;
   transform: translate(-50%, -50%)
@@ -2881,7 +2714,7 @@ img {
   min-height: 0;
   border-radius: 0;
   border: 0;
-  overflow: hidden;
+  overflow: visible;
 }
 
 .board-cell.is-path {
@@ -2962,18 +2795,26 @@ img {
   transform: translate(-50%, -50%);
 }
 
+.board-token,
+.house-token,
+.captured-token-overlay {
+  image-rendering: auto;
+  -webkit-user-drag: none;
+}
+
 .board-token {
   --board-token-scale: 1;
   position: absolute;
   left: 50%;
   top: 50%;
-  width: 74%;
-  height: 96%;
+  width: 100%;
+  height: auto;
+  aspect-ratio: 100 / 125;
   object-fit: contain;
-  transform: translate(-50%, -60%)
+  transform: translate(-50%, -74%)
     rotate(var(--token-upright-rotation, 0deg))
     scale(var(--board-token-scale));
-  transform-origin: center 60%;
+  transform-origin: center center;
   z-index: 3;
   filter: drop-shadow(0 0.04rem 0.08rem rgba(0, 0, 0, 0.28));
   transition:
@@ -2982,7 +2823,7 @@ img {
 }
 
 .board-token.is-user-turn-token {
-  --board-token-scale: 1.16;
+  --board-token-scale: 1;
   z-index: 5;
   filter:
     drop-shadow(0 0 0.1rem rgba(255, 255, 255, 0.58))
@@ -2994,12 +2835,13 @@ img {
   position: absolute;
   left: 50%;
   top: 50%;
-  width: 82%;
-  height: 104%;
+  width: 100%;
+  height: auto;
+  aspect-ratio: 100 / 125;
   padding: 0;
   border: 0;
   background: transparent;
-  transform: translate(-50%, -60%);
+  transform: translate(-50%, -74%);
   z-index: 4;
   touch-action: manipulation;
 }
@@ -3007,19 +2849,20 @@ img {
 .board-token-button .board-token {
   position: static;
   width: 100%;
-  height: 100%;
+  height: auto;
   transform: rotate(var(--token-upright-rotation, 0deg))
     scale(var(--board-token-scale));
 }
 
 .captured-token-overlay {
   position: absolute;
-  width: calc(var(--board-cell-size) * 0.74);
-  height: calc(var(--board-cell-size) * 0.96);
+  width: calc(100% / 15);
+  height: auto;
+  aspect-ratio: 100 / 125;
   object-fit: contain;
-  transform: translate(-50%, -60%)
+  transform: translate(-50%, -74%)
     rotate(var(--token-upright-rotation, 0deg));
-  transform-origin: center 60%;
+  transform-origin: center center;
   z-index: 6;
   pointer-events: none;
   filter: drop-shadow(0 0.04rem 0.08rem rgba(0, 0, 0, 0.28));
@@ -3234,7 +3077,15 @@ img {
     height: calc(100dvh - 1.5rem);
     min-height: calc(100dvh - 1.5rem);
     max-height: calc(100dvh - 1.5rem);
+  }
+
+  .screen-menu.portrait-device,
+  .screen-board-scrollable.portrait-device {
     overflow-y: auto;
+  }
+
+  .screen-board-match.portrait-device {
+    overflow: hidden;
   }
 }
 
@@ -3253,9 +3104,9 @@ img {
   }
 
   .screen-board-match > .screen-content-shell {
-    --screen-pad-top: calc(0.82rem + env(safe-area-inset-top));
+    --screen-pad-top: calc(0.45rem + env(safe-area-inset-top));
     --screen-pad-right: calc(0.08rem + env(safe-area-inset-right));
-    --screen-pad-bottom: calc(0.9rem + env(safe-area-inset-bottom));
+    --screen-pad-bottom: calc(0.55rem + env(safe-area-inset-bottom));
     --screen-pad-left: calc(0.08rem + env(safe-area-inset-left));
   }
 
@@ -3284,52 +3135,52 @@ img {
   }
 
   .board-screen-mobile {
-    gap: 1.22rem;
-    padding-top: 1.7rem;
+    gap: 0.38rem;
+    padding-top: 0.42rem;
   }
 
   .board-player-row-top {
-    margin-bottom: 0.5rem;
+    margin-bottom: 0.14rem;
   }
 
   .board-player-row-bottom {
-    margin-top: 0.2rem;
+    margin-top: 0.1rem;
   }
 
   .board-player-row {
-    gap: 0.6rem;
-    min-height: 8.7rem;
+    gap: 0.45rem;
+    min-height: 0;
   }
 
   .board-player-card {
-    min-height: 8.7rem;
-    padding: 0.52rem 0.54rem 0.9rem;
+    min-height: 0;
+    padding: 0.36rem 0.42rem 0.48rem;
   }
 
   .board-player-card-spacer {
-    min-height: 8.7rem;
+    min-height: 0;
   }
 
-  .player-card-row {
-    grid-template-columns: minmax(0, 1fr) minmax(3.6rem, 42%);
-    gap: 0.48rem;
+  .player-turn-column {
+    width: 2.85rem;
   }
 
   .player-card-copy strong {
-    font-size: clamp(0.98rem, 4.7vw, 1.28rem);
+    font-size: clamp(0.86rem, 3.6vw, 1.02rem);
   }
 
   .player-token-dots {
-    gap: 0.24rem;
+    gap: 0.16rem;
   }
 
   .player-token-dots span {
-    width: 0.48rem;
-    height: 0.48rem;
+    width: 0.36rem;
+    height: 0.36rem;
   }
 
   .ludo-board-frame {
-    width: min(100%, 24rem);
+    width: min(100%, 30rem);
+    max-width: min(100%, 30rem);
     padding: 0;
     border-radius: 0;
   }
@@ -3403,49 +3254,49 @@ img {
   }
 
   .board-screen-mobile {
-    gap: 1.05rem;
-    padding-top: 1.45rem;
+    gap: 0.28rem;
+    padding-top: 0.28rem;
   }
 
   .board-player-row {
-    gap: 0.45rem;
-    min-height: 7.9rem;
+    gap: 0.34rem;
+    min-height: 0;
   }
 
   .board-player-row-top {
-    margin-bottom: 0.42rem;
+    margin-bottom: 0.08rem;
   }
 
   .board-player-row-bottom {
-    margin-top: 0.14rem;
+    margin-top: 0.06rem;
   }
 
   .board-player-card,
   .board-player-card-spacer {
-    min-height: 7.9rem;
+    min-height: 0;
   }
 
   .board-player-card {
-    padding: 0.42rem 0.45rem 0.82rem;
+    padding: 0.3rem 0.34rem 0.4rem;
   }
 
-  .player-card-row {
-    grid-template-columns: minmax(0, 1fr) minmax(3.05rem, 41%);
-    gap: 0.34rem;
+  .player-turn-column {
+    width: 2.55rem;
   }
 
   .player-card-copy strong {
-    min-height: 1.55rem;
-    font-size: clamp(0.86rem, 4.5vw, 1.05rem);
+    min-height: 0;
+    font-size: clamp(0.78rem, 3.4vw, 0.94rem);
   }
 
   .player-token-dots span {
-    width: 0.4rem;
-    height: 0.4rem;
+    width: 0.32rem;
+    height: 0.32rem;
   }
 
   .ludo-board-frame {
-    width: min(100%, 21rem);
+    width: min(100%, 26.5rem);
+    max-width: min(100%, 26.5rem);
     padding: 0;
     border-radius: 0;
   }
@@ -3461,6 +3312,19 @@ img {
     --home-options-gap: min(5vw, 1.2rem);
     --home-options-gap-top: 0.5rem;
     padding-bottom: 1rem;
+  }
+
+  .board-screen-mobile {
+    gap: 0.24rem;
+    padding-top: 0.2rem;
+  }
+
+  .player-turn-column {
+    width: 2.4rem;
+  }
+
+  .board-player-card {
+    padding: 0.28rem 0.32rem 0.36rem;
   }
 }
 

@@ -161,10 +161,10 @@ const SAFE_STAR_ASSETS = {
 };
 
 const TOKEN_ASSETS = {
-  red: "/assets/GameRedToken.png",
-  green: "/assets/GameGreenToken.png",
-  yellow: "/assets/GameYellowToken.png",
-  blue: "/assets/GameBlueToken.png",
+  red: "/assets/ludo_pin_red.svg",
+  green: "/assets/ludo_pin_green.svg",
+  yellow: "/assets/ludo_pin_yellow.svg",
+  blue: "/assets/ludo_pin_blue.svg",
 };
 
 const HOME_ASSETS = {
@@ -211,13 +211,13 @@ const YARD_LOOKUP = new Map(
   ),
 );
 
-const DICE_PIP_MAP = {
-  1: ["c"],
-  2: ["tl", "br"],
-  3: ["tl", "c", "br"],
-  4: ["tl", "tr", "bl", "br"],
-  5: ["tl", "tr", "c", "bl", "br"],
-  6: ["tl", "tr", "ml", "mr", "bl", "br"],
+const DICE_ASSETS = {
+  1: "/assets/dice-1.svg",
+  2: "/assets/dice-2.svg",
+  3: "/assets/dice-3.svg",
+  4: "/assets/dice-4.svg",
+  5: "/assets/dice-5.svg",
+  6: "/assets/dice-6.svg",
 };
 
 const BOT_NAME_BY_COLOR = {
@@ -1176,10 +1176,6 @@ function formatCountdown(totalMilliseconds) {
   const minutes = Math.floor(totalSeconds / 60);
   const seconds = totalSeconds % 60;
   return `${minutes}:${String(seconds).padStart(2, "0")}`;
-}
-
-function getPlayerAvatarUrl(seed) {
-  return `https://api.dicebear.com/9.x/adventurer-neutral/svg?seed=${encodeURIComponent(seed || "player")}&backgroundColor=transparent&radius=0&scale=92`;
 }
 
 function buildRuntimeAppState(baseAppState, session, wallet) {
@@ -2357,35 +2353,42 @@ function HistorySideDrawer({ isOpen, history = [], onClose }) {
   );
 }
 
-function DicePips({ value }) {
-  const safeValue = Math.min(6, Math.max(1, value || 1));
-
-  return DICE_PIP_MAP[safeValue].map((pip) => (
-    <span key={pip} className={`die-pip pip-${pip}`} />
-  ));
+function getDiceAsset(value) {
+  const safeValue = Math.min(6, Math.max(1, Number(value) || 1));
+  return DICE_ASSETS[safeValue];
 }
 
-function DiceCube() {
+function DiceImage({ value, className = "" }) {
   return (
-    <div className="die-cube" aria-hidden="true">
-      {[1, 2, 3, 4, 5, 6].map((faceValue) => (
-        <div
-          key={faceValue}
-          className={`die-face die-cube-face die-cube-face-${faceValue}`}
-        >
-          <DicePips value={faceValue} />
-        </div>
-      ))}
-    </div>
+    <img
+      className={`die-image ${className}`.trim()}
+      src={getDiceAsset(value)}
+      alt={`Dice showing ${Math.min(6, Math.max(1, Number(value) || 1))}`}
+      width={72}
+      height={72}
+      draggable={false}
+    />
   );
+}
+
+function RollingDiceImage() {
+  const [face, setFace] = useState(1);
+
+  useEffect(() => {
+    const intervalId = window.setInterval(() => {
+      setFace((current) => (current % 6) + 1);
+    }, 70);
+
+    return () => window.clearInterval(intervalId);
+  }, []);
+
+  return <DiceImage value={face} className="is-tumbling" />;
 }
 
 function DieFace({ value, active }) {
   return (
     <div className={`die-face-shell ${active ? "is-active" : ""}`}>
-      <div className="die-face">
-        <DicePips value={value} />
-      </div>
+      <DiceImage value={value} />
     </div>
   );
 }
@@ -2401,13 +2404,7 @@ function RollDiceButton({ value, onRollDice, rolling = false }) {
       disabled={rolling}
       aria-label="Roll dice"
     >
-      {rolling ? (
-        <DiceCube />
-      ) : (
-        <div className="die-face">
-          <DicePips value={value} />
-        </div>
-      )}
+      {rolling ? <RollingDiceImage /> : <DiceImage value={value} />}
     </button>
   );
 }
@@ -2454,17 +2451,12 @@ function PlayerStatusCard({
         </div>
       ) : null}
       <div className="player-card-row">
-        <img
-          className="player-photo"
-          src={getPlayerAvatarUrl(player.id || player.name)}
-          alt={`${player.name} avatar`}
-          width={72}
-          height={82}
-          draggable={false}
-          onError={(event) => {
-            event.currentTarget.src = getPlayerAvatarUrl("fallback-player");
-          }}
-        />
+        <div className="player-card-copy">
+          <div className="player-card-name-row">
+            <strong>{player.name}</strong>
+            {isUser ? <span className="player-you-badge">You</span> : null}
+          </div>
+        </div>
 
         <div className="player-turn-column">
           {diceSlot}
@@ -2485,17 +2477,11 @@ function PlayerStatusCard({
         </div>
       </div>
 
-      <div className="player-card-copy">
-        <div className="player-card-name-row">
-          <strong>{player.name}</strong>
-          {isUser ? <span className="player-you-badge">You</span> : null}
-        </div>
-        <div
-          className={`player-turn-timer ${isCurrentTurn ? "is-active" : ""}`}
-          aria-hidden="true"
-        >
-          <span style={{ transform: `scaleX(${turnProgress})` }} />
-        </div>
+      <div
+        className={`player-turn-timer ${isCurrentTurn ? "is-active" : ""}`}
+        aria-hidden="true"
+      >
+        <span style={{ transform: `scaleX(${turnProgress})` }} />
       </div>
     </article>
   );
@@ -2514,8 +2500,8 @@ function BoardToken({
       className={`board-token ${isSelectable ? "is-selectable" : `stack-${stackIndex}`} ${isUserTurnToken ? "is-user-turn-token" : ""}`}
       src={TOKEN_ASSETS[color]}
       alt=""
-      width={16}
-      height={16}
+      width={100}
+      height={125}
       draggable={false}
     />
   );
@@ -2543,8 +2529,8 @@ function HouseToken({ color, isSelectable, onSelect }) {
       className={`house-token ${isSelectable ? "is-selectable" : ""}`}
       src={TOKEN_ASSETS[color]}
       alt=""
-      width={16}
-      height={16}
+      width={100}
+      height={125}
       draggable={false}
     />
   );
@@ -2960,8 +2946,8 @@ function LudoBoard({
             className="captured-token-overlay"
             src={TOKEN_ASSETS[animation.color]}
             alt=""
-            width={16}
-            height={16}
+            width={100}
+            height={125}
             draggable={false}
             style={{
               left: `${animation.position.left}%`,
