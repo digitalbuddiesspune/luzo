@@ -2807,16 +2807,18 @@ img {
   position: absolute;
   left: 50%;
   top: 50%;
-  width: 100%;
+  /* ~72% cell wide → ~90% tall; tip stays inside square */
+  width: 72%;
   height: auto;
   aspect-ratio: 100 / 125;
   object-fit: contain;
-  transform: translate(-50%, -74%)
+  object-position: center center;
+  transform: translate(-50%, -56%)
     rotate(var(--token-upright-rotation, 0deg))
     scale(var(--board-token-scale));
   transform-origin: center center;
   z-index: 3;
-  filter: drop-shadow(0 0.04rem 0.08rem rgba(0, 0, 0, 0.28));
+  filter: drop-shadow(0 0.03rem 0.05rem rgba(0, 0, 0, 0.24));
   transition:
     transform 120ms ease,
     filter 120ms ease;
@@ -2828,20 +2830,20 @@ img {
   filter:
     drop-shadow(0 0 0.1rem rgba(255, 255, 255, 0.58))
     drop-shadow(0 0 0.34rem rgba(255, 232, 105, 0.72))
-    drop-shadow(0 0.06rem 0.1rem rgba(0, 0, 0, 0.32));
+    drop-shadow(0 0.04rem 0.08rem rgba(0, 0, 0, 0.28));
 }
 
 .board-token-button {
   position: absolute;
   left: 50%;
   top: 50%;
-  width: 100%;
+  width: 72%;
   height: auto;
   aspect-ratio: 100 / 125;
   padding: 0;
   border: 0;
   background: transparent;
-  transform: translate(-50%, -74%);
+  transform: translate(-50%, -56%);
   z-index: 4;
   touch-action: manipulation;
 }
@@ -2856,16 +2858,17 @@ img {
 
 .captured-token-overlay {
   position: absolute;
-  width: calc(100% / 15);
+  width: calc(100% / 15 * 0.72);
   height: auto;
   aspect-ratio: 100 / 125;
   object-fit: contain;
-  transform: translate(-50%, -74%)
+  object-position: center center;
+  transform: translate(-50%, -56%)
     rotate(var(--token-upright-rotation, 0deg));
   transform-origin: center center;
   z-index: 6;
   pointer-events: none;
-  filter: drop-shadow(0 0.04rem 0.08rem rgba(0, 0, 0, 0.28));
+  filter: drop-shadow(0 0.03rem 0.05rem rgba(0, 0, 0, 0.24));
   transition:
     left 70ms linear,
     top 70ms linear;
