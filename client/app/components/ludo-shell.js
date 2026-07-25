@@ -412,13 +412,22 @@ const soundController = {
       return;
     }
 
+    const start = context.currentTime;
     this.pulse({
-      frequency: 360,
-      slideTo: 300,
-      duration: 0.04,
-      gain: 0.014,
+      frequency: 210,
+      slideTo: 150,
+      duration: 0.055,
+      gain: 0.045,
       type: "square",
-      startTime: context.currentTime,
+      startTime: start,
+    });
+    this.pulse({
+      frequency: 480,
+      slideTo: 320,
+      duration: 0.04,
+      gain: 0.028,
+      type: "triangle",
+      startTime: start + 0.018,
     });
   },
 
@@ -586,6 +595,36 @@ function getMovableTokenIndexes(player, diceValue) {
 
     return movable;
   }, []);
+}
+
+function resolveForcedAutoMoveToken(player, selectableTokenIndexes) {
+  if (!selectableTokenIndexes?.length) {
+    return null;
+  }
+
+  if (selectableTokenIndexes.length === 1) {
+    return selectableTokenIndexes[0];
+  }
+
+  const outsideTokenIndexes = player.tokens.reduce(
+    (outside, progress, tokenIndex) => {
+      if (progress >= 0 && progress < FINISHED_PROGRESS) {
+        outside.push(tokenIndex);
+      }
+
+      return outside;
+    },
+    [],
+  );
+
+  if (outsideTokenIndexes.length !== 1) {
+    return null;
+  }
+
+  const soleOutsideTokenIndex = outsideTokenIndexes[0];
+  return selectableTokenIndexes.includes(soleOutsideTokenIndex)
+    ? soleOutsideTokenIndex
+    : null;
 }
 
 function getBoardCellKey(color, progress, tokenIndex = 0) {
@@ -912,17 +951,15 @@ function rollInteractiveMatch(match) {
       ? `rolled a ${dice}.`
       : `rolled a ${dice} but had no valid move.`;
 
-  return {
+  const rolledMatch = {
     ...match,
     dice,
     consecutiveSixCount: nextConsecutiveSixCount,
-    phase: activePlayer.isBot
-      ? selectableTokenIndexes.length > 0
+    phase: selectableTokenIndexes.length === 0
+      ? "advancing"
+      : activePlayer.isBot
         ? "bot-moving"
-        : "advancing"
-      : selectableTokenIndexes.length > 0
-        ? "awaiting-move"
-        : "advancing",
+        : "awaiting-move",
     selectableTokenIndexes,
     pendingNextPlayerIndex:
       selectableTokenIndexes.length > 0
@@ -932,6 +969,21 @@ function rollInteractiveMatch(match) {
           : (match.currentPlayerIndex + 1) % match.players.length,
     events: prependMatchEvent(match.events, activePlayer.name, detail),
   };
+
+  if (activePlayer.isBot || selectableTokenIndexes.length === 0) {
+    return rolledMatch;
+  }
+
+  const forcedTokenIndex = resolveForcedAutoMoveToken(
+    activePlayer,
+    selectableTokenIndexes,
+  );
+
+  if (forcedTokenIndex == null) {
+    return rolledMatch;
+  }
+
+  return applyTokenMove(rolledMatch, forcedTokenIndex);
 }
 
 function chooseBotToken(player, movableTokenIndexes, diceValue) {
@@ -1926,6 +1978,21 @@ function MenuScreen({
       />
 
       <section className="menu-stage-mobile">
+        <div className="menu-live-goti-row" aria-hidden="true">
+          {["red", "green", "yellow", "blue"].map((color, index) => (
+            <img
+              key={color}
+              className={`menu-live-goti menu-live-goti-${color}`}
+              src={TOKEN_ASSETS[color]}
+              alt=""
+              width={100}
+              height={125}
+              draggable={false}
+              style={{ animationDelay: `${index * 0.18}s` }}
+            />
+          ))}
+        </div>
+
         <img
           className="menu-ludo-hero"
           src="/assets/LudoHome.png"
@@ -2385,26 +2452,44 @@ function RollingDiceImage() {
   return <DiceImage value={face} className="is-tumbling" />;
 }
 
-function DieFace({ value, active }) {
+function DieFace({ value, active, showRollCue = false }) {
   return (
-    <div className={`die-face-shell ${active ? "is-active" : ""}`}>
+    <div
+      className={`die-face-shell ${active ? "is-active" : ""} ${showRollCue ? "has-roll-cue" : ""}`}
+    >
       <DiceImage value={value} />
+      {showRollCue ? <RollCueArrow /> : null}
     </div>
   );
 }
 
-function RollDiceButton({ value, onRollDice, rolling = false }) {
+function RollCueArrow() {
+  return (
+    <img
+      className="dice-roll-cue-arrow"
+      src="/assets/roll-cue-arrow.svg"
+      alt=""
+      width={72}
+      height={48}
+      draggable={false}
+      aria-hidden="true"
+    />
+  );
+}
+
+function RollDiceButton({ value, onRollDice, rolling = false, showRollCue = false }) {
   const pressHandlers = useImmediatePress(onRollDice, rolling);
 
   return (
     <button
       type="button"
-      className={`die-face-shell die-roll-button is-active ${rolling ? "is-rolling" : ""}`}
+      className={`die-face-shell die-roll-button is-active ${rolling ? "is-rolling" : ""} ${showRollCue ? "has-roll-cue" : ""}`}
       {...pressHandlers}
       disabled={rolling}
       aria-label="Roll dice"
     >
       {rolling ? <RollingDiceImage /> : <DiceImage value={value} />}
+      {showRollCue && !rolling ? <RollCueArrow /> : null}
     </button>
   );
 }
@@ -2425,6 +2510,7 @@ function PlayerStatusCard({
   const finishedTokens = player.tokens.filter(
     (token) => token >= FINISHED_PROGRESS,
   ).length;
+  const showRollCue = canRollDice || isWaitingToRoll || isRollingDice;
   const diceSlot = diceValue ? (
     <DieFace value={diceValue} active={isCurrentTurn} />
   ) : isRollingDice ? (
@@ -2432,11 +2518,16 @@ function PlayerStatusCard({
       value={lastDiceValue}
       onRollDice={onRollDice}
       rolling={isRollingDice}
+      showRollCue
     />
   ) : canRollDice ? (
-    <RollDiceButton value={lastDiceValue} onRollDice={onRollDice} />
+    <RollDiceButton
+      value={lastDiceValue}
+      onRollDice={onRollDice}
+      showRollCue
+    />
   ) : isWaitingToRoll ? (
-    <DieFace value={lastDiceValue} active />
+    <DieFace value={lastDiceValue} active showRollCue />
   ) : (
     <div className="die-slot" aria-hidden="true" />
   );
@@ -2572,6 +2663,12 @@ function LudoBoard({
   const userColor = useMemo(
     () => match.players.find((player) => player.id === userPlayerId)?.color,
     [match.players, userPlayerId],
+  );
+  const activeTurnColor = useMemo(
+    () =>
+      match.players.find((player) => player.id === match.currentTurnUserId)
+        ?.color ?? null,
+    [match.players, match.currentTurnUserId],
   );
   const boardRotation = useMemo(
     () => getBoardRotationQuarterTurns(userColor) * 90,
@@ -2811,7 +2908,7 @@ function LudoBoard({
         {Object.entries(HOME_ASSETS).map(([color, asset]) => (
           <img
             key={color}
-            className={`board-home-image house-${color}`}
+            className={`board-home-image house-${color}${activeTurnColor === color ? " is-turn-house" : ""}`}
             src={asset}
             alt=""
             width={137}
@@ -2823,7 +2920,7 @@ function LudoBoard({
         {Object.keys(HOME_ASSETS).map((color) => (
           <div
             key={`${color}-yard`}
-            className={`board-house-overlay house-${color}`}
+            className={`board-house-overlay house-${color}${activeTurnColor === color ? " is-turn-house" : ""}`}
           >
             {Array.from({ length: 4 }, (_, slotIndex) => {
               const token = yardTokenMap[color][slotIndex];
@@ -3179,9 +3276,15 @@ function BoardScreen({
           <LudoBoard
             match={match}
             selectableTokenIndexes={
-              isBoardAnimating ? [] : match.selectableTokenIndexes
+              isBoardAnimating || match.phase !== "awaiting-move"
+                ? []
+                : match.selectableTokenIndexes
             }
-            onSelectToken={isBoardAnimating ? undefined : onSelectToken}
+            onSelectToken={
+              isBoardAnimating || match.phase !== "awaiting-move"
+                ? undefined
+                : onSelectToken
+            }
             onAnimationChange={handleBoardAnimationChange}
             onTokenStep={() => soundController.tokenStep()}
             userPlayerId={userPlayerId}
@@ -4577,6 +4680,45 @@ function PrivateRoomPageShell({ appState }) {
     }
   }
 
+  useEffect(() => {
+    if (
+      !session?.sessionToken ||
+      !match?.id ||
+      isSubmittingMove ||
+      match.phase !== "awaiting-move" ||
+      match.currentTurnUserId !== session.userId
+    ) {
+      return undefined;
+    }
+
+    const activePlayer =
+      match.players.find((player) => player.id === match.currentTurnUserId) ??
+      match.players[match.currentPlayerIndex];
+    const forcedTokenIndex = resolveForcedAutoMoveToken(
+      activePlayer,
+      match.selectableTokenIndexes,
+    );
+
+    if (forcedTokenIndex == null) {
+      return undefined;
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      handleSelectToken(forcedTokenIndex);
+    }, 0);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [
+    isSubmittingMove,
+    match?.currentTurnUserId,
+    match?.id,
+    match?.phase,
+    match?.selectableTokenIndexes,
+    match?.sequence,
+    session?.sessionToken,
+    session?.userId,
+  ]);
+
   async function handleRollDice() {
     if (
       !session?.sessionToken ||
@@ -5130,6 +5272,45 @@ function OnlineBoardPageShell({ appState, configuredMaxPlayers }) {
       setStatusMessage(error.message || "Unable to move the selected token.");
     }
   }
+
+  useEffect(() => {
+    if (
+      !session?.sessionToken ||
+      !match?.id ||
+      isSubmittingMove ||
+      match.phase !== "awaiting-move" ||
+      match.currentTurnUserId !== session.userId
+    ) {
+      return undefined;
+    }
+
+    const activePlayer =
+      match.players.find((player) => player.id === match.currentTurnUserId) ??
+      match.players[match.currentPlayerIndex];
+    const forcedTokenIndex = resolveForcedAutoMoveToken(
+      activePlayer,
+      match.selectableTokenIndexes,
+    );
+
+    if (forcedTokenIndex == null) {
+      return undefined;
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      handleSelectToken(forcedTokenIndex);
+    }, 0);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [
+    isSubmittingMove,
+    match?.currentTurnUserId,
+    match?.id,
+    match?.phase,
+    match?.selectableTokenIndexes,
+    match?.sequence,
+    session?.sessionToken,
+    session?.userId,
+  ]);
 
   async function handleRollDice() {
     if (

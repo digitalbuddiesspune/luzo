@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 72 48" fill="none">
+  <defs>
+    <linearGradient id="rollCueGrad" x1="8" y1="24" x2="64" y2="24" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#FF8A1A"/>
+      <stop offset="0.55" stop-color="#FFC94A"/>
+      <stop offset="1" stop-color="#FFE566"/>
+    </linearGradient>
+  </defs>
+  <path
+    d="M66 8.5 L28 8.5 L28 2.2 C28 0.7 26.1 -0.1 24.9 0.8 L2.8 20.4 C1.7 21.4 1.7 23.1 2.8 24.1 L24.9 43.7 C26.1 44.6 28 43.8 28 42.3 L28 36 L66 36 C68.2 36 70 34.2 70 32 L70 12.5 C70 10.3 68.2 8.5 66 8.5 Z"
+    fill="url(#rollCueGrad)"
+    stroke="#1A1208"
+    stroke-width="2.4"
+    stroke-linejoin="round"
+  />
+</svg>

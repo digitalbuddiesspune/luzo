@@ -645,6 +645,30 @@ private fun movableTokenIndexes(player: MatchPlayerState, diceValue: Int): List<
     }
 }
 
+internal fun resolveForcedAutoMoveToken(
+    player: MatchPlayerState,
+    selectableTokenIndexes: List<Int>,
+): Int? {
+    if (selectableTokenIndexes.isEmpty()) {
+        return null
+    }
+
+    if (selectableTokenIndexes.size == 1) {
+        return selectableTokenIndexes.first()
+    }
+
+    val outsideTokenIndexes = player.tokens.mapIndexedNotNull { tokenIndex, progress ->
+        tokenIndex.takeIf { progress in 0 until FINISHED_PROGRESS }
+    }
+
+    if (outsideTokenIndexes.size != 1) {
+        return null
+    }
+
+    val soleOutsideTokenIndex = outsideTokenIndexes.first()
+    return soleOutsideTokenIndex.takeIf { selectableTokenIndexes.contains(it) }
+}
+
 private fun chooseBotToken(player: MatchPlayerState, movableTokenIndexes: List<Int>, diceValue: Int): Int {
     return movableTokenIndexes.firstOrNull { tokenIndex ->
         val progress = player.tokens[tokenIndex]
@@ -1313,7 +1337,7 @@ class MatchService(
             "rolled a $dice."
         }
 
-        return match.copy(
+        val rolledMatch = match.copy(
             dice = dice,
             lastRollUserId = activePlayer.userId,
             lastRollDisplayName = activePlayer.displayName,
@@ -1339,6 +1363,15 @@ class MatchService(
             sequence = match.sequence + 1,
             events = prependEvent(match.events, activePlayer.displayName, detail, now),
         )
+
+        if (activePlayer.isBot || selectableTokenIndexes.isEmpty()) {
+            return rolledMatch
+        }
+
+        val forcedTokenIndex = resolveForcedAutoMoveToken(activePlayer, selectableTokenIndexes)
+            ?: return rolledMatch
+
+        return applyTokenMove(rolledMatch, forcedTokenIndex, now)
     }
 
     private fun applyTokenMove(match: MatchDocument, tokenIndex: Int, now: Instant): MatchDocument {

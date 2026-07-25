@@ -817,6 +817,42 @@ img {
   filter: drop-shadow(0 0.8rem 0.95rem rgba(0, 0, 0, 0.26));
 }
 
+.menu-live-goti-row {
+  position: relative;
+  z-index: 4;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  gap: clamp(0.55rem, 3.2vw, 1.05rem);
+  width: var(--home-hero-width);
+  margin-bottom: clamp(0.35rem, 1.2vh, 0.7rem);
+  pointer-events: none;
+}
+
+.menu-live-goti {
+  display: block;
+  width: clamp(2.35rem, 9.5vw, 3.15rem);
+  height: auto;
+  filter: drop-shadow(0 0.35rem 0.45rem rgba(8, 24, 72, 0.35));
+  animation: menuLiveGotiBounce 1.45s ease-in-out infinite;
+  transform-origin: 50% 100%;
+}
+
+@keyframes menuLiveGotiBounce {
+  0%,
+  100% {
+    transform: translateY(0) scale(1);
+  }
+
+  45% {
+    transform: translateY(-0.55rem) scale(1.06);
+  }
+
+  70% {
+    transform: translateY(-0.18rem) scale(1.02);
+  }
+}
+
 .menu-game-banner {
   position: relative;
   z-index: 2;
@@ -2123,6 +2159,7 @@ img {
   flex-direction: column;
   justify-content: center;
   padding: 0.42rem 0.5rem 0.58rem;
+  overflow: visible;
   border: 0.13rem solid #72a9ff;
   border-radius: 0.72rem;
   background:
@@ -2217,6 +2254,7 @@ img {
   width: 3.15rem;
   flex: 0 0 auto;
   padding-top: 0;
+  overflow: visible;
 }
 
 .die-slot,
@@ -2248,6 +2286,35 @@ img {
 .die-face-shell.is-active .die-image {
   filter: drop-shadow(0 0 0.55rem rgba(182, 255, 213, 0.42))
     drop-shadow(0 0.18rem 0.28rem rgba(5, 20, 68, 0.28));
+}
+
+.die-face-shell.has-roll-cue {
+  overflow: visible;
+}
+
+.dice-roll-cue-arrow {
+  position: absolute;
+  right: calc(100% + 0.12rem);
+  left: auto;
+  top: 50%;
+  width: 2.15rem;
+  height: auto;
+  transform: translateY(-50%) scaleX(-1);
+  filter: drop-shadow(0 0.18rem 0.22rem rgba(20, 12, 0, 0.35));
+  animation: diceRollCueNudge 0.85s ease-in-out infinite;
+  pointer-events: none;
+  z-index: 4;
+}
+
+@keyframes diceRollCueNudge {
+  0%,
+  100% {
+    transform: translateY(-50%) scaleX(-1) translateX(0);
+  }
+
+  50% {
+    transform: translateY(-50%) scaleX(-1) translateX(-0.22rem);
+  }
 }
 
 .die-roll-button {
@@ -2361,8 +2428,13 @@ img {
 
 @media (prefers-reduced-motion: reduce) {
   .die-face-shell.is-rolling,
-  .die-image.is-tumbling {
-    animation-duration: 900ms;
+  .die-image.is-tumbling,
+  .menu-live-goti,
+  .dice-roll-cue-arrow,
+  .board-home-image.is-turn-house,
+  .board-house-overlay.is-turn-house .house-slot,
+  .house-token {
+    animation: none;
   }
 }
 
@@ -2599,6 +2671,48 @@ img {
   bottom: var(--board-grid-inset);
 }
 
+.board-home-image.is-turn-house {
+  z-index: 1;
+  animation: houseTurnBlink 1s ease-in-out infinite;
+  filter: drop-shadow(0 0 0.55rem rgba(255, 236, 120, 0.72));
+}
+
+.board-house-overlay.is-turn-house {
+  z-index: 4;
+}
+
+.board-house-overlay.is-turn-house .house-slot {
+  animation: houseSlotTurnPulse 1s ease-in-out infinite;
+  box-shadow:
+    inset 0 0 0 0.05rem rgba(255, 255, 255, 0.35),
+    0 0 0 0.12rem rgba(255, 236, 120, 0.55),
+    0 0 0.55rem rgba(255, 220, 90, 0.55);
+}
+
+@keyframes houseTurnBlink {
+  0%,
+  100% {
+    opacity: 1;
+    filter: drop-shadow(0 0 0.35rem rgba(255, 236, 120, 0.45));
+  }
+
+  50% {
+    opacity: 0.72;
+    filter: drop-shadow(0 0 0.85rem rgba(255, 248, 170, 0.95));
+  }
+}
+
+@keyframes houseSlotTurnPulse {
+  0%,
+  100% {
+    transform: scale(1);
+  }
+
+  50% {
+    transform: scale(1.06);
+  }
+}
+
 .board-final-home {
   left: var(--board-center-offset);
   top: var(--board-center-offset);
@@ -2676,6 +2790,19 @@ img {
     rotate(var(--token-upright-rotation, 0deg));
   transform-origin: center center;
   filter: drop-shadow(0 0.05rem 0.08rem rgba(0, 0, 0, 0.28));
+  animation: houseGotiLive 1.8s ease-in-out infinite;
+}
+
+@keyframes houseGotiLive {
+  0%,
+  100% {
+    filter: drop-shadow(0 0.05rem 0.08rem rgba(0, 0, 0, 0.28));
+  }
+
+  50% {
+    filter: drop-shadow(0 0.12rem 0.28rem rgba(80, 160, 255, 0.45))
+      drop-shadow(0 0.05rem 0.08rem rgba(0, 0, 0, 0.28));
+  }
 }
 
 .house-token-button {
