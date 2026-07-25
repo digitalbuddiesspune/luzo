@@ -597,34 +597,14 @@ function getMovableTokenIndexes(player, diceValue) {
   }, []);
 }
 
-function resolveForcedAutoMoveToken(player, selectableTokenIndexes) {
-  if (!selectableTokenIndexes?.length) {
+function resolveForcedAutoMoveToken(selectableTokenIndexes) {
+  // Only auto-play when there is exactly one legal move.
+  // If a six can also open yard tokens, let the player choose.
+  if (!selectableTokenIndexes || selectableTokenIndexes.length !== 1) {
     return null;
   }
 
-  if (selectableTokenIndexes.length === 1) {
-    return selectableTokenIndexes[0];
-  }
-
-  const outsideTokenIndexes = player.tokens.reduce(
-    (outside, progress, tokenIndex) => {
-      if (progress >= 0 && progress < FINISHED_PROGRESS) {
-        outside.push(tokenIndex);
-      }
-
-      return outside;
-    },
-    [],
-  );
-
-  if (outsideTokenIndexes.length !== 1) {
-    return null;
-  }
-
-  const soleOutsideTokenIndex = outsideTokenIndexes[0];
-  return selectableTokenIndexes.includes(soleOutsideTokenIndex)
-    ? soleOutsideTokenIndex
-    : null;
+  return selectableTokenIndexes[0];
 }
 
 function getBoardCellKey(color, progress, tokenIndex = 0) {
@@ -975,7 +955,6 @@ function rollInteractiveMatch(match) {
   }
 
   const forcedTokenIndex = resolveForcedAutoMoveToken(
-    activePlayer,
     selectableTokenIndexes,
   );
 
@@ -3070,6 +3049,7 @@ function BoardScreen({
   onOpenUtilities,
   onOpenWallet,
   onOpenHistory,
+  onPotIntroComplete,
 }) {
   const { topPlayers, bottomPlayers } = useMemo(
     () => resolvePlayerCardRows(match.players, userPlayerId),
@@ -3085,6 +3065,51 @@ function BoardScreen({
   const settledTurnUserIdRef = useRef(match.currentTurnUserId);
   const settledDiceValueRef = useRef(match.dice ?? null);
   const [lastDiceByPlayer, setLastDiceByPlayer] = useState(() => new Map());
+  const matchPotAmount = match.pot ?? 0;
+  const [potIntroPhase, setPotIntroPhase] = useState("visible");
+  const potIntroMatchIdRef = useRef(match.id);
+  const isPotIntroBlocking = potIntroPhase !== "done";
+
+  useEffect(() => {
+    if (potIntroMatchIdRef.current === match.id) {
+      return;
+    }
+
+    potIntroMatchIdRef.current = match.id;
+    setPotIntroPhase("visible");
+  }, [match.id]);
+
+  useEffect(() => {
+    if (potIntroPhase !== "visible") {
+      return undefined;
+    }
+
+    const hideTimeoutId = window.setTimeout(() => {
+      setPotIntroPhase("exiting");
+    }, 3000);
+
+    return () => window.clearTimeout(hideTimeoutId);
+  }, [potIntroPhase, match.id]);
+
+  useEffect(() => {
+    if (potIntroPhase !== "exiting") {
+      return undefined;
+    }
+
+    const doneTimeoutId = window.setTimeout(() => {
+      setPotIntroPhase("done");
+    }, 600);
+
+    return () => window.clearTimeout(doneTimeoutId);
+  }, [potIntroPhase]);
+
+  useEffect(() => {
+    if (potIntroPhase !== "done") {
+      return;
+    }
+
+    onPotIntroComplete?.();
+  }, [potIntroPhase, onPotIntroComplete]);
 
   useEffect(() => {
     setLastDiceByPlayer((currentDiceByPlayer) => {
@@ -3153,6 +3178,7 @@ function BoardScreen({
   }
 
   const canRollDice =
+    !isPotIntroBlocking &&
     !isBoardAnimating &&
     match.phase === "rolling" &&
     match.currentTurnUserId === userPlayerId &&
@@ -3165,11 +3191,13 @@ function BoardScreen({
     (player) => player.id === visibleTurnUserId,
   );
   const autoRollingDiceUserId =
+    !isPotIntroBlocking &&
     !isBoardAnimating &&
     match.phase === "rolling" && !match.dice && currentTurnPlayer?.isBot
       ? visibleTurnUserId
       : null;
   const waitingToRollUserId =
+    !isPotIntroBlocking &&
     !isBoardAnimating &&
     match.phase === "rolling" &&
     !match.dice &&
@@ -3227,14 +3255,10 @@ function BoardScreen({
         <div className="board-status-banner">{statusMessage}</div>
       ) : null}
 
-      <div
-        className="board-pot-pill"
-        aria-label={`Pot amount ${formatCurrency(match.pot ?? 0)}`}
-      >
-        <img src="/assets/MainCoinIcon.png" alt="" draggable={false} />
-        <span>Pot Amount</span>
-        <strong>{formatCurrency(match.pot ?? 0)}</strong>
-      </div>
+      <MatchPotIntroOverlay
+        potAmount={matchPotAmount}
+        phase={potIntroPhase}
+      />
 
       <section className="board-screen-mobile">
         <div className="board-player-row board-player-row-top">
@@ -3259,7 +3283,13 @@ function BoardScreen({
                   autoSpinExpiredTurnId === player.id
                 }
                 onRollDice={onRollDice}
-                turnProgress={visibleTurnUserId === player.id ? turnProgress : 0}
+                turnProgress={
+                  isPotIntroBlocking
+                    ? 0
+                    : visibleTurnUserId === player.id
+                      ? turnProgress
+                      : 0
+                }
               />
             ) : (
               <div
@@ -3276,12 +3306,16 @@ function BoardScreen({
           <LudoBoard
             match={match}
             selectableTokenIndexes={
-              isBoardAnimating || match.phase !== "awaiting-move"
+              isPotIntroBlocking ||
+              isBoardAnimating ||
+              match.phase !== "awaiting-move"
                 ? []
                 : match.selectableTokenIndexes
             }
             onSelectToken={
-              isBoardAnimating || match.phase !== "awaiting-move"
+              isPotIntroBlocking ||
+              isBoardAnimating ||
+              match.phase !== "awaiting-move"
                 ? undefined
                 : onSelectToken
             }
@@ -3313,7 +3347,13 @@ function BoardScreen({
                   autoSpinExpiredTurnId === player.id
                 }
                 onRollDice={onRollDice}
-                turnProgress={visibleTurnUserId === player.id ? turnProgress : 0}
+                turnProgress={
+                  isPotIntroBlocking
+                    ? 0
+                    : visibleTurnUserId === player.id
+                      ? turnProgress
+                      : 0
+                }
               />
             ) : (
               <div
@@ -3538,6 +3578,25 @@ function ConfirmDialog({
           </button>
         </div>
       </aside>
+    </div>
+  );
+}
+
+function MatchPotIntroOverlay({ potAmount, phase }) {
+  if (phase !== "visible" && phase !== "exiting") {
+    return null;
+  }
+
+  return (
+    <div
+      className={`match-pot-intro-scrim ${phase === "exiting" ? "is-exiting" : "is-visible"}`}
+      aria-live="polite"
+    >
+      <div className="match-pot-intro-card">
+        <img src="/assets/MainCoinIcon.png" alt="" draggable={false} />
+        <span>Pot Amount</span>
+        <strong>{formatCurrency(potAmount)}</strong>
+      </div>
     </div>
   );
 }
@@ -4182,7 +4241,16 @@ function PrivateRoomPageShell({ appState }) {
   const isLeavingRoomRef = useRef(false);
   const [isSubmittingMove, setIsSubmittingMove] = useState(false);
   const [rollingDiceUserId, setRollingDiceUserId] = useState(null);
+  const [isMatchIntroComplete, setIsMatchIntroComplete] = useState(false);
   const privateMatchUserId = session?.userId ?? appState.profile.id;
+
+  useEffect(() => {
+    setIsMatchIntroComplete(false);
+  }, [match?.id]);
+
+  const handlePotIntroComplete = useCallback(() => {
+    setIsMatchIntroComplete(true);
+  }, []);
 
   useOperatorGatewayConsoleLogs(session?.sessionToken);
   useGameplayTransitionSounds(match);
@@ -4682,6 +4750,7 @@ function PrivateRoomPageShell({ appState }) {
 
   useEffect(() => {
     if (
+      !isMatchIntroComplete ||
       !session?.sessionToken ||
       !match?.id ||
       isSubmittingMove ||
@@ -4691,11 +4760,7 @@ function PrivateRoomPageShell({ appState }) {
       return undefined;
     }
 
-    const activePlayer =
-      match.players.find((player) => player.id === match.currentTurnUserId) ??
-      match.players[match.currentPlayerIndex];
     const forcedTokenIndex = resolveForcedAutoMoveToken(
-      activePlayer,
       match.selectableTokenIndexes,
     );
 
@@ -4709,6 +4774,7 @@ function PrivateRoomPageShell({ appState }) {
 
     return () => window.clearTimeout(timeoutId);
   }, [
+    isMatchIntroComplete,
     isSubmittingMove,
     match?.currentTurnUserId,
     match?.id,
@@ -4721,6 +4787,7 @@ function PrivateRoomPageShell({ appState }) {
 
   async function handleRollDice() {
     if (
+      !isMatchIntroComplete ||
       !session?.sessionToken ||
       !match?.id ||
       match.phase !== "rolling" ||
@@ -4803,6 +4870,7 @@ function PrivateRoomPageShell({ appState }) {
           onOpenUtilities={() => setIsUtilityOpen(true)}
           onOpenWallet={undefined}
           onOpenHistory={() => {}}
+          onPotIntroComplete={handlePotIntroComplete}
         />
       ) : privateRoom ? (
         <PrivateRoomLobbyScreen
@@ -4894,6 +4962,7 @@ function OnlineBoardPageShell({ appState, configuredMaxPlayers }) {
   const [onlineRestartKey, setOnlineRestartKey] = useState(0);
   const [isSubmittingMove, setIsSubmittingMove] = useState(false);
   const [rollingDiceUserId, setRollingDiceUserId] = useState(null);
+  const [isMatchIntroComplete, setIsMatchIntroComplete] = useState(false);
   const [isRealtimeConnected, setIsRealtimeConnected] = useState(false);
   const socketRef = useRef(null);
   const reconnectTimeoutRef = useRef(null);
@@ -4907,6 +4976,14 @@ function OnlineBoardPageShell({ appState, configuredMaxPlayers }) {
     lobbyRoom || (match?.id && match.phase !== "finished"),
   );
   const onlineUserPlayerId = session?.userId ?? appState.profile.id;
+
+  useEffect(() => {
+    setIsMatchIntroComplete(false);
+  }, [match?.id]);
+
+  const handlePotIntroComplete = useCallback(() => {
+    setIsMatchIntroComplete(true);
+  }, []);
 
   useOperatorGatewayConsoleLogs(session?.sessionToken);
   useGameplayTransitionSounds(match);
@@ -5275,6 +5352,7 @@ function OnlineBoardPageShell({ appState, configuredMaxPlayers }) {
 
   useEffect(() => {
     if (
+      !isMatchIntroComplete ||
       !session?.sessionToken ||
       !match?.id ||
       isSubmittingMove ||
@@ -5284,11 +5362,7 @@ function OnlineBoardPageShell({ appState, configuredMaxPlayers }) {
       return undefined;
     }
 
-    const activePlayer =
-      match.players.find((player) => player.id === match.currentTurnUserId) ??
-      match.players[match.currentPlayerIndex];
     const forcedTokenIndex = resolveForcedAutoMoveToken(
-      activePlayer,
       match.selectableTokenIndexes,
     );
 
@@ -5302,6 +5376,7 @@ function OnlineBoardPageShell({ appState, configuredMaxPlayers }) {
 
     return () => window.clearTimeout(timeoutId);
   }, [
+    isMatchIntroComplete,
     isSubmittingMove,
     match?.currentTurnUserId,
     match?.id,
@@ -5314,6 +5389,7 @@ function OnlineBoardPageShell({ appState, configuredMaxPlayers }) {
 
   async function handleRollDice() {
     if (
+      !isMatchIntroComplete ||
       !session?.sessionToken ||
       !match?.id ||
       match.phase !== "rolling" ||
@@ -5455,6 +5531,7 @@ function OnlineBoardPageShell({ appState, configuredMaxPlayers }) {
           onOpenUtilities={() => setIsUtilityOpen(true)}
           onOpenWallet={undefined}
           onOpenHistory={() => {}}
+          onPotIntroComplete={handlePotIntroComplete}
         />
       )}
 
@@ -5521,6 +5598,26 @@ function LocalBoardPageShell({ mode, appState }) {
   );
   const [now, setNow] = useState(() => Date.now());
   const [rollingDiceUserId, setRollingDiceUserId] = useState(null);
+  const [isMatchIntroComplete, setIsMatchIntroComplete] = useState(false);
+
+  useEffect(() => {
+    setIsMatchIntroComplete(false);
+  }, [match?.id]);
+
+  const handlePotIntroComplete = useCallback(() => {
+    setIsMatchIntroComplete(true);
+    setMatch((currentMatch) => {
+      if (!currentMatch || currentMatch.phase === "finished") {
+        return currentMatch;
+      }
+
+      return {
+        ...currentMatch,
+        turnEndsAt:
+          Date.now() + (currentMatch.turnTimer ?? 30) * 1000,
+      };
+    });
+  }, []);
 
   useGameplayTransitionSounds(match);
   useTurnWarningSound({
@@ -5544,6 +5641,10 @@ function LocalBoardPageShell({ mode, appState }) {
   }, []);
 
   useEffect(() => {
+    if (!isMatchIntroComplete) {
+      return undefined;
+    }
+
     if (match.phase !== "rolling" || match.winnerId) {
       return undefined;
     }
@@ -5564,9 +5665,19 @@ function LocalBoardPageShell({ mode, appState }) {
     }, TURN_ROLL_DELAY_MS);
 
     return () => window.clearTimeout(timeoutId);
-  }, [match.phase, match.currentPlayerIndex, match.players, match.winnerId]);
+  }, [
+    isMatchIntroComplete,
+    match.phase,
+    match.currentPlayerIndex,
+    match.players,
+    match.winnerId,
+  ]);
 
   useEffect(() => {
+    if (!isMatchIntroComplete) {
+      return undefined;
+    }
+
     if (match.phase !== "bot-moving" || match.winnerId) {
       return undefined;
     }
@@ -5590,9 +5701,18 @@ function LocalBoardPageShell({ mode, appState }) {
     }, BOT_MOVE_DELAY_MS);
 
     return () => window.clearTimeout(timeoutId);
-  }, [match.phase, match.currentPlayerIndex, match.winnerId]);
+  }, [
+    isMatchIntroComplete,
+    match.phase,
+    match.currentPlayerIndex,
+    match.winnerId,
+  ]);
 
   useEffect(() => {
+    if (!isMatchIntroComplete) {
+      return undefined;
+    }
+
     if (match.phase !== "advancing" || match.winnerId) {
       return undefined;
     }
@@ -5612,9 +5732,18 @@ function LocalBoardPageShell({ mode, appState }) {
     }, TURN_ADVANCE_DELAY_MS);
 
     return () => window.clearTimeout(timeoutId);
-  }, [match.phase, match.pendingNextPlayerIndex, match.winnerId]);
+  }, [
+    isMatchIntroComplete,
+    match.phase,
+    match.pendingNextPlayerIndex,
+    match.winnerId,
+  ]);
 
   useEffect(() => {
+    if (!isMatchIntroComplete) {
+      return;
+    }
+
     if (
       match.winnerId ||
       (match.phase !== "rolling" && match.phase !== "awaiting-move") ||
@@ -5659,7 +5788,13 @@ function LocalBoardPageShell({ mode, appState }) {
         (currentMatch.currentPlayerIndex + 1) % currentMatch.players.length,
       );
     });
-  }, [match.phase, match.turnEndsAt, match.winnerId, now]);
+  }, [
+    isMatchIntroComplete,
+    match.phase,
+    match.turnEndsAt,
+    match.winnerId,
+    now,
+  ]);
 
   function handleSelectToken(tokenIndex) {
     setMatch((currentMatch) => {
@@ -5682,6 +5817,7 @@ function LocalBoardPageShell({ mode, appState }) {
     const activePlayer = match.players[match.currentPlayerIndex];
 
     if (
+      !isMatchIntroComplete ||
       match.phase !== "rolling" ||
       match.winnerId ||
       activePlayer.isBot ||
@@ -5746,6 +5882,7 @@ function LocalBoardPageShell({ mode, appState }) {
         onOpenUtilities={() => setIsUtilityOpen(true)}
         onOpenWallet={undefined}
         onOpenHistory={() => {}}
+        onPotIntroComplete={handlePotIntroComplete}
       />
 
       <UtilitySheet

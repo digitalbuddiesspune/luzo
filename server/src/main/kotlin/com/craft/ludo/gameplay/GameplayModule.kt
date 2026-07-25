@@ -646,27 +646,11 @@ private fun movableTokenIndexes(player: MatchPlayerState, diceValue: Int): List<
 }
 
 internal fun resolveForcedAutoMoveToken(
-    player: MatchPlayerState,
     selectableTokenIndexes: List<Int>,
 ): Int? {
-    if (selectableTokenIndexes.isEmpty()) {
-        return null
-    }
-
-    if (selectableTokenIndexes.size == 1) {
-        return selectableTokenIndexes.first()
-    }
-
-    val outsideTokenIndexes = player.tokens.mapIndexedNotNull { tokenIndex, progress ->
-        tokenIndex.takeIf { progress in 0 until FINISHED_PROGRESS }
-    }
-
-    if (outsideTokenIndexes.size != 1) {
-        return null
-    }
-
-    val soleOutsideTokenIndex = outsideTokenIndexes.first()
-    return soleOutsideTokenIndex.takeIf { selectableTokenIndexes.contains(it) }
+    // Only auto-play when there is exactly one legal move.
+    // If a six can also open yard tokens, let the player choose.
+    return selectableTokenIndexes.singleOrNull()
 }
 
 private fun chooseBotToken(player: MatchPlayerState, movableTokenIndexes: List<Int>, diceValue: Int): Int {
@@ -1368,7 +1352,7 @@ class MatchService(
             return rolledMatch
         }
 
-        val forcedTokenIndex = resolveForcedAutoMoveToken(activePlayer, selectableTokenIndexes)
+        val forcedTokenIndex = resolveForcedAutoMoveToken(selectableTokenIndexes)
             ?: return rolledMatch
 
         return applyTokenMove(rolledMatch, forcedTokenIndex, now)
