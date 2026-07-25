@@ -56,7 +56,7 @@ app:
     room-max-players: ${APP_GAMEPLAY_ROOM_MAX_PLAYERS:4}
     online-entry-fee: ${APP_GAMEPLAY_ONLINE_ENTRY_FEE:100}
     lobby-wait-millis: ${APP_GAMEPLAY_LOBBY_WAIT_MILLIS:60000}
-    online-pvp-real-player-threshold: ${APP_GAMEPLAY_ONLINE_PVP_REAL_PLAYER_THRESHOLD:25}
+    online-pvp-real-player-threshold: ${APP_GAMEPLAY_ONLINE_PVP_REAL_PLAYER_THRESHOLD:0}
     roll-delay-millis: ${APP_GAMEPLAY_ROLL_DELAY_MILLIS:700}
     bot-move-delay-millis: ${APP_GAMEPLAY_BOT_MOVE_DELAY_MILLIS:850}
     advance-delay-millis: ${APP_GAMEPLAY_ADVANCE_DELAY_MILLIS:750}

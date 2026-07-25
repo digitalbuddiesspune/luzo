@@ -24,7 +24,7 @@ class SameSourceProtectionTests {
     }
 
     @Test
-    fun `blocks second real player from same ip address`() {
+    fun `allows different players that share an ip address`() {
         val seat = realSeat(
             userId = "local-user-1",
             operatorUserId = "operator-user-1",
@@ -36,8 +36,8 @@ class SameSourceProtectionTests {
             ipAddress = "203.0.113.25",
         )
 
-        assertThat(isSameSourceRealPlayerSeat(seat, principal)).isTrue()
-        assertThat(sameSourceReasonForSeat(seat, principal)).isEqualTo("same_ip")
+        assertThat(isSameSourceRealPlayerSeat(seat, principal)).isFalse()
+        assertThat(sameSourceReasonForSeat(seat, principal)).isEqualTo("unknown")
     }
 
     @Test
@@ -99,7 +99,24 @@ class SameSourceProtectionTests {
     }
 
     @Test
-    fun `detects same source among private room seats before start`() {
+    fun `detects same operator identity among private room seats before start`() {
+        val left = realSeat(
+            userId = "local-user-1",
+            operatorUserId = "operator-user-1",
+            ipAddress = "203.0.113.25",
+        )
+        val right = realSeat(
+            userId = "local-user-2",
+            operatorUserId = "operator-user-1",
+            ipAddress = "203.0.113.26",
+        )
+
+        assertThat(isSameSourceSeatPair(left, right)).isTrue()
+        assertThat(sameSourceReasonForSeatPair(left, right)).isEqualTo("same_operator_user_id")
+    }
+
+    @Test
+    fun `allows private room seats that only share an ip address`() {
         val left = realSeat(
             userId = "local-user-1",
             operatorUserId = "operator-user-1",
@@ -111,8 +128,8 @@ class SameSourceProtectionTests {
             ipAddress = "203.0.113.25",
         )
 
-        assertThat(isSameSourceSeatPair(left, right)).isTrue()
-        assertThat(sameSourceReasonForSeatPair(left, right)).isEqualTo("same_ip")
+        assertThat(isSameSourceSeatPair(left, right)).isFalse()
+        assertThat(sameSourceReasonForSeatPair(left, right)).isEqualTo("unknown")
     }
 
     private fun realSeat(

@@ -47,11 +47,13 @@ room. The room remains in `WAITING` state until one of these happens:
 
 The waiting deadline is controlled by `APP_GAMEPLAY_LOBBY_WAIT_MILLIS`.
 Public PvP is gated by `APP_GAMEPLAY_ONLINE_PVP_REAL_PLAYER_THRESHOLD`, which
-defaults to `25`. While the public waiting population plus the joining user is
-25 or fewer real players, the joining user is not placed into a room with
-another real player. They receive their own waiting room, and that room can
-start with bot fill when its deadline expires. Once the population goes above
-25 real players, normal PvP room joining is allowed.
+defaults to `0`. With the default, a joining player can enter an existing
+waiting public room as soon as one is available. Raise the threshold only if
+you intentionally want cold-start solo+bot rooms until the waiting population
+is larger. For example, with threshold `25`, while the public waiting
+population plus the joining user is 25 or fewer real players, the joining user
+is not placed into a room with another real player. They receive their own
+waiting room, and that room can start with bot fill when its deadline expires.
 
 New rooms store the current-code deadline in `ownedWaitingDeadlineAt` and leave
 the legacy `waitingDeadlineAt` field empty. Room summaries still return the
@@ -77,9 +79,10 @@ immediately without bots.
 ## Same-Source Protection
 
 Public Ludo matchmaking avoids seating two real users in the same waiting room
-when they share the same source signal, currently the same session user id,
-operator user id, or client IP address. The newer joiner skips that room and can
-be placed into a different Ludo room, which can later use bot fill if needed.
+when they share the same identity signal: the same session user id or the same
+operator user id. Sharing a client IP is allowed so players on the same Wi‑Fi,
+CGNAT, or proxy can still be matched, and so friends on one network can play
+private rooms together.
 
 ## Color Assignment
 

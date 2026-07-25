@@ -336,7 +336,7 @@ private fun botDisplayName(color: String): String = botNamesByColor[color] ?: "G
 internal fun allowsPublicPvpMatchmaking(
     waitingRealPlayerCount: Int,
     joiningRealPlayerCount: Int = 1,
-    threshold: Int = 25,
+    threshold: Int = 0,
 ): Boolean = waitingRealPlayerCount + joiningRealPlayerCount > threshold
 
 private val boardPath = listOf(
@@ -680,12 +680,9 @@ internal fun isSameSourceRealPlayerSeat(seat: RoomSeat, principal: SessionPrinci
     if (seat.userId == principal.id) return true
     val principalOperatorUserId = principal.operatorUserId.normalizedSource()
     val seatOperatorUserId = seat.operatorUserId.normalizedSource()
-    if (principalOperatorUserId != null && seatOperatorUserId != null && principalOperatorUserId == seatOperatorUserId) {
-        return true
-    }
-    val principalIp = principal.ipAddress.normalizedSource()
-    val seatIp = seat.ipAddress.normalizedSource()
-    return principalIp != null && seatIp != null && principalIp == seatIp
+    return principalOperatorUserId != null &&
+        seatOperatorUserId != null &&
+        principalOperatorUserId == seatOperatorUserId
 }
 
 internal fun isSameSourceSeatPair(left: RoomSeat, right: RoomSeat): Boolean {
@@ -693,12 +690,9 @@ internal fun isSameSourceSeatPair(left: RoomSeat, right: RoomSeat): Boolean {
     if (left.userId == right.userId) return true
     val leftOperatorUserId = left.operatorUserId.normalizedSource()
     val rightOperatorUserId = right.operatorUserId.normalizedSource()
-    if (leftOperatorUserId != null && rightOperatorUserId != null && leftOperatorUserId == rightOperatorUserId) {
-        return true
-    }
-    val leftIp = left.ipAddress.normalizedSource()
-    val rightIp = right.ipAddress.normalizedSource()
-    return leftIp != null && rightIp != null && leftIp == rightIp
+    return leftOperatorUserId != null &&
+        rightOperatorUserId != null &&
+        leftOperatorUserId == rightOperatorUserId
 }
 
 internal fun sameSourceReasonForSeat(seat: RoomSeat, principal: SessionPrincipal): String =
@@ -706,8 +700,6 @@ internal fun sameSourceReasonForSeat(seat: RoomSeat, principal: SessionPrincipal
         seat.userId == principal.id -> "same_user_id"
         seat.operatorUserId.normalizedSource() != null &&
             seat.operatorUserId.normalizedSource() == principal.operatorUserId.normalizedSource() -> "same_operator_user_id"
-        seat.ipAddress.normalizedSource() != null &&
-            seat.ipAddress.normalizedSource() == principal.ipAddress.normalizedSource() -> "same_ip"
         else -> "unknown"
     }
 
@@ -716,8 +708,6 @@ internal fun sameSourceReasonForSeatPair(left: RoomSeat, right: RoomSeat): Strin
         left.userId == right.userId -> "same_user_id"
         left.operatorUserId.normalizedSource() != null &&
             left.operatorUserId.normalizedSource() == right.operatorUserId.normalizedSource() -> "same_operator_user_id"
-        left.ipAddress.normalizedSource() != null &&
-            left.ipAddress.normalizedSource() == right.ipAddress.normalizedSource() -> "same_ip"
         else -> "unknown"
     }
 

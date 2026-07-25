@@ -21,6 +21,9 @@ production concerns needed to run and evolve the system safely.
 - [Configuration](./configuration.md)
   Central reference for environment variables, local development setup, runtime
   defaults, and deployment-sensitive settings.
+- [Platform Launch Integration](./platform-launch-integration.md)
+  Required URL fields (`id`, `game_id`), example launch URLs, embed options, and
+  session API contract for launching Ludo from another platform (e.g. aakda.in).
 - [Operator Platform](./operator-platform.md)
   Documents the external operator launch/session flow, wallet balance refresh,
   entry-fee debits, and queued credit payouts.
@@ -56,7 +59,8 @@ See [Production Readiness](./production-readiness.md) for the exact gaps.
 1. Read [Architecture](./architecture.md) for the system model.
 2. Read either [Online Multiplayer](./online-multiplayer.md) or
    [Play With Friends](./play-with-friends.md) depending on the product flow.
-3. Use [API Reference](./api-reference.md), [Configuration](./configuration.md),
-   and [Operator Platform](./operator-platform.md) while implementing platform
-   launch or wallet changes.
+3. Use [Platform Launch Integration](./platform-launch-integration.md) for the
+   exact launch URL fields, then [API Reference](./api-reference.md),
+   [Configuration](./configuration.md), and [Operator Platform](./operator-platform.md)
+   while implementing platform launch or wallet changes.
 4. Review [Production Readiness](./production-readiness.md) before shipping.

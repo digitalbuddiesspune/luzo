@@ -22,7 +22,7 @@ data class GameplayProperties(
     val roomMaxPlayers: Int = 4,
     val onlineEntryFee: Long = 100,
     val lobbyWaitMillis: Long = 60_000,
-    val onlinePvpRealPlayerThreshold: Int = 25,
+    val onlinePvpRealPlayerThreshold: Int = 0,
     val rollDelayMillis: Long = 700,
     val botMoveDelayMillis: Long = 850,
     val advanceDelayMillis: Long = 750,
