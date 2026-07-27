@@ -131,6 +131,8 @@ data class MatchPlayerState(
     @get:JsonProperty("isAbandoned")
     val isAbandoned: Boolean = false,
     val tokens: List<Int>,
+    val operatorUserId: String? = null,
+    val operatorId: String? = null,
 )
 
 data class MatchEvent(
@@ -1199,6 +1201,8 @@ class MatchService(
                     isBot = seat.isBot,
                     isAbandoned = seat.isAbandoned,
                     tokens = listOf(-1, -1, -1, -1),
+                    operatorUserId = seat.operatorUserId,
+                    operatorId = seat.operatorId,
                 )
             }
             .sortedBy { player -> antiClockwiseColorIndex(player.color) }

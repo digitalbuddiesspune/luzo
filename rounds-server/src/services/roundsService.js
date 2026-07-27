@@ -14,6 +14,8 @@ const MATCH_PROJECTION = {
   "players.color": 1,
   "players.isBot": 1,
   "players.isAbandoned": 1,
+  "players.operatorId": 1,
+  "players.operatorUserId": 1,
   winnerUserId: 1,
   winnerDisplayName: 1,
   createdAt: 1,
@@ -30,10 +32,13 @@ const ROOM_PROJECTION = {
   "seats.color": 1,
   "seats.isBot": 1,
   "seats.isAbandoned": 1,
+  "seats.operatorId": 1,
+  "seats.operatorUserId": 1,
   "walletReservations.userId": 1,
   "walletReservations.amount": 1,
   "walletReservations.synthetic": 1,
   "walletReservations.operatorId": 1,
+  "walletReservations.operatorUserId": 1,
 };
 
 function safeAmount(value) {
@@ -220,6 +225,8 @@ function indexRoomParticipants(room) {
     participantsByStoredUserId.set(seat.userId, {
       publicUserId: reservation?.userId || seat.userId,
       betAmount: safeAmount(reservation?.amount),
+      operatorId: reservation?.operatorId || seat.operatorId || null,
+      operatorUserId: reservation?.operatorUserId || seat.operatorUserId || null,
     });
   }
 
@@ -278,6 +285,8 @@ function buildRound(match, room) {
       betAmount,
       isWinner,
       winAmount: isWinner ? winnerAmount : 0,
+      operatorId: roomParticipant?.operatorId || player.operatorId || null,
+      operatorUserId: roomParticipant?.operatorUserId || player.operatorUserId || null,
     };
   });
 
@@ -405,4 +414,9 @@ class RoundsService {
   }
 }
 
-module.exports = { RoundsService, renderErrorHtml };
+module.exports = {
+  RoundsService,
+  renderErrorHtml,
+  buildRound,
+  calculateWinnerAmount,
+};

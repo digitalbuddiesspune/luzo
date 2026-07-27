@@ -1,122 +1,226 @@
-import { useState } from 'react'
-import reactLogo from './assets/react.svg'
-import viteLogo from './assets/vite.svg'
-import heroImg from './assets/hero.png'
-import './App.css'
+import { useCallback, useEffect, useState } from "react";
+import { fetchGames, fetchSummary, fetchUsers } from "./api/client";
+import { GameDetailModal } from "./components/GameDetailModal";
+import { Sidebar } from "./components/Sidebar";
+import { DashboardPage } from "./pages/DashboardPage";
+import { PlatformsPage } from "./pages/PlatformsPage";
+import { ProfitLossPage } from "./pages/ProfitLossPage";
 
 function App() {
-  const [count, setCount] = useState(0)
+  const [activePage, setActivePage] = useState("dashboard");
+  const [profitLossSection, setProfitLossSection] = useState("overview");
+  const [playerFilter, setPlayerFilter] = useState("all");
+  const [operatorFilter, setOperatorFilter] = useState("all");
+  const [mobileOpen, setMobileOpen] = useState(false);
+  const [summary, setSummary] = useState(null);
+  const [dashboardSummary, setDashboardSummary] = useState(null);
+  const [games, setGames] = useState([]);
+  const [dashboardGames, setDashboardGames] = useState([]);
+  const [gamesPagination, setGamesPagination] = useState(null);
+  const [users, setUsers] = useState([]);
+  const [usersPagination, setUsersPagination] = useState(null);
+  const [selectedGame, setSelectedGame] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+
+  const loadDashboard = useCallback(async () => {
+    const [summaryData, gamesData] = await Promise.all([
+      fetchSummary("all", "all"),
+      fetchGames(1, 20, "all", "all"),
+    ]);
+    setDashboardSummary(summaryData);
+    setDashboardGames(gamesData.data);
+  }, []);
+
+  const loadProfitLossData = useCallback(async (page = 1, filter = "all", operatorId = "all") => {
+    const [summaryData, gamesData, usersData] = await Promise.all([
+      fetchSummary(filter, operatorId),
+      fetchGames(page, 20, filter, operatorId),
+      fetchUsers(1, 20, filter, operatorId),
+    ]);
+    setSummary(summaryData);
+    setGames(gamesData.data);
+    setGamesPagination(gamesData.pagination);
+    setUsers(usersData.data);
+    setUsersPagination(usersData.pagination);
+  }, []);
+
+  const loadGames = useCallback(async (page = 1) => {
+    const result = await fetchGames(page, 20, playerFilter, operatorFilter);
+    setGames(result.data);
+    setGamesPagination(result.pagination);
+  }, [playerFilter, operatorFilter]);
+
+  const loadUsers = useCallback(async (page = 1) => {
+    const result = await fetchUsers(page, 20, playerFilter, operatorFilter);
+    setUsers(result.data);
+    setUsersPagination(result.pagination);
+  }, [playerFilter, operatorFilter]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadInitialData() {
+      setLoading(true);
+      setError("");
+
+      try {
+        await Promise.all([loadDashboard(), loadProfitLossData(1, "all", "all")]);
+      } catch (loadError) {
+        if (!cancelled) {
+          setError(loadError.message || "Failed to load admin data.");
+        }
+      } finally {
+        if (!cancelled) {
+          setLoading(false);
+        }
+      }
+    }
+
+    loadInitialData();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [loadDashboard, loadProfitLossData]);
+
+  const reloadFilteredProfitLoss = async (nextPlayerFilter, nextOperatorFilter) => {
+    setLoading(true);
+    setError("");
+
+    try {
+      await loadProfitLossData(1, nextPlayerFilter, nextOperatorFilter);
+    } catch (loadError) {
+      setError(loadError.message || "Failed to filter profit & loss data.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handlePlayerFilterChange = async (nextFilter) => {
+    setPlayerFilter(nextFilter);
+    await reloadFilteredProfitLoss(nextFilter, operatorFilter);
+  };
+
+  const handleOperatorFilterChange = async (nextOperator) => {
+    setOperatorFilter(nextOperator);
+    await reloadFilteredProfitLoss(playerFilter, nextOperator);
+  };
+
+  const openProfitLossForOperator = async (operatorId = "all") => {
+    setActivePage("profit-loss");
+    setProfitLossSection("overview");
+    setOperatorFilter(operatorId);
+    await reloadFilteredProfitLoss(playerFilter, operatorId);
+  };
+
+  const pageMeta = {
+    dashboard: { title: "Dashboard", hint: "Live overview" },
+    platforms: { title: "Platforms", hint: "Per-partner breakdown" },
+    "profit-loss": { title: "Profit & Loss", hint: "Games, users & filters" },
+  }[activePage] || { title: "Admin", hint: "" };
+
+  const operators = summary?.byOperator || dashboardSummary?.byOperator || [];
 
   return (
-    <>
-      <section id="center">
-        <div className="hero">
-          <img src={heroImg} className="base" width="170" height="179" alt="" />
-          <img src={reactLogo} className="framework" alt="React logo" />
-          <img src={viteLogo} className="vite" alt="Vite logo" />
-        </div>
-        <div>
-          <h1>Get started</h1>
-          <p>
-            Edit <code>src/App.jsx</code> and save to test <code>HMR</code>
-          </p>
-        </div>
-        <button
-          type="button"
-          className="counter"
-          onClick={() => setCount((count) => count + 1)}
-        >
-          Count is {count}
-        </button>
-      </section>
+    <div className="flex min-h-screen text-[var(--color-ink)]">
+      <Sidebar
+        activePage={activePage}
+        onNavigate={setActivePage}
+        mobileOpen={mobileOpen}
+        onClose={() => setMobileOpen(false)}
+      />
 
-      <div className="ticks"></div>
+      <div className="flex min-w-0 flex-1 flex-col">
+        <header className="sticky top-0 z-30 flex items-center gap-3 border-b border-[var(--color-line)]/80 bg-white/80 px-4 py-3.5 backdrop-blur-md sm:px-6">
+          <button
+            type="button"
+            className="rounded-xl border border-[var(--color-line)] bg-white p-2 text-[var(--color-ink)] transition-colors hover:bg-[#f4f7f5] lg:hidden"
+            onClick={() => setMobileOpen(true)}
+            aria-label="Open menu"
+          >
+            <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+              <path d="M4 7h16M4 12h16M4 17h16" strokeLinecap="round" />
+            </svg>
+          </button>
+          <div className="min-w-0 flex-1">
+            <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-[var(--color-muted)]">
+              Admin · {pageMeta.hint}
+            </p>
+            <h1 className="truncate text-base font-bold tracking-tight text-[var(--color-ink)]">
+              {pageMeta.title}
+            </h1>
+          </div>
+          <div className="hidden items-center gap-2 sm:flex">
+            <span className="inline-flex items-center gap-1.5 rounded-full bg-[var(--accent-soft)] px-3 py-1 text-xs font-semibold text-[var(--accent)]">
+              <span className="h-1.5 w-1.5 rounded-full bg-[var(--accent)]" aria-hidden />
+              Live
+            </span>
+          </div>
+        </header>
 
-      <section id="next-steps">
-        <div id="docs">
-          <svg className="icon" role="presentation" aria-hidden="true">
-            <use href="/icons.svg#documentation-icon"></use>
-          </svg>
-          <h2>Documentation</h2>
-          <p>Your questions, answered</p>
-          <ul>
-            <li>
-              <a href="https://vite.dev/" target="_blank">
-                <img className="logo" src={viteLogo} alt="" />
-                Explore Vite
-              </a>
-            </li>
-            <li>
-              <a href="https://react.dev/" target="_blank">
-                <img className="button-icon" src={reactLogo} alt="" />
-                Learn more
-              </a>
-            </li>
-          </ul>
-        </div>
-        <div id="social">
-          <svg className="icon" role="presentation" aria-hidden="true">
-            <use href="/icons.svg#social-icon"></use>
-          </svg>
-          <h2>Connect with us</h2>
-          <p>Join the Vite community</p>
-          <ul>
-            <li>
-              <a href="https://github.com/vitejs/vite" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#github-icon"></use>
-                </svg>
-                GitHub
-              </a>
-            </li>
-            <li>
-              <a href="https://chat.vite.dev/" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#discord-icon"></use>
-                </svg>
-                Discord
-              </a>
-            </li>
-            <li>
-              <a href="https://x.com/vite_js" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#x-icon"></use>
-                </svg>
-                X.com
-              </a>
-            </li>
-            <li>
-              <a href="https://bsky.app/profile/vite.dev" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#bluesky-icon"></use>
-                </svg>
-                Bluesky
-              </a>
-            </li>
-          </ul>
-        </div>
-      </section>
+        <main className="flex-1 px-4 py-6 sm:px-6 lg:px-8">
+          {loading ? (
+            <div className="flex flex-col items-center justify-center gap-3 rounded-2xl border border-[var(--color-line)] bg-white px-6 py-16 shadow-[var(--shadow-card)] animate-fade-up">
+              <div className="h-9 w-9 animate-spin rounded-full border-2 border-[var(--color-line)] border-t-[var(--accent)]" />
+              <p className="text-sm font-medium text-[var(--color-muted)]">Loading admin data…</p>
+            </div>
+          ) : null}
 
-      <div className="ticks"></div>
-      <section id="spacer"></section>
-    </>
-  )
+          {error ? (
+            <div className="rounded-2xl border border-rose-200 bg-rose-50 px-6 py-4 text-rose-800 shadow-sm animate-fade-up">
+              <p className="font-semibold">Something went wrong</p>
+              <p className="mt-1 text-sm text-rose-700">{error}</p>
+            </div>
+          ) : null}
+
+          {!loading && !error && activePage === "dashboard" ? (
+            <DashboardPage
+              summary={dashboardSummary}
+              recentGames={dashboardGames.slice(0, 6)}
+              operators={(dashboardSummary?.byOperator || []).slice(0, 4)}
+              onOpenProfitLoss={() => openProfitLossForOperator("all")}
+              onOpenPlatforms={() => setActivePage("platforms")}
+              onSelectOperator={(operatorId) => openProfitLossForOperator(operatorId)}
+              onSelectGame={setSelectedGame}
+            />
+          ) : null}
+
+          {!loading && !error && activePage === "platforms" ? (
+            <PlatformsPage
+              operators={operators}
+              currency={summary?.currency || dashboardSummary?.currency || "INR"}
+              selectedOperatorId={operatorFilter === "all" ? null : operatorFilter}
+              onSelectOperator={(operatorId) => openProfitLossForOperator(operatorId)}
+              onOpenProfitLoss={openProfitLossForOperator}
+            />
+          ) : null}
+
+          {!loading && !error && activePage === "profit-loss" ? (
+            <ProfitLossPage
+              section={profitLossSection}
+              onSectionChange={setProfitLossSection}
+              playerFilter={playerFilter}
+              onPlayerFilterChange={handlePlayerFilterChange}
+              operatorFilter={operatorFilter}
+              onOperatorFilterChange={handleOperatorFilterChange}
+              operators={operators}
+              summary={summary}
+              games={games}
+              gamesPagination={gamesPagination}
+              onGamesPageChange={loadGames}
+              users={users}
+              usersPagination={usersPagination}
+              onUsersPageChange={loadUsers}
+              onSelectGame={setSelectedGame}
+            />
+          ) : null}
+        </main>
+      </div>
+
+      <GameDetailModal game={selectedGame} onClose={() => setSelectedGame(null)} />
+    </div>
+  );
 }
 
-export default App
+export default App;
