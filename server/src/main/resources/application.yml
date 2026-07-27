@@ -89,6 +89,7 @@ app:
     currency: ${APP_WALLET_CURRENCY:INR}
     guest-starting-balance: ${APP_WALLET_GUEST_STARTING_BALANCE:100000}
     payout-rake-basis-points: ${APP_WALLET_PAYOUT_RAKE_BASIS_POINTS:0}
+    platform-fee-per-player: ${APP_WALLET_PLATFORM_FEE_PER_PLAYER:10}
     house-user-id: ${APP_WALLET_HOUSE_USER_ID:house}
 
   operator:

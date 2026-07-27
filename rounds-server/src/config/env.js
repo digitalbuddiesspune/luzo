@@ -28,6 +28,11 @@ const config = Object.freeze({
   mongodbDatabase: process.env.MONGODB_DATABASE?.trim() || "Ludo",
   walletCurrency: process.env.APP_WALLET_CURRENCY?.trim().toUpperCase() || "INR",
   houseUserId: process.env.APP_WALLET_HOUSE_USER_ID?.trim() || "house",
+  platformFeePerPlayer: integerFromEnv(
+    "APP_WALLET_PLATFORM_FEE_PER_PLAYER",
+    10,
+    { min: 0, max: 1_000_000 },
+  ),
   payoutRakeBasisPoints: integerFromEnv(
     "APP_WALLET_PAYOUT_RAKE_BASIS_POINTS",
     0,

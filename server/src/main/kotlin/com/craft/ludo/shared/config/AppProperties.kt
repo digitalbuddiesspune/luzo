@@ -59,6 +59,7 @@ data class WalletProperties(
     val currency: String = "INR",
     val guestStartingBalance: Long = 100_000,
     val payoutRakeBasisPoints: Int = 0,
+    val platformFeePerPlayer: Long = 10,
     val houseUserId: String = "house",
 )
 

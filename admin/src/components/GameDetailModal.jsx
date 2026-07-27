@@ -137,7 +137,7 @@ export function GameDetailModal({ game, onClose }) {
                         {formatAmount(player.betAmount, game.currency)}
                       </td>
                       <td className="px-3 py-2.5 tabular-nums">
-                        {player.isBot ? "—" : formatAmount(player.platformFee, game.currency)}
+                        {formatAmount(player.platformFee, game.currency)}
                       </td>
                       <td className="px-3 py-2.5 tabular-nums">
                         {formatAmount(player.winAmount, game.currency)}

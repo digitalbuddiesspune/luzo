@@ -1,4 +1,4 @@
-import { formatAmount, formatDate, formatPercentFromBasisPoints } from "../utils/format";
+import { formatAmount, formatDate } from "../utils/format";
 import { SummaryCards } from "../components/SummaryCards";
 
 function QuickStat({ label, value }) {
@@ -109,8 +109,12 @@ export function DashboardPage({
           </div>
           <div className="mt-4 grid grid-cols-2 gap-3">
             <QuickStat
-              label="Fee rate"
-              value={summary ? formatPercentFromBasisPoints(summary.platformFeeBasisPoints) : "—"}
+              label="Fee / seat"
+              value={
+                summary?.platformFeePerPlayer != null
+                  ? formatAmount(summary.platformFeePerPlayer, summary.currency)
+                  : "—"
+              }
             />
             <QuickStat label="Currency" value={summary?.currency || "INR"} />
             <QuickStat

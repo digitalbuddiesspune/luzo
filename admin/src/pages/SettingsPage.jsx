@@ -1,0 +1,142 @@
+import { useEffect, useState } from "react";
+import { fetchPlatformSettings, updatePlatformSettings } from "../api/client";
+import { formatAmount } from "../utils/format";
+
+export function SettingsPage({ currency = "INR" }) {
+  const [fee, setFee] = useState("10");
+  const [savedFee, setSavedFee] = useState(10);
+  const [updatedAt, setUpdatedAt] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [message, setMessage] = useState("");
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadSettings() {
+      setLoading(true);
+      setError("");
+      try {
+        const settings = await fetchPlatformSettings();
+        if (cancelled) return;
+        setFee(String(settings.platformFeePerPlayer ?? 10));
+        setSavedFee(settings.platformFeePerPlayer ?? 10);
+        setUpdatedAt(settings.updatedAt || null);
+      } catch (loadError) {
+        if (!cancelled) {
+          setError(loadError.message || "Failed to load settings.");
+        }
+      } finally {
+        if (!cancelled) {
+          setLoading(false);
+        }
+      }
+    }
+
+    loadSettings();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const parsedFee = Number(fee);
+  const isValid = Number.isInteger(parsedFee) && parsedFee >= 0 && parsedFee <= 1_000_000;
+  const dirty = isValid && parsedFee !== savedFee;
+
+  const handleSave = async (event) => {
+    event.preventDefault();
+    if (!isValid || saving) return;
+
+    setSaving(true);
+    setMessage("");
+    setError("");
+
+    try {
+      const settings = await updatePlatformSettings({ platformFeePerPlayer: parsedFee });
+      setSavedFee(settings.platformFeePerPlayer);
+      setFee(String(settings.platformFeePerPlayer));
+      setUpdatedAt(settings.updatedAt || null);
+      setMessage("Platform fee saved. New matches will use this value.");
+    } catch (saveError) {
+      setError(saveError.message || "Failed to save settings.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="flex flex-col items-center justify-center gap-3 rounded-2xl border border-[var(--color-line)] bg-white px-6 py-16 shadow-[var(--shadow-card)]">
+        <div className="h-9 w-9 animate-spin rounded-full border-2 border-[var(--color-line)] border-t-[var(--accent)]" />
+        <p className="text-sm font-medium text-[var(--color-muted)]">Loading settings…</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="mx-auto max-w-2xl space-y-5 animate-fade-up">
+      <section className="rounded-2xl border border-[var(--color-line)] bg-white p-6 shadow-[var(--shadow-card)]">
+        <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-[var(--accent)]">
+          Monetization
+        </p>
+        <h2 className="mt-1 text-xl font-extrabold tracking-tight text-[var(--color-ink)]">
+          Platform fee per seat
+        </h2>
+        <p className="mt-2 text-sm leading-relaxed text-[var(--color-muted)]">
+          Cut this amount from every seat in the pot (real players and bots) before paying the winner.
+          Example with entry {formatAmount(100, currency)} and fee {formatAmount(savedFee, currency)}:
+          2 seats → winner gets {formatAmount(200 - savedFee * 2, currency)}; 4 seats → winner gets{" "}
+          {formatAmount(400 - savedFee * 4, currency)}.
+        </p>
+
+        <form className="mt-6 space-y-4" onSubmit={handleSave}>
+          <label className="block">
+            <span className="text-[11px] font-bold uppercase tracking-[0.1em] text-[var(--color-muted)]">
+              Fee amount ({currency})
+            </span>
+            <input
+              type="number"
+              min={0}
+              max={1_000_000}
+              step={1}
+              value={fee}
+              onChange={(event) => setFee(event.target.value)}
+              className="mt-2 w-full rounded-xl border border-[var(--color-line)] bg-[#f8faf9] px-4 py-3 text-base font-semibold tabular-nums text-[var(--color-ink)] outline-none ring-[var(--accent)] focus:ring-2"
+            />
+          </label>
+
+          {!isValid ? (
+            <p className="text-sm text-rose-600">Enter a whole number from 0 to 1,000,000.</p>
+          ) : null}
+
+          <div className="flex flex-wrap items-center gap-3">
+            <button
+              type="submit"
+              disabled={!dirty || !isValid || saving}
+              className="rounded-xl bg-[var(--accent)] px-5 py-2.5 text-sm font-bold text-white transition disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              {saving ? "Saving…" : "Save fee"}
+            </button>
+            {updatedAt ? (
+              <p className="text-xs text-[var(--color-muted)]">
+                Last updated {new Date(updatedAt).toLocaleString("en-IN")}
+              </p>
+            ) : null}
+          </div>
+        </form>
+
+        {message ? (
+          <p className="mt-4 rounded-xl border border-[var(--accent)]/20 bg-[var(--accent-soft)] px-4 py-3 text-sm text-[var(--accent)]">
+            {message}
+          </p>
+        ) : null}
+        {error ? (
+          <p className="mt-4 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+            {error}
+          </p>
+        ) : null}
+      </section>
+    </div>
+  );
+}

@@ -44,16 +44,19 @@ const ROOM_PROJECTION = {
   "walletReservations.operatorUserId": 1,
 };
 
-function calculatePlatformFee(amount) {
-  if (config.payoutRakeBasisPoints === 0) {
+function calculatePlatformFee(amount, platformFeePerPlayer = config.platformFeePerPlayer) {
+  if (!amount || amount <= 0) {
     return 0;
   }
 
-  return Math.floor((amount * config.payoutRakeBasisPoints) / 10_000);
+  return Math.min(amount, Math.max(0, platformFeePerPlayer));
 }
 
-function calculateRakeOnPot(potAmount) {
-  return calculatePlatformFee(potAmount);
+function calculateRakeOnPot(potAmount, seatCount, platformFeePerPlayer = config.platformFeePerPlayer) {
+  return Math.min(
+    potAmount,
+    Math.max(0, seatCount) * Math.max(0, platformFeePerPlayer),
+  );
 }
 
 function normalizeOperatorId(operatorId) {
@@ -70,21 +73,30 @@ function operatorLabel(operatorId) {
 }
 
 function buildGameProfitLoss(round) {
+  const platformFeePerPlayer = round.platformFeePerPlayer ?? config.platformFeePerPlayer;
   const realPlayers = round.players.filter((player) => !player.isBot);
   const botPlayers = round.players.filter((player) => player.isBot);
   const totalRealIncome = realPlayers.reduce(
     (total, player) => total + player.betAmount,
     0,
   );
-  const displayPotRake = calculateRakeOnPot(round.totalPotAmount);
-  const realPotRake = calculateRakeOnPot(totalRealIncome);
+  const displayPotRake = calculateRakeOnPot(
+    round.totalPotAmount,
+    round.players.length,
+    platformFeePerPlayer,
+  );
+  const realPotRake = calculateRakeOnPot(
+    totalRealIncome,
+    realPlayers.length,
+    platformFeePerPlayer,
+  );
   const winnerIsHouse = Boolean(round.winner?.isHouse);
   const winnerIsReal = Boolean(round.winner) && !round.winner.isBot && !winnerIsHouse;
   const winnerPayout = winnerIsReal ? round.winner.winAmount : 0;
   const platformProfit = totalRealIncome - winnerPayout;
 
   const players = round.players.map((player) => {
-    const platformFee = player.isBot ? 0 : calculatePlatformFee(player.betAmount);
+    const platformFee = calculatePlatformFee(player.betAmount, platformFeePerPlayer);
     const profitLoss = player.isBot
       ? null
       : player.winAmount - player.betAmount;
@@ -116,6 +128,7 @@ function buildGameProfitLoss(round) {
     status: round.status,
     currency: round.currency,
     entryFee: round.entryFee,
+    platformFeePerPlayer,
     playerCount: round.players.length,
     realPlayerCount: realPlayers.length,
     botPlayerCount: botPlayers.length,
@@ -295,7 +308,7 @@ function buildSummary(games) {
 
   return {
     currency: config.walletCurrency,
-    platformFeeBasisPoints: config.payoutRakeBasisPoints,
+    platformFeePerPlayer: games[0]?.platformFeePerPlayer ?? config.platformFeePerPlayer,
     ...totals,
     byOperator: buildOperatorBreakdown(games),
   };
@@ -325,12 +338,22 @@ function buildPagination({ page, limit, totalItems }) {
 }
 
 class ProfitLossService {
-  constructor(database) {
+  constructor(database, platformSettingsService = null) {
     this.matches = database.collection("matches");
     this.rooms = database.collection("rooms");
+    this.platformSettingsService = platformSettingsService;
+  }
+
+  async resolvePlatformFeePerPlayer() {
+    if (!this.platformSettingsService) {
+      return config.platformFeePerPlayer;
+    }
+    const settings = await this.platformSettingsService.getSettings();
+    return settings.platformFeePerPlayer;
   }
 
   async attachRooms(matches) {
+    const platformFeePerPlayer = await this.resolvePlatformFeePerPlayer();
     const roomIds = [...new Set(matches.map((match) => match.roomId).filter(Boolean))];
     const rooms = roomIds.length === 0
       ? []
@@ -340,7 +363,7 @@ class ProfitLossService {
     const roomsById = new Map(rooms.map((room) => [String(room._id), room]));
 
     return matches.map((match) => buildGameProfitLoss(
-      buildRound(match, roomsById.get(String(match.roomId))),
+      buildRound(match, roomsById.get(String(match.roomId)), platformFeePerPlayer),
     ));
   }
 
@@ -397,7 +420,7 @@ class ProfitLossService {
 
     return {
       currency: config.walletCurrency,
-      platformFeeBasisPoints: config.payoutRakeBasisPoints,
+      platformFeePerPlayer: filteredGames[0]?.platformFeePerPlayer ?? config.platformFeePerPlayer,
       totalGames: safeStats.totalGames ?? 0,
       totalRealIncome: safeStats.totalRealIncome ?? 0,
       totalPlatformProfit: safeStats.totalPlatformProfit ?? 0,

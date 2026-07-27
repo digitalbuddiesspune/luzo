@@ -95,6 +95,16 @@ data class IdempotencyKeyDocument(
     val createdAt: Instant,
 )
 
+@Document("platform_settings")
+data class PlatformSettingsDocument(
+    @Id
+    val id: String = GLOBAL_PLATFORM_SETTINGS_ID,
+    val platformFeePerPlayer: Long = 10,
+    val updatedAt: Instant = Instant.EPOCH,
+)
+
+const val GLOBAL_PLATFORM_SETTINGS_ID = "global"
+
 interface WalletAccountRepository : ReactiveMongoRepository<WalletAccountDocument, String> {
     fun findByUserId(userId: String): Mono<WalletAccountDocument>
 }
@@ -147,10 +157,11 @@ data class WalletReservation(
 internal fun calculateWinnerLedgerPayoutAmount(
     winnerUserId: String,
     paidReservations: List<WalletReservation>,
-    payoutRakeBasisPoints: Int,
+    platformFeePerPlayer: Long,
 ): Long {
     val potAmount = paidReservations.sumOf { it.amount }
-    val winnerPayoutAmount = potAmount - calculateRakeAmount(potAmount, payoutRakeBasisPoints)
+    val rakeAmount = calculateFlatPlatformFeeAmount(paidReservations, platformFeePerPlayer)
+    val winnerPayoutAmount = potAmount - rakeAmount
     val winnerReservation = paidReservations.lastOrNull { it.userId == winnerUserId }
     val winnerUsesOperatorWallet = winnerReservation?.operatorUserId != null ||
         winnerReservation?.operatorToken != null ||
@@ -165,6 +176,26 @@ internal fun calculateWinnerLedgerPayoutAmount(
     } else {
         winnerPayoutAmount
     }
+}
+
+internal fun calculateFlatPlatformFeeAmount(
+    reservations: List<WalletReservation>,
+    platformFeePerPlayer: Long,
+): Long {
+    if (platformFeePerPlayer <= 0) {
+        return 0L
+    }
+
+    val paidReservations = reservations.filter { it.amount > 0 }
+    if (paidReservations.isEmpty()) {
+        return 0L
+    }
+
+    // Fee applies to every seat in the pot, including synthetic bot entries.
+    val requestedFee = platformFeePerPlayer * paidReservations.size
+    val potAmount = paidReservations.sumOf { it.amount }
+
+    return minOf(requestedFee, potAmount)
 }
 
 internal fun calculateHouseWinAmount(reservations: List<WalletReservation>): Long {
@@ -198,14 +229,14 @@ class WalletService(
     private val log = LoggerFactory.getLogger(WalletService::class.java)
     private val walletCurrency = appProperties.wallet.currency.trim().uppercase()
     private val guestStartingBalance = appProperties.wallet.guestStartingBalance
-    private val payoutRakeBasisPoints = appProperties.wallet.payoutRakeBasisPoints
+    private val defaultPlatformFeePerPlayer = appProperties.wallet.platformFeePerPlayer
     private val houseUserId = appProperties.wallet.houseUserId.trim()
 
     init {
         require(walletCurrency.isNotBlank()) { "app.wallet.currency must not be blank." }
         require(guestStartingBalance >= 0) { "app.wallet.guest-starting-balance must not be negative." }
-        require(payoutRakeBasisPoints in 0..10_000) {
-            "app.wallet.payout-rake-basis-points must be between 0 and 10000."
+        require(defaultPlatformFeePerPlayer >= 0) {
+            "app.wallet.platform-fee-per-player must not be negative."
         }
         require(houseUserId.isNotBlank()) { "app.wallet.house-user-id must not be blank." }
     }
@@ -607,6 +638,23 @@ class WalletService(
         winnerUserId: String,
         reservations: List<WalletReservation>,
     ): Mono<Void> {
+        return resolvePlatformFeePerPlayer().flatMap { platformFeePerPlayer ->
+            payoutWinnerWithFee(matchId, winnerUserId, reservations, platformFeePerPlayer)
+        }
+    }
+
+    fun resolvePlatformFeePerPlayer(): Mono<Long> {
+        return mongoTemplate.findById(GLOBAL_PLATFORM_SETTINGS_ID, PlatformSettingsDocument::class.java)
+            .map { settings -> settings.platformFeePerPlayer.coerceAtLeast(0) }
+            .defaultIfEmpty(defaultPlatformFeePerPlayer.coerceAtLeast(0))
+    }
+
+    private fun payoutWinnerWithFee(
+        matchId: String,
+        winnerUserId: String,
+        reservations: List<WalletReservation>,
+        platformFeePerPlayer: Long,
+    ): Mono<Void> {
         val paidReservations = reservations.filter { it.amount > 0 }
         val realPaidReservations = paidReservations.filterNot { it.synthetic }
         val externallyDebitedReservations = realPaidReservations.filter { reservation ->
@@ -617,7 +665,11 @@ class WalletService(
         val confirmedExternalPotAmount = externallyDebitedReservations.sumOf { it.amount }
         if (potAmount <= 0) return Mono.empty()
         val isHouseWinner = winnerUserId == houseUserId
-        val rakeAmount = if (isHouseWinner) 0L else calculateRakeAmount(potAmount)
+        val rakeAmount = if (isHouseWinner) {
+            0L
+        } else {
+            calculateFlatPlatformFeeAmount(paidReservations, platformFeePerPlayer)
+        }
         val winnerReservation = paidReservations.lastOrNull { it.userId == winnerUserId }
         val winnerIsSynthetic = winnerReservation?.synthetic == true
         val winnerUsesOperatorWallet = winnerReservation?.operatorUserId != null ||
@@ -631,14 +683,16 @@ class WalletService(
             calculateWinnerLedgerPayoutAmount(
                 winnerUserId = winnerUserId,
                 paidReservations = paidReservations,
-                payoutRakeBasisPoints = payoutRakeBasisPoints,
+                platformFeePerPlayer = platformFeePerPlayer,
             )
         }
         log.info(
-            "Ludo wallet settlement requested matchId={} winnerUserId={} houseWinner={} reservations={} realReservations={} confirmedExternalReservations={} potAmount={} confirmedExternalPotAmount={} winnerUsesOperatorWallet={} winnerHasConfirmedExternalDebit={} payoutAmount={}",
+            "Ludo wallet settlement requested matchId={} winnerUserId={} houseWinner={} platformFeePerPlayer={} rakeAmount={} reservations={} realReservations={} confirmedExternalReservations={} potAmount={} confirmedExternalPotAmount={} winnerUsesOperatorWallet={} winnerHasConfirmedExternalDebit={} payoutAmount={}",
             matchId,
             winnerUserId,
             isHouseWinner,
+            platformFeePerPlayer,
+            rakeAmount,
             paidReservations.size,
             realPaidReservations.size,
             externallyDebitedReservations.size,
@@ -803,10 +857,6 @@ class WalletService(
             ),
             IdempotencyKeyDocument::class.java,
         ).then()
-    }
-
-    private fun calculateRakeAmount(potAmount: Long): Long {
-        return calculateRakeAmount(potAmount, payoutRakeBasisPoints)
     }
 
     private fun persistWinnerPayout(

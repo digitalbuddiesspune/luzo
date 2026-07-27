@@ -1,4 +1,4 @@
-import { formatAmount, formatPercentFromBasisPoints } from "../utils/format";
+import { formatAmount } from "../utils/format";
 
 function StatIcon({ type }) {
   const className = "h-4 w-4";
@@ -73,7 +73,9 @@ export function SummaryCards({ summary }) {
     return null;
   }
 
-  const feePercent = formatPercentFromBasisPoints(summary.platformFeeBasisPoints);
+  const feeHint = summary.platformFeePerPlayer != null
+    ? `${formatAmount(summary.platformFeePerPlayer, summary.currency)} / seat`
+    : "Configured platform fee";
 
   return (
     <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
@@ -94,7 +96,7 @@ export function SummaryCards({ summary }) {
       <StatCard
         label="Platform Profit"
         value={formatAmount(summary.totalPlatformProfit, summary.currency)}
-        hint={`Income − payouts · Fee ${feePercent}`}
+        hint={`Income − payouts · Fee ${feeHint}`}
         icon="profit"
         accent
         delayClass="stagger-3"

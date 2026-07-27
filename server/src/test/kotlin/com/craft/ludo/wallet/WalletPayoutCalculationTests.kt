@@ -5,7 +5,7 @@ import org.junit.jupiter.api.Test
 
 class WalletPayoutCalculationTests {
     @Test
-    fun `externally debited winner receives synthetic bot boot amounts`() {
+    fun `one real and three bots charge fee on every seat`() {
         val winnerUserId = "019edbaa-d1926d76-7163-8684c7-73"
         val reservations = listOf(
             WalletReservation(
@@ -41,14 +41,69 @@ class WalletPayoutCalculationTests {
         val payoutAmount = calculateWinnerLedgerPayoutAmount(
             winnerUserId = winnerUserId,
             paidReservations = reservations,
-            payoutRakeBasisPoints = 0,
+            platformFeePerPlayer = 10,
         )
 
-        assertThat(payoutAmount).isEqualTo(400)
+        // 400 pot - (10 fee × 4 seats) = 360
+        assertThat(calculateFlatPlatformFeeAmount(reservations, 10)).isEqualTo(40)
+        assertThat(payoutAmount).isEqualTo(360)
     }
 
     @Test
-    fun `bot winner is shown with full payout without targeting human wallet`() {
+    fun `one real and one bot charge fee on both seats so winner gets one hundred eighty`() {
+        val winnerUserId = "player-a"
+        val reservations = listOf(
+            WalletReservation(
+                userId = winnerUserId,
+                transactionId = "roomfee_a",
+                amount = 100,
+            ),
+            WalletReservation(
+                userId = "bot_red",
+                transactionId = "botfee_red",
+                amount = 100,
+                synthetic = true,
+            ),
+        )
+
+        val payoutAmount = calculateWinnerLedgerPayoutAmount(
+            winnerUserId = winnerUserId,
+            paidReservations = reservations,
+            platformFeePerPlayer = 10,
+        )
+
+        assertThat(calculateFlatPlatformFeeAmount(reservations, 10)).isEqualTo(20)
+        assertThat(payoutAmount).isEqualTo(180)
+    }
+
+    @Test
+    fun `two real players pay ten each so winner receives one hundred eighty`() {
+        val winnerUserId = "player-a"
+        val reservations = listOf(
+            WalletReservation(
+                userId = winnerUserId,
+                transactionId = "roomfee_a",
+                amount = 100,
+            ),
+            WalletReservation(
+                userId = "player-b",
+                transactionId = "roomfee_b",
+                amount = 100,
+            ),
+        )
+
+        val payoutAmount = calculateWinnerLedgerPayoutAmount(
+            winnerUserId = winnerUserId,
+            paidReservations = reservations,
+            platformFeePerPlayer = 10,
+        )
+
+        assertThat(calculateFlatPlatformFeeAmount(reservations, 10)).isEqualTo(20)
+        assertThat(payoutAmount).isEqualTo(180)
+    }
+
+    @Test
+    fun `bot winner payout amount still reflects full pot minus seat fees`() {
         val humanUserId = "019edbaa-d1926d76-7163-8684c7-73"
         val botWinnerUserId = "bot_red"
         val reservations = listOf(
@@ -85,10 +140,10 @@ class WalletPayoutCalculationTests {
         val payoutAmount = calculateWinnerLedgerPayoutAmount(
             winnerUserId = botWinnerUserId,
             paidReservations = reservations,
-            payoutRakeBasisPoints = 0,
+            platformFeePerPlayer = 10,
         )
 
-        assertThat(payoutAmount).isEqualTo(400)
+        assertThat(payoutAmount).isEqualTo(360)
         assertThat(botWinnerUserId).isNotEqualTo(humanUserId)
     }
 

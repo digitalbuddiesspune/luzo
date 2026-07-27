@@ -1,4 +1,5 @@
 const API_BASE = import.meta.env.VITE_API_BASE_URL || "/api/v1/admin/profit-loss";
+const SETTINGS_API_BASE = import.meta.env.VITE_SETTINGS_API_BASE_URL || "/api/v1/admin/settings";
 
 async function request(path, params = {}) {
   const url = new URL(`${API_BASE}${path}`, window.location.origin);
@@ -14,6 +15,30 @@ async function request(path, params = {}) {
   if (!response.ok) {
     const message = await response.text();
     throw new Error(message || `Request failed with status ${response.status}`);
+  }
+
+  return response.json();
+}
+
+async function settingsRequest(path = "", options = {}) {
+  const url = new URL(`${SETTINGS_API_BASE}${path}`, window.location.origin);
+  const response = await fetch(url, {
+    headers: {
+      "Content-Type": "application/json",
+      ...(options.headers || {}),
+    },
+    ...options,
+  });
+
+  if (!response.ok) {
+    let message = `Request failed with status ${response.status}`;
+    try {
+      const body = await response.json();
+      message = body?.error?.message || message;
+    } catch {
+      // keep default message
+    }
+    throw new Error(message);
   }
 
   return response.json();
@@ -43,4 +68,15 @@ export function fetchGames(page = 1, limit = 20, playerCount = "all", operatorId
 
 export function fetchUsers(page = 1, limit = 20, playerCount = "all", operatorId = "all") {
   return request("/users", withFilters({ page, limit }, playerCount, operatorId));
+}
+
+export function fetchPlatformSettings() {
+  return settingsRequest("/");
+}
+
+export function updatePlatformSettings({ platformFeePerPlayer }) {
+  return settingsRequest("/", {
+    method: "PUT",
+    body: JSON.stringify({ platformFeePerPlayer }),
+  });
 }

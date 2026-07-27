@@ -5,6 +5,7 @@ import { Sidebar } from "./components/Sidebar";
 import { DashboardPage } from "./pages/DashboardPage";
 import { PlatformsPage } from "./pages/PlatformsPage";
 import { ProfitLossPage } from "./pages/ProfitLossPage";
+import { SettingsPage } from "./pages/SettingsPage";
 
 function App() {
   const [activePage, setActivePage] = useState("dashboard");
@@ -118,6 +119,7 @@ function App() {
     dashboard: { title: "Dashboard", hint: "Live overview" },
     platforms: { title: "Platforms", hint: "Per-partner breakdown" },
     "profit-loss": { title: "Profit & Loss", hint: "Games, users & filters" },
+    settings: { title: "Settings", hint: "Platform fee & monetization" },
   }[activePage] || { title: "Admin", hint: "" };
 
   const operators = summary?.byOperator || dashboardSummary?.byOperator || [];
@@ -160,14 +162,14 @@ function App() {
         </header>
 
         <main className="flex-1 px-4 py-6 sm:px-6 lg:px-8">
-          {loading ? (
+          {loading && activePage !== "settings" ? (
             <div className="flex flex-col items-center justify-center gap-3 rounded-2xl border border-[var(--color-line)] bg-white px-6 py-16 shadow-[var(--shadow-card)] animate-fade-up">
               <div className="h-9 w-9 animate-spin rounded-full border-2 border-[var(--color-line)] border-t-[var(--accent)]" />
               <p className="text-sm font-medium text-[var(--color-muted)]">Loading admin data…</p>
             </div>
           ) : null}
 
-          {error ? (
+          {error && activePage !== "settings" ? (
             <div className="rounded-2xl border border-rose-200 bg-rose-50 px-6 py-4 text-rose-800 shadow-sm animate-fade-up">
               <p className="font-semibold">Something went wrong</p>
               <p className="mt-1 text-sm text-rose-700">{error}</p>
@@ -214,6 +216,10 @@ function App() {
               onUsersPageChange={loadUsers}
               onSelectGame={setSelectedGame}
             />
+          ) : null}
+
+          {activePage === "settings" ? (
+            <SettingsPage currency={summary?.currency || dashboardSummary?.currency || "INR"} />
           ) : null}
         </main>
       </div>

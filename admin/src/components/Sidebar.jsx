@@ -2,6 +2,7 @@ const NAV_ITEMS = [
   { id: "dashboard", label: "Dashboard", icon: "dashboard" },
   { id: "platforms", label: "Platforms", icon: "platforms" },
   { id: "profit-loss", label: "Profit & Loss", icon: "profit" },
+  { id: "settings", label: "Settings", icon: "settings" },
 ];
 
 function NavIcon({ name }) {
@@ -24,6 +25,18 @@ function NavIcon({ name }) {
         <circle cx="7" cy="17" r="3" />
         <circle cx="17" cy="17" r="3" />
         <path d="M10 7h4M7 10v4M17 10v4M10 17h4" strokeLinecap="round" />
+      </svg>
+    );
+  }
+
+  if (name === "settings") {
+    return (
+      <svg className="h-[18px] w-[18px] shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+        <circle cx="12" cy="12" r="3" />
+        <path
+          d="M19.4 15a1.7 1.7 0 00.3 1.8l.1.1a2 2 0 11-2.8 2.8l-.1-.1a1.7 1.7 0 00-1.8-.3 1.7 1.7 0 00-1 1.5V21a2 2 0 11-4 0v-.1a1.7 1.7 0 00-1.1-1.5 1.7 1.7 0 00-1.8.3l-.1.1a2 2 0 11-2.8-2.8l.1-.1a1.7 1.7 0 00.3-1.8 1.7 1.7 0 00-1.5-1H3a2 2 0 110-4h.1a1.7 1.7 0 001.5-1.1 1.7 1.7 0 00-.3-1.8l-.1-.1a2 2 0 112.8-2.8l.1.1a1.7 1.7 0 001.8.3H9a1.7 1.7 0 001-1.5V3a2 2 0 114 0v.1a1.7 1.7 0 001 1.5 1.7 1.7 0 001.8-.3l.1-.1a2 2 0 112.8 2.8l-.1.1a1.7 1.7 0 00-.3 1.8V9c.2.6.7 1 1.5 1H21a2 2 0 110 4h-.1a1.7 1.7 0 00-1.5 1z"
+          strokeLinejoin="round"
+        />
       </svg>
     );
   }

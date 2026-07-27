@@ -186,9 +186,13 @@ function renderSingleRoundHtml(round) {
   });
 }
 
-function calculateWinnerAmount(potAmount) {
-  const rakeAmount = Math.floor(
-    (potAmount * config.payoutRakeBasisPoints) / 10_000,
+function calculateWinnerAmount(potAmount, realPlayerCount, platformFeePerPlayer) {
+  const feePerPlayer = Number.isFinite(platformFeePerPlayer)
+    ? Math.max(0, platformFeePerPlayer)
+    : config.platformFeePerPlayer;
+  const rakeAmount = Math.min(
+    potAmount,
+    Math.max(0, realPlayerCount) * feePerPlayer,
   );
 
   return potAmount - rakeAmount;
@@ -235,7 +239,7 @@ function indexRoomParticipants(room) {
   return participantsByStoredUserId;
 }
 
-function buildRound(match, room) {
+function buildRound(match, room, platformFeePerPlayer = config.platformFeePerPlayer) {
   const reservations = Array.isArray(room?.walletReservations)
     ? room.walletReservations
     : [];
@@ -266,8 +270,13 @@ function buildRound(match, room) {
   const isHouseWinner = Boolean(
     match.winnerUserId && match.winnerUserId === config.houseUserId,
   );
+  const paidReservationCount = reservations.filter(
+    (reservation) => reservation?.amount > 0,
+  ).length;
+  const seatCount = storedPlayers.length;
+  const feePlayerCount = paidReservationCount > 0 ? paidReservationCount : seatCount;
   const winnerAmount = match.winnerUserId && !isHouseWinner
-    ? calculateWinnerAmount(totalPotAmount)
+    ? calculateWinnerAmount(totalPotAmount, feePlayerCount, platformFeePerPlayer)
     : 0;
 
   const players = storedPlayers.map((player) => {
@@ -309,6 +318,7 @@ function buildRound(match, room) {
     currency: config.walletCurrency,
     entryFee: safeAmount(match.entryFee ?? room?.entryFee),
     totalPotAmount,
+    platformFeePerPlayer,
     players,
     winner: match.winnerUserId
       ? {
@@ -328,14 +338,24 @@ function buildRound(match, room) {
 }
 
 class RoundsService {
-  constructor(database) {
+  constructor(database, platformSettingsService = null) {
     this.matches = database.collection("matches");
     this.rooms = database.collection("rooms");
+    this.platformSettingsService = platformSettingsService;
+  }
+
+  async resolvePlatformFeePerPlayer() {
+    if (!this.platformSettingsService) {
+      return config.platformFeePerPlayer;
+    }
+    const settings = await this.platformSettingsService.getSettings();
+    return settings.platformFeePerPlayer;
   }
 
   async listLudoRounds({ page, limit }) {
     const filter = { status: "FINISHED" };
     const skip = (page - 1) * limit;
+    const platformFeePerPlayer = await this.resolvePlatformFeePerPlayer();
 
     const [totalItems, matches] = await Promise.all([
       this.matches.countDocuments(filter),
@@ -364,6 +384,7 @@ class RoundsService {
       data: matches.map((match) => buildRound(
         match,
         roomsById.get(String(match.roomId)),
+        platformFeePerPlayer,
       )),
       pagination: {
         page,
@@ -377,6 +398,7 @@ class RoundsService {
   }
 
   async getSingleLudoRoundHtml({ userId, operatorId, lobbyId }) {
+    const platformFeePerPlayer = await this.resolvePlatformFeePerPlayer();
     const room = await this.rooms.findOne(
       {
         _id: lobbyId,
@@ -418,7 +440,7 @@ class RoundsService {
       );
     }
 
-    return renderSingleRoundHtml(buildRound(match, room));
+    return renderSingleRoundHtml(buildRound(match, room, platformFeePerPlayer));
   }
 }
 
