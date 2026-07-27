@@ -2591,10 +2591,11 @@ function BoardToken({
   return (
     <button
       type="button"
-      className={`board-token-button stack-${stackIndex}`}
+      className={`board-token-button stack-${stackIndex} is-choice`}
       {...pressHandlers}
       aria-label={`Move ${color} token`}
     >
+      <span className="token-choice-ring" aria-hidden="true" />
       {tokenImage}
     </button>
   );
@@ -2620,10 +2621,11 @@ function HouseToken({ color, isSelectable, onSelect }) {
   return (
     <button
       type="button"
-      className="house-token-button"
+      className="house-token-button is-choice"
       {...pressHandlers}
       aria-label={`Move ${color} token`}
     >
+      <span className="token-choice-ring" aria-hidden="true" />
       {tokenImage}
     </button>
   );
@@ -4546,7 +4548,6 @@ function PrivateRoomPageShell({ appState }) {
         }
 
         setIsRealtimeConnected(false);
-        setStatusMessage("Reconnecting to private table...");
         reconnectTimeoutRef.current = window.setTimeout(() => {
           connectSocket(websocketPath);
         }, ONLINE_SOCKET_RECONNECT_DELAY_MS);
@@ -4555,7 +4556,6 @@ function PrivateRoomPageShell({ appState }) {
       socket.onerror = () => {
         if (!cancelled) {
           setIsRealtimeConnected(false);
-          setStatusMessage("Live connection interrupted. Retrying...");
         }
       };
     }
@@ -5250,7 +5250,6 @@ function OnlineBoardPageShell({ appState, configuredMaxPlayers }) {
         }
 
         setIsRealtimeConnected(false);
-        setStatusMessage("Reconnecting to live match...");
         reconnectTimeoutRef.current = window.setTimeout(() => {
           connectSocket(websocketPath);
         }, ONLINE_SOCKET_RECONNECT_DELAY_MS);
@@ -5259,7 +5258,6 @@ function OnlineBoardPageShell({ appState, configuredMaxPlayers }) {
       socket.onerror = () => {
         if (!cancelled) {
           setIsRealtimeConnected(false);
-          setStatusMessage("Live connection interrupted. Retrying...");
         }
       };
     }
