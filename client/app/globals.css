@@ -3153,6 +3153,12 @@ img {
   z-index: 1;
 }
 
+.house-slot.is-token-choice-slot {
+  cursor: pointer;
+  z-index: 5;
+  touch-action: manipulation;
+}
+
 .house-slot-0 {
   position: absolute;
   left: 25%;
@@ -3335,6 +3341,12 @@ img {
   z-index: 30;
 }
 
+.board-cell.is-token-choice-cell {
+  cursor: pointer;
+  z-index: 40;
+  touch-action: manipulation;
+}
+
 .board-cell.start-red,
 .board-cell.start-green,
 .board-cell.start-yellow,
@@ -3494,6 +3506,12 @@ img {
   z-index: 22;
   touch-action: manipulation;
   overflow: visible;
+}
+
+.board-token-button {
+  /* Expand tap target around the goti so the whole block feels clickable. */
+  min-width: 130%;
+  min-height: 130%;
 }
 
 .board-token-marker .board-token,

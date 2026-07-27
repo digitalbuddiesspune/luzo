@@ -259,7 +259,7 @@ function resolveOnlineLobbyPollDelayMs(room, match) {
 function isOnlineLobbyStarting(room) {
   return String(room?.status || "").toUpperCase() === "STARTING";
 }
-const TOKEN_STEP_ANIMATION_MS = 225;
+const TOKEN_STEP_ANIMATION_MS = 200;
 const CAPTURE_RETURN_STEP_MS = 28;
 const CAPTURE_RETURN_SAMPLES_PER_SEGMENT = 4;
 const TURN_WARNING_THRESHOLD_SECONDS = 5;
@@ -678,6 +678,53 @@ function resolveForcedAutoMoveToken(selectableTokenIndexes) {
   return Number(selectableTokenIndexes[0]);
 }
 
+function buildOptimisticTokenMove(match, tokenIndex, userId) {
+  if (
+    !match ||
+    match.phase !== "awaiting-move" ||
+    match.currentTurnUserId !== userId ||
+    !isTokenSelectable(match.selectableTokenIndexes, tokenIndex)
+  ) {
+    return null;
+  }
+
+  const playerIndex = match.players.findIndex((player) => player.id === userId);
+
+  if (playerIndex < 0) {
+    return null;
+  }
+
+  const diceValue = Number(match.dice);
+  const currentProgress = match.players[playerIndex].tokens[tokenIndex];
+
+  if (!Number.isFinite(diceValue) || diceValue < 1 || !canMoveToken(currentProgress, diceValue)) {
+    return null;
+  }
+
+  const nextProgress = currentProgress === -1 ? 0 : currentProgress + diceValue;
+  const players = match.players.map((player, index) => {
+    if (index !== playerIndex) {
+      return {
+        ...player,
+        tokens: [...player.tokens],
+      };
+    }
+
+    const tokens = [...player.tokens];
+    tokens[tokenIndex] = nextProgress;
+    return {
+      ...player,
+      tokens,
+    };
+  });
+
+  return {
+    ...match,
+    players,
+    selectableTokenIndexes: [],
+  };
+}
+
 function getBoardCellKey(color, progress, tokenIndex = 0) {
   const [row, col] = resolveTokenCell(color, progress, tokenIndex);
   return `${row}-${col}`;
@@ -1000,12 +1047,15 @@ function useImmediatePress(action, disabled = false) {
 
       suppressNextClickRef.current = true;
       event.preventDefault();
+      event.stopPropagation();
       action();
     },
     onClick(event) {
       if (disabled || !action) {
         return;
       }
+
+      event.stopPropagation();
 
       if (suppressNextClickRef.current) {
         suppressNextClickRef.current = false;
@@ -2793,6 +2843,151 @@ function HouseToken({ color, isSelectable, showChoiceRing = false, onSelect }) {
   );
 }
 
+function HouseYardSlot({
+  color,
+  slotIndex,
+  token,
+  isRollingPlayerChoosing,
+  selectableTokenIndexes,
+  userPlayerId,
+  onSelectToken,
+}) {
+  const isSelectable =
+    isRollingPlayerChoosing &&
+    token?.playerId === userPlayerId &&
+    isTokenSelectable(selectableTokenIndexes, token.tokenIndex);
+  const showChoiceRing = isSelectable;
+  const slotPressHandlers = useImmediatePress(
+    isSelectable ? () => onSelectToken?.(token.tokenIndex) : undefined,
+    !isSelectable,
+  );
+
+  return (
+    <div
+      className={`house-slot house-slot-${slotIndex}${isSelectable ? " is-token-choice-slot" : ""}`}
+      {...(isSelectable
+        ? {
+            role: "button",
+            tabIndex: 0,
+            "aria-label": `Move ${token.color} token`,
+            ...slotPressHandlers,
+            onKeyDown(event) {
+              if (event.key === "Enter" || event.key === " ") {
+                event.preventDefault();
+                onSelectToken?.(token.tokenIndex);
+              }
+            },
+          }
+        : {})}
+    >
+      {token ? (
+        <HouseToken
+          color={token.color}
+          isSelectable={isSelectable}
+          showChoiceRing={showChoiceRing}
+          onSelect={
+            isSelectable ? () => onSelectToken?.(token.tokenIndex) : undefined
+          }
+        />
+      ) : null}
+    </div>
+  );
+}
+
+function BoardPathCell({
+  cellKey,
+  className,
+  tokens,
+  isRollingPlayerChoosing,
+  selectableTokenIndexes,
+  shouldHighlightUserBoardTokens,
+  userPlayerId,
+  onSelectToken,
+  isSafe,
+  safeStarColor,
+  zoneColor,
+  arrowAsset,
+}) {
+  const selectableTokenOnCell = tokens.find(
+    (token) =>
+      isRollingPlayerChoosing &&
+      token.playerId === userPlayerId &&
+      isTokenSelectable(selectableTokenIndexes, token.tokenIndex),
+  );
+  const cellPressHandlers = useImmediatePress(
+    selectableTokenOnCell
+      ? () => onSelectToken?.(selectableTokenOnCell.tokenIndex)
+      : undefined,
+    !selectableTokenOnCell,
+  );
+
+  return (
+    <div
+      className={`${className}${selectableTokenOnCell ? " is-token-choice-cell" : ""}`}
+      {...(selectableTokenOnCell
+        ? {
+            role: "button",
+            tabIndex: 0,
+            "aria-label": `Move ${selectableTokenOnCell.color} token`,
+            ...cellPressHandlers,
+            onKeyDown(event) {
+              if (event.key === "Enter" || event.key === " ") {
+                event.preventDefault();
+                onSelectToken?.(selectableTokenOnCell.tokenIndex);
+              }
+            },
+          }
+        : {})}
+    >
+      {isSafe && (
+        <img
+          className="safe-star"
+          src={pickSafeStar(safeStarColor ?? zoneColor)}
+          alt=""
+          width={12}
+          height={11}
+          draggable={false}
+        />
+      )}
+      {arrowAsset && (
+        <img
+          className={`board-arrow board-arrow-${cellKey}`}
+          src={arrowAsset}
+          alt=""
+          width={15}
+          height={15}
+          draggable={false}
+        />
+      )}
+      {tokens.map((token, tokenIndex) => {
+        const isSelectable =
+          isRollingPlayerChoosing &&
+          token.playerId === userPlayerId &&
+          isTokenSelectable(selectableTokenIndexes, token.tokenIndex);
+        const showChoiceRing = isSelectable;
+        const isUserTurnToken =
+          shouldHighlightUserBoardTokens && token.playerId === userPlayerId;
+
+        return (
+          <BoardToken
+            key={token.id}
+            color={token.color}
+            stackIndex={tokenIndex}
+            isSelectable={isSelectable}
+            showChoiceRing={showChoiceRing}
+            isUserTurnToken={isUserTurnToken}
+            onSelect={
+              isSelectable
+                ? () => onSelectToken?.(token.tokenIndex)
+                : undefined
+            }
+          />
+        );
+      })}
+    </div>
+  );
+}
+
 function LudoBoard({
   match,
   selectableTokenIndexes = [],
@@ -2953,7 +3148,7 @@ function LudoBoard({
         )
       : 0;
     const moveAnimationDuration =
-      frames.length > 1 ? TOKEN_STEP_ANIMATION_MS * frames.length : 0;
+      frames.length > 1 ? TOKEN_STEP_ANIMATION_MS * (frames.length - 1) : 0;
     const captureAnimationDuration = capturedAnimations.length
       ? moveAnimationDuration + CAPTURE_RETURN_STEP_MS * captureMaxPositions
       : 0;
@@ -2979,7 +3174,7 @@ function LudoBoard({
                 onTokenStep?.();
                 setDisplayPlayers(framePlayers);
               },
-              TOKEN_STEP_ANIMATION_MS * (frameIndex + 1),
+              TOKEN_STEP_ANIMATION_MS * frameIndex,
             ),
           )
         : [];
@@ -3076,34 +3271,18 @@ function LudoBoard({
             key={`${color}-yard`}
             className={`board-house-overlay house-${color}${activeTurnColor === color ? " is-turn-house" : ""}`}
           >
-            {Array.from({ length: 4 }, (_, slotIndex) => {
-              const token = yardTokenMap[color][slotIndex];
-              const isSelectable =
-                isRollingPlayerChoosing &&
-                token?.playerId === userPlayerId &&
-                isTokenSelectable(selectableTokenIndexes, token.tokenIndex);
-              const showChoiceRing = isSelectable;
-
-              return (
-                <div
-                  key={`${color}-${slotIndex}`}
-                  className={`house-slot house-slot-${slotIndex}`}
-                >
-                  {token ? (
-                    <HouseToken
-                      color={token.color}
-                      isSelectable={isSelectable}
-                      showChoiceRing={showChoiceRing}
-                      onSelect={
-                        isSelectable
-                          ? () => onSelectToken?.(token.tokenIndex)
-                          : undefined
-                      }
-                    />
-                  ) : null}
-                </div>
-              );
-            })}
+            {Array.from({ length: 4 }, (_, slotIndex) => (
+              <HouseYardSlot
+                key={`${color}-${slotIndex}`}
+                color={color}
+                slotIndex={slotIndex}
+                token={yardTokenMap[color][slotIndex]}
+                isRollingPlayerChoosing={isRollingPlayerChoosing}
+                selectableTokenIndexes={selectableTokenIndexes}
+                userPlayerId={userPlayerId}
+                onSelectToken={onSelectToken}
+              />
+            ))}
           </div>
         ))}
 
@@ -3145,54 +3324,21 @@ function LudoBoard({
             if (isSafe) classNames.push("is-safe");
 
             return (
-              <div key={key} className={classNames.join(" ")}>
-                {isSafe && (
-                  <img
-                    className="safe-star"
-                    src={pickSafeStar(safeStarColor ?? zoneColor)}
-                    alt=""
-                    width={12}
-                    height={11}
-                    draggable={false}
-                  />
-                )}
-                {arrowAsset && (
-                  <img
-                    className={`board-arrow board-arrow-${key}`}
-                    src={arrowAsset}
-                    alt=""
-                    width={15}
-                    height={15}
-                    draggable={false}
-                  />
-                )}
-                {tokens.map((token, tokenIndex) => {
-                  const isSelectable =
-                    isRollingPlayerChoosing &&
-                    token.playerId === userPlayerId &&
-                    isTokenSelectable(selectableTokenIndexes, token.tokenIndex);
-                  const showChoiceRing = isSelectable;
-                  const isUserTurnToken =
-                    shouldHighlightUserBoardTokens &&
-                    token.playerId === userPlayerId;
-
-                  return (
-                    <BoardToken
-                      key={token.id}
-                      color={token.color}
-                      stackIndex={tokenIndex}
-                      isSelectable={isSelectable}
-                      showChoiceRing={showChoiceRing}
-                      isUserTurnToken={isUserTurnToken}
-                      onSelect={
-                        isSelectable
-                          ? () => onSelectToken?.(token.tokenIndex)
-                          : undefined
-                      }
-                    />
-                  );
-                })}
-              </div>
+              <BoardPathCell
+                key={key}
+                cellKey={key}
+                className={classNames.join(" ")}
+                tokens={tokens}
+                isRollingPlayerChoosing={isRollingPlayerChoosing}
+                selectableTokenIndexes={selectableTokenIndexes}
+                shouldHighlightUserBoardTokens={shouldHighlightUserBoardTokens}
+                userPlayerId={userPlayerId}
+                onSelectToken={onSelectToken}
+                isSafe={isSafe}
+                safeStarColor={safeStarColor}
+                zoneColor={zoneColor}
+                arrowAsset={arrowAsset}
+              />
             );
           })}
         </div>
@@ -5173,6 +5319,14 @@ function PrivateRoomPageShell({ appState }) {
 
     try {
       setIsSubmittingMove(true);
+      const optimisticMatch = buildOptimisticTokenMove(
+        match,
+        tokenIndex,
+        session.userId,
+      );
+      if (optimisticMatch) {
+        applyFreshMatch(setMatch, optimisticMatch);
+      }
       const updatedMatch = await submitMatchMove(
         session.sessionToken,
         match.id,
@@ -5192,6 +5346,13 @@ function PrivateRoomPageShell({ appState }) {
         enabled: !isRealtimeConnected,
       });
     } catch (error) {
+      try {
+        const latestMatch = await fetchMatchSnapshot(
+          session.sessionToken,
+          match.id,
+        );
+        applyFreshMatch(setMatch, normalizeMatchSnapshot(latestMatch));
+      } catch {}
       setIsSubmittingMove(false);
       setStatusMessage(error.message || "Unable to move the selected token.");
     }
@@ -5629,6 +5790,9 @@ function OnlineBoardPageShell({ appState, configuredMaxPlayers }) {
           setStatusMessage(
             error.message || "Unable to connect to the game server.",
           );
+          lobbyPollTimeoutRef.current = window.setTimeout(() => {
+            pollLobby(sessionToken);
+          }, ONLINE_LOBBY_POLL_MS);
         }
       }
     }
@@ -5813,6 +5977,14 @@ function OnlineBoardPageShell({ appState, configuredMaxPlayers }) {
 
     try {
       setIsSubmittingMove(true);
+      const optimisticMatch = buildOptimisticTokenMove(
+        match,
+        tokenIndex,
+        session.userId,
+      );
+      if (optimisticMatch) {
+        applyFreshMatch(setMatch, optimisticMatch);
+      }
       const updatedMatch = await submitMatchMove(
         session.sessionToken,
         match.id,
@@ -5832,6 +6004,13 @@ function OnlineBoardPageShell({ appState, configuredMaxPlayers }) {
         enabled: !isRealtimeConnected,
       });
     } catch (error) {
+      try {
+        const latestMatch = await fetchMatchSnapshot(
+          session.sessionToken,
+          match.id,
+        );
+        applyFreshMatch(setMatch, normalizeMatchSnapshot(latestMatch));
+      } catch {}
       setIsSubmittingMove(false);
       setStatusMessage(error.message || "Unable to move the selected token.");
     }

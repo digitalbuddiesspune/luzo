@@ -50,10 +50,25 @@ class OnlineRoomStartDueTests {
         assertThat(shouldStartOnlineWaitingRoom(room, now)).isFalse()
     }
 
+    @Test
+    fun `recovers corrupt starting room without start attempt id`() {
+        val now = Instant.parse("2026-01-01T12:00:00Z")
+        val room = onlineWaitingRoom(
+            status = RoomStatus.STARTING,
+            startAttemptId = null,
+            updatedAt = now.minusSeconds(1),
+        )
+
+        assertThat(isOnlineRoomStartingCorrupt(room)).isTrue()
+        assertThat(isOnlineRoomStartingStale(room, now)).isTrue()
+        assertThat(shouldStartOnlineWaitingRoom(room, now)).isTrue()
+    }
+
     private fun onlineWaitingRoom(
         status: RoomStatus = RoomStatus.WAITING,
         ownedWaitingDeadlineAt: Instant? = Instant.parse("2026-01-01T12:00:00Z"),
         updatedAt: Instant = Instant.parse("2026-01-01T12:00:00Z"),
+        startAttemptId: String? = null,
     ): RoomDocument {
         return RoomDocument(
             mode = RoomMode.ONLINE_PUBLIC,
@@ -64,6 +79,7 @@ class OnlineRoomStartDueTests {
             createdAt = Instant.parse("2026-01-01T11:59:00Z"),
             updatedAt = updatedAt,
             ownedWaitingDeadlineAt = ownedWaitingDeadlineAt,
+            startAttemptId = startAttemptId,
             seats = listOf(
                 RoomSeat(
                     userId = "player-1",
