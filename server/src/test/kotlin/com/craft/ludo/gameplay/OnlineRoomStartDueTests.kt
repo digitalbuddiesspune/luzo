@@ -85,6 +85,7 @@ class OnlineRoomStartDueTests {
                     userId = "player-1",
                     displayName = "Player 1",
                     color = "blue",
+                    isBot = false,
                     joinedAt = Instant.parse("2026-01-01T11:59:00Z"),
                 ),
             ),

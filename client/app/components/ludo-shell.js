@@ -1243,13 +1243,15 @@ function rollInteractiveMatch(match) {
   return applyTokenMove(rolledMatch, forcedTokenIndex);
 }
 
-function isCellThreatenedByOpponents(players, playerIndex, cellKey) {
-  return players.some((opponent, opponentIndex) => {
+function countAttackersOnCell(players, playerIndex, cellKey) {
+  let attackers = 0;
+
+  players.forEach((opponent, opponentIndex) => {
     if (opponentIndex === playerIndex || opponent.isAbandoned) {
-      return false;
+      return;
     }
 
-    return opponent.tokens.some((opponentProgress, opponentTokenIndex) => {
+    const canReach = opponent.tokens.some((opponentProgress, opponentTokenIndex) => {
       if (opponentProgress < 0 || opponentProgress > MAIN_PATH_LAST_PROGRESS) {
         return false;
       }
@@ -1259,12 +1261,10 @@ function isCellThreatenedByOpponents(players, playerIndex, cellKey) {
           continue;
         }
 
-        const reachProgress =
-          opponentProgress === -1 ? 0 : opponentProgress + dice;
         if (
           getBoardCellKey(
             opponent.color,
-            reachProgress,
+            opponentProgress + dice,
             opponentTokenIndex,
           ) === cellKey
         ) {
@@ -1274,7 +1274,39 @@ function isCellThreatenedByOpponents(players, playerIndex, cellKey) {
 
       return false;
     });
+
+    if (canReach) {
+      attackers += 1;
+    }
   });
+
+  return attackers;
+}
+
+function isCellThreatenedByOpponents(players, playerIndex, cellKey) {
+  return countAttackersOnCell(players, playerIndex, cellKey) > 0;
+}
+
+function progressRewardMultiplier(progress) {
+  const ratio = progress / FINISHED_PROGRESS;
+  if (ratio < 0.25) return 1;
+  if (ratio < 0.5) return 1.2;
+  if (ratio < 0.75) return 1.5;
+  if (ratio < 0.9) return 2;
+  return 3;
+}
+
+function opponentThreatScore(players, botIndex, opponentIndex) {
+  const opponent = players[opponentIndex];
+  const completed = opponent.tokens.filter((p) => p === FINISHED_PROGRESS).length;
+  const active = opponent.tokens.filter((p) => p >= 0);
+  const avg =
+    active.length === 0
+      ? 0
+      : active.reduce((sum, p) => sum + Math.min(p, FINISHED_PROGRESS), 0) /
+        active.length;
+  const nearHome = opponent.tokens.filter((p) => p >= 40).length;
+  return completed * 3 + avg / 20 + nearHome * 1.5;
 }
 
 function scoreBotMove(players, playerIndex, tokenIndex, diceValue) {
@@ -1282,7 +1314,8 @@ function scoreBotMove(players, playerIndex, tokenIndex, diceValue) {
   const currentProgress = player.tokens[tokenIndex];
   const nextProgress =
     currentProgress === -1 ? 0 : currentProgress + diceValue;
-  let score = 0;
+  const activePlayers = players.filter((p) => !p.isAbandoned).length;
+  const twoPlayerAttackMultiplier = activePlayers === 2 ? 1.3 : 1;
 
   const tokensAfterMove = [...player.tokens];
   tokensAfterMove[tokenIndex] = nextProgress;
@@ -1290,16 +1323,50 @@ function scoreBotMove(players, playerIndex, tokenIndex, diceValue) {
     return 10_000;
   }
 
+  let immediate = 0;
+  let progressScore = 0;
+  let safety = 0;
+  let attack = 0;
+  let strategic = 0;
+  let risk = 0;
+
   if (nextProgress === FINISHED_PROGRESS) {
-    score += 1_200;
+    immediate += 1_200;
   }
 
-  if (nextProgress >= 0 && nextProgress <= MAIN_PATH_LAST_PROGRESS) {
-    const landingKey = getBoardCellKey(
-      player.color,
-      nextProgress,
-      tokenIndex,
+  if (
+    nextProgress >= HOME_LANE_START_PROGRESS &&
+    nextProgress <= HOME_LANE_LAST_PROGRESS
+  ) {
+    immediate += 300;
+  }
+
+  const steps = currentProgress < 0 ? 1 : Math.max(0, nextProgress - currentProgress);
+  progressScore +=
+    steps * 10 * progressRewardMultiplier(Math.max(nextProgress, 0));
+
+  if (currentProgress === -1 && nextProgress === 0) {
+    const activeTokens = player.tokens.filter(
+      (progress) => progress >= 0 && progress < FINISHED_PROGRESS,
+    ).length;
+    if (activeTokens === 0) immediate += 264;
+    else if (activeTokens === 1) immediate += 168;
+    else if (activeTokens === 2) immediate += 84;
+    else immediate -= 48;
+  }
+
+  const wasThreatened =
+    currentProgress >= 0 &&
+    currentProgress <= MAIN_PATH_LAST_PROGRESS &&
+    !SAFE_CELL_KEYS.has(getBoardCellKey(player.color, currentProgress, tokenIndex)) &&
+    isCellThreatenedByOpponents(
+      players,
+      playerIndex,
+      getBoardCellKey(player.color, currentProgress, tokenIndex),
     );
+
+  if (nextProgress >= 0 && nextProgress <= MAIN_PATH_LAST_PROGRESS) {
+    const landingKey = getBoardCellKey(player.color, nextProgress, tokenIndex);
 
     if (!SAFE_CELL_KEYS.has(landingKey)) {
       players.forEach((opponent, opponentIndex) => {
@@ -1317,74 +1384,74 @@ function scoreBotMove(players, playerIndex, tokenIndex, diceValue) {
               opponentTokenIndex,
             ) === landingKey
           ) {
-            score += 900 + opponentProgress * 8;
+            const threatBonus = opponentThreatScore(players, playerIndex, opponentIndex) * 40;
+            const nearHomeBonus =
+              opponentProgress >= 40 ? 180 : opponentProgress >= 25 ? 80 : 0;
+            attack +=
+              (800 + opponentProgress * 4 + nearHomeBonus + threatBonus) *
+              twoPlayerAttackMultiplier;
           }
         });
       });
+
+      const attackers = countAttackersOnCell(players, playerIndex, landingKey);
+      if (attackers >= 2) {
+        safety -= 900;
+      } else if (attackers === 1) {
+        safety -= 700;
+      }
+
+      if (
+        currentProgress >= 0 &&
+        SAFE_CELL_KEYS.has(
+          getBoardCellKey(player.color, currentProgress, tokenIndex),
+        ) &&
+        attackers > 0
+      ) {
+        safety -= 250;
+      }
     } else {
-      score += 350;
+      safety += 220;
+      if (wasThreatened) {
+        safety += 500;
+      }
     }
-  } else if (
-    nextProgress >= HOME_LANE_START_PROGRESS &&
-    nextProgress <= HOME_LANE_LAST_PROGRESS
-  ) {
-    score += 450;
+  } else if (wasThreatened && nextProgress >= HOME_LANE_START_PROGRESS) {
+    safety += 700;
+  } else if (wasThreatened && nextProgress > currentProgress) {
+    safety += 200;
   }
 
-  if (
-    currentProgress >= 0 &&
-    currentProgress <= MAIN_PATH_LAST_PROGRESS &&
-    !SAFE_CELL_KEYS.has(
-      getBoardCellKey(player.color, currentProgress, tokenIndex),
-    ) &&
-    isCellThreatenedByOpponents(
-      players,
-      playerIndex,
-      getBoardCellKey(player.color, currentProgress, tokenIndex),
-    ) &&
-    (nextProgress > currentProgress || nextProgress >= HOME_LANE_START_PROGRESS)
-  ) {
-    score += 500;
+  // Stack / blockade hint
+  const beforeStacks = countOwnStacks(player);
+  const afterPlayer = {
+    ...player,
+    tokens: tokensAfterMove,
+  };
+  const afterStacks = countOwnStacks(afterPlayer);
+  if (afterStacks > beforeStacks) {
+    strategic += 400;
+  } else if (afterStacks < beforeStacks && nextProgress !== FINISHED_PROGRESS) {
+    strategic -= 150;
   }
 
-  if (
-    nextProgress >= 0 &&
-    nextProgress <= MAIN_PATH_LAST_PROGRESS &&
-    !SAFE_CELL_KEYS.has(getBoardCellKey(player.color, nextProgress, tokenIndex)) &&
-    isCellThreatenedByOpponents(
-      players,
-      playerIndex,
-      getBoardCellKey(player.color, nextProgress, tokenIndex),
-    )
-  ) {
-    score -= 650;
-  }
+  return immediate + progressScore + safety + attack + strategic + risk;
+}
 
-  if (nextProgress >= 0 && nextProgress < FINISHED_PROGRESS) {
-    score += nextProgress * 6;
-  }
-
-  if (currentProgress === -1 && nextProgress === 0) {
-    const activeTokens = player.tokens.filter(
-      (progress) => progress >= 0 && progress < FINISHED_PROGRESS,
-    ).length;
-
-    if (activeTokens === 0) {
-      score += 320;
-    } else if (activeTokens === 1) {
-      score += 180;
-    } else if (activeTokens === 2) {
-      score += 60;
-    } else {
-      score -= 120;
+function countOwnStacks(player) {
+  const counts = new Map();
+  player.tokens.forEach((progress, tokenIndex) => {
+    if (progress < 0 || progress > MAIN_PATH_LAST_PROGRESS) {
+      return;
     }
-  }
-
-  if (diceValue === 6 && nextProgress >= 0 && nextProgress <= MAIN_PATH_LAST_PROGRESS) {
-    score += 40;
-  }
-
-  return score;
+    const key = getBoardCellKey(player.color, progress, tokenIndex);
+    counts.set(key, (counts.get(key) || 0) + 1);
+  });
+  let stacks = 0;
+  counts.forEach((count) => {
+    if (count >= 2) stacks += 1;
+  });
+  return stacks;
 }
 
 function chooseBotToken(players, playerIndex, movableTokenIndexes, diceValue) {

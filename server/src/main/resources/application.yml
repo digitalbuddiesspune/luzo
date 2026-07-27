@@ -60,6 +60,29 @@ app:
     roll-delay-millis: ${APP_GAMEPLAY_ROLL_DELAY_MILLIS:700}
     bot-move-delay-millis: ${APP_GAMEPLAY_BOT_MOVE_DELAY_MILLIS:850}
     advance-delay-millis: ${APP_GAMEPLAY_ADVANCE_DELAY_MILLIS:750}
+    bot:
+      difficulty: ${APP_GAMEPLAY_BOT_DIFFICULTY:SUPER}
+      expectimax-depth: ${APP_GAMEPLAY_BOT_EXPECTIMAX_DEPTH:2}
+      max-decision-millis: ${APP_GAMEPLAY_BOT_MAX_DECISION_MILLIS:45}
+      two-player-attack-multiplier: ${APP_GAMEPLAY_BOT_TWO_PLAYER_ATTACK_MULTIPLIER:1.30}
+      win-game: ${APP_GAMEPLAY_BOT_WIN_GAME:10000}
+      token-home: ${APP_GAMEPLAY_BOT_TOKEN_HOME:1200}
+      capture-base: ${APP_GAMEPLAY_BOT_CAPTURE_BASE:800}
+      escape-threat: ${APP_GAMEPLAY_BOT_ESCAPE_THREAT:500}
+      create-blockade: ${APP_GAMEPLAY_BOT_CREATE_BLOCKADE:400}
+      break-opponent-blockade: ${APP_GAMEPLAY_BOT_BREAK_OPPONENT_BLOCKADE:350}
+      enter-home-path: ${APP_GAMEPLAY_BOT_ENTER_HOME_PATH:300}
+      land-safe: ${APP_GAMEPLAY_BOT_LAND_SAFE:220}
+      save-threatened: ${APP_GAMEPLAY_BOT_SAVE_THREATENED:200}
+      create-capture-threat: ${APP_GAMEPLAY_BOT_CREATE_CAPTURE_THREAT:180}
+      maintain-blockade: ${APP_GAMEPLAY_BOT_MAINTAIN_BLOCKADE:150}
+      leave-base: ${APP_GAMEPLAY_BOT_LEAVE_BASE:120}
+      progress-per-step: ${APP_GAMEPLAY_BOT_PROGRESS_PER_STEP:10}
+      expose-to-capture: ${APP_GAMEPLAY_BOT_EXPOSE_TO_CAPTURE:-700}
+      multi-opponent-danger: ${APP_GAMEPLAY_BOT_MULTI_OPPONENT_DANGER:-900}
+      break-own-blockade: ${APP_GAMEPLAY_BOT_BREAK_OWN_BLOCKADE:-300}
+      ignore-guaranteed-capture: ${APP_GAMEPLAY_BOT_IGNORE_GUARANTEED_CAPTURE:-250}
+      leave-safety-into-danger: ${APP_GAMEPLAY_BOT_LEAVE_SAFETY_INTO_DANGER:-250}
 
   wallet:
     currency: ${APP_WALLET_CURRENCY:INR}

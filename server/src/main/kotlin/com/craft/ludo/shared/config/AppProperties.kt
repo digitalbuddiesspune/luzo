@@ -26,6 +26,32 @@ data class GameplayProperties(
     val rollDelayMillis: Long = 700,
     val botMoveDelayMillis: Long = 850,
     val advanceDelayMillis: Long = 750,
+    val bot: BotProperties = BotProperties(),
+)
+
+data class BotProperties(
+    val difficulty: String = "SUPER",
+    val expectimaxDepth: Int = 2,
+    val maxDecisionMillis: Long = 45,
+    val twoPlayerAttackMultiplier: Double = 1.30,
+    val winGame: Double = 10_000.0,
+    val tokenHome: Double = 1_200.0,
+    val captureBase: Double = 800.0,
+    val escapeThreat: Double = 500.0,
+    val createBlockade: Double = 400.0,
+    val breakOpponentBlockade: Double = 350.0,
+    val enterHomePath: Double = 300.0,
+    val landSafe: Double = 220.0,
+    val saveThreatened: Double = 200.0,
+    val createCaptureThreat: Double = 180.0,
+    val maintainBlockade: Double = 150.0,
+    val leaveBase: Double = 120.0,
+    val progressPerStep: Double = 10.0,
+    val exposeToCapture: Double = -700.0,
+    val multiOpponentDanger: Double = -900.0,
+    val breakOwnBlockade: Double = -300.0,
+    val ignoreGuaranteedCapture: Double = -250.0,
+    val leaveSafetyIntoDanger: Double = -250.0,
 )
 
 data class WalletProperties(
