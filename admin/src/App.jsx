@@ -1,13 +1,23 @@
 import { useCallback, useEffect, useState } from "react";
-import { fetchGames, fetchSummary, fetchUsers } from "./api/client";
+import {
+  fetchAdminSession,
+  fetchGames,
+  fetchSummary,
+  fetchUsers,
+  loginAdmin,
+  logoutAdmin,
+} from "./api/client";
 import { GameDetailModal } from "./components/GameDetailModal";
 import { Sidebar } from "./components/Sidebar";
 import { DashboardPage } from "./pages/DashboardPage";
+import { LoginPage } from "./pages/LoginPage";
 import { PlatformsPage } from "./pages/PlatformsPage";
 import { ProfitLossPage } from "./pages/ProfitLossPage";
 import { SettingsPage } from "./pages/SettingsPage";
 
 function App() {
+  const [authChecked, setAuthChecked] = useState(false);
+  const [admin, setAdmin] = useState(null);
   const [activePage, setActivePage] = useState("dashboard");
   const [profitLossSection, setProfitLossSection] = useState("overview");
   const [playerFilter, setPlayerFilter] = useState("all");
@@ -21,7 +31,7 @@ function App() {
   const [users, setUsers] = useState([]);
   const [usersPagination, setUsersPagination] = useState(null);
   const [selectedGame, setSelectedGame] = useState(null);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
   const loadDashboard = useCallback(async () => {
@@ -61,6 +71,36 @@ function App() {
   useEffect(() => {
     let cancelled = false;
 
+    async function bootstrapAuth() {
+      try {
+        const session = await fetchAdminSession();
+        if (!cancelled) {
+          setAdmin(session?.admin || null);
+        }
+      } catch {
+        if (!cancelled) {
+          setAdmin(null);
+        }
+      } finally {
+        if (!cancelled) {
+          setAuthChecked(true);
+        }
+      }
+    }
+
+    bootstrapAuth();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!admin) {
+      return undefined;
+    }
+
+    let cancelled = false;
+
     async function loadInitialData() {
       setLoading(true);
       setError("");
@@ -69,6 +109,10 @@ function App() {
         await Promise.all([loadDashboard(), loadProfitLossData(1, "all", "all")]);
       } catch (loadError) {
         if (!cancelled) {
+          if (loadError.status === 401) {
+            setAdmin(null);
+            return;
+          }
           setError(loadError.message || "Failed to load admin data.");
         }
       } finally {
@@ -83,7 +127,7 @@ function App() {
     return () => {
       cancelled = true;
     };
-  }, [loadDashboard, loadProfitLossData]);
+  }, [admin, loadDashboard, loadProfitLossData]);
 
   const reloadFilteredProfitLoss = async (nextPlayerFilter, nextOperatorFilter) => {
     setLoading(true);
@@ -92,6 +136,10 @@ function App() {
     try {
       await loadProfitLossData(1, nextPlayerFilter, nextOperatorFilter);
     } catch (loadError) {
+      if (loadError.status === 401) {
+        setAdmin(null);
+        return;
+      }
       setError(loadError.message || "Failed to filter profit & loss data.");
     } finally {
       setLoading(false);
@@ -115,6 +163,25 @@ function App() {
     await reloadFilteredProfitLoss(playerFilter, operatorId);
   };
 
+  const handleLogin = async ({ email, password }) => {
+    const result = await loginAdmin({ email, password });
+    setAdmin(result.admin);
+    setActivePage("dashboard");
+    setError("");
+  };
+
+  const handleLogout = async () => {
+    await logoutAdmin();
+    setAdmin(null);
+    setSummary(null);
+    setDashboardSummary(null);
+    setGames([]);
+    setDashboardGames([]);
+    setUsers([]);
+    setSelectedGame(null);
+    setError("");
+  };
+
   const pageMeta = {
     dashboard: { title: "Dashboard", hint: "Live overview" },
     platforms: { title: "Platforms", hint: "Per-partner breakdown" },
@@ -124,6 +191,21 @@ function App() {
 
   const operators = summary?.byOperator || dashboardSummary?.byOperator || [];
 
+  if (!authChecked) {
+    return (
+      <div className="flex min-h-screen items-center justify-center text-[var(--color-ink)]">
+        <div className="flex flex-col items-center gap-3">
+          <div className="h-9 w-9 animate-spin rounded-full border-2 border-[var(--color-line)] border-t-[var(--accent)]" />
+          <p className="text-sm font-medium text-[var(--color-muted)]">Checking admin session…</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (!admin) {
+    return <LoginPage onLogin={handleLogin} />;
+  }
+
   return (
     <div className="flex min-h-screen text-[var(--color-ink)]">
       <Sidebar
@@ -131,6 +213,8 @@ function App() {
         onNavigate={setActivePage}
         mobileOpen={mobileOpen}
         onClose={() => setMobileOpen(false)}
+        admin={admin}
+        onLogout={handleLogout}
       />
 
       <div className="flex min-w-0 flex-1 flex-col">

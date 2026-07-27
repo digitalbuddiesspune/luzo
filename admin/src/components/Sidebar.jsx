@@ -52,7 +52,7 @@ function NavIcon({ name }) {
   );
 }
 
-export function Sidebar({ activePage, onNavigate, mobileOpen, onClose }) {
+export function Sidebar({ activePage, onNavigate, mobileOpen, onClose, admin, onLogout }) {
   return (
     <>
       {mobileOpen ? (
@@ -125,8 +125,20 @@ export function Sidebar({ activePage, onNavigate, mobileOpen, onClose }) {
           })}
         </nav>
 
-        <div className="border-t border-white/10 px-5 py-4">
-          <p className="text-[11px] leading-relaxed text-white/35">Internal admin console</p>
+        <div className="space-y-3 border-t border-white/10 px-5 py-4">
+          {admin ? (
+            <div>
+              <p className="truncate text-sm font-semibold text-white">{admin.displayName || "Admin"}</p>
+              <p className="truncate text-[11px] text-white/40">{admin.email}</p>
+            </div>
+          ) : null}
+          <button
+            type="button"
+            onClick={onLogout}
+            className="w-full rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-left text-sm font-medium text-white/80 transition hover:bg-white/10 hover:text-white"
+          >
+            Log out
+          </button>
         </div>
       </aside>
     </>

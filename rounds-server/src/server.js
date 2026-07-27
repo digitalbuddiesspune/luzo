@@ -1,5 +1,5 @@
 const { createServer } = require("node:http");
-const { createApp } = require("./app");
+const { createApp, prepareAdminAuth } = require("./app");
 const { config } = require("./config/env");
 const {
   closeDatabase,
@@ -8,6 +8,7 @@ const {
 
 async function startServer() {
   const database = await connectDatabase();
+  await prepareAdminAuth(database);
   const server = createServer(createApp(database));
 
   server.listen(config.port, () => {

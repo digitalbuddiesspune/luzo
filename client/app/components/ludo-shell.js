@@ -2549,15 +2549,15 @@ function MenuScreen({
 
         <div className="menu-action-grid">
           <MenuActionCard
-            title="Multiplayer 4"
-            artwork="/assets/Multiplayer4Option.png"
-            onClick={() => onModeSelect("online4")}
-          />
-          <MenuActionCard
             title="Multiplayer 2"
             artwork="/assets/Multiplayer2Option.png"
             className="menu-action-card-friends"
             onClick={() => onModeSelect("online2")}
+          />
+          <MenuActionCard
+            title="Multiplayer 4"
+            artwork="/assets/Multiplayer4Option.png"
+            onClick={() => onModeSelect("online4")}
           />
         </div>
 
