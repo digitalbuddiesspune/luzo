@@ -764,16 +764,140 @@ internal fun resolveTwoPlayerForfeitWinner(
     }
 }
 
-private fun chooseBotToken(player: MatchPlayerState, movableTokenIndexes: List<Int>, diceValue: Int): Int {
-    return movableTokenIndexes.firstOrNull { tokenIndex ->
-        val progress = player.tokens[tokenIndex]
-        progress == -1 && diceValue == 6
-    } ?: movableTokenIndexes.firstOrNull { tokenIndex ->
-        val progress = player.tokens[tokenIndex]
-        progress >= 0 && progress + diceValue == FINISHED_PROGRESS
-    } ?: movableTokenIndexes.firstOrNull { tokenIndex ->
-        player.tokens[tokenIndex] >= 0
-    } ?: movableTokenIndexes.first()
+internal fun chooseBotToken(
+    players: List<MatchPlayerState>,
+    playerIndex: Int,
+    movableTokenIndexes: List<Int>,
+    diceValue: Int,
+): Int {
+    if (movableTokenIndexes.isEmpty()) {
+        return 0
+    }
+
+    if (movableTokenIndexes.size == 1) {
+        return movableTokenIndexes.first()
+    }
+
+    return movableTokenIndexes.maxBy { tokenIndex ->
+        scoreBotMove(players, playerIndex, tokenIndex, diceValue)
+    }
+}
+
+private fun scoreBotMove(
+    players: List<MatchPlayerState>,
+    playerIndex: Int,
+    tokenIndex: Int,
+    diceValue: Int,
+): Int {
+    val player = players[playerIndex]
+    val currentProgress = player.tokens[tokenIndex]
+    val nextProgress = if (currentProgress == -1) 0 else currentProgress + diceValue
+    var score = 0
+
+    val tokensAfterMove = player.tokens.toMutableList()
+    tokensAfterMove[tokenIndex] = nextProgress
+    if (tokensAfterMove.all { it == FINISHED_PROGRESS }) {
+        return 10_000
+    }
+
+    if (nextProgress == FINISHED_PROGRESS) {
+        score += 1_200
+    }
+
+    if (nextProgress in 0..MAIN_PATH_LAST_PROGRESS) {
+        val landingKey = boardCellKey(player.color, nextProgress, tokenIndex)
+        if (!safeCellKeys.contains(landingKey)) {
+            players.forEachIndexed { opponentIndex, opponent ->
+                if (opponentIndex == playerIndex || opponent.isEffectivelyAbandoned()) {
+                    return@forEachIndexed
+                }
+
+                opponent.tokens.forEachIndexed { opponentTokenIndex, opponentProgress ->
+                    if (
+                        opponentProgress in 0..MAIN_PATH_LAST_PROGRESS &&
+                        boardCellKey(opponent.color, opponentProgress, opponentTokenIndex) == landingKey
+                    ) {
+                        score += 900 + opponentProgress * 8
+                    }
+                }
+            }
+        } else {
+            score += 350
+        }
+    } else if (nextProgress in HOME_LANE_START_PROGRESS..HOME_LANE_LAST_PROGRESS) {
+        score += 450
+    }
+
+    if (
+        currentProgress in 0..MAIN_PATH_LAST_PROGRESS &&
+        !safeCellKeys.contains(boardCellKey(player.color, currentProgress, tokenIndex)) &&
+        isCellThreatenedByOpponents(players, playerIndex, boardCellKey(player.color, currentProgress, tokenIndex))
+    ) {
+        if (nextProgress > currentProgress || nextProgress >= HOME_LANE_START_PROGRESS) {
+            score += 500
+        }
+    }
+
+    if (
+        nextProgress in 0..MAIN_PATH_LAST_PROGRESS &&
+        !safeCellKeys.contains(boardCellKey(player.color, nextProgress, tokenIndex)) &&
+        isCellThreatenedByOpponents(players, playerIndex, boardCellKey(player.color, nextProgress, tokenIndex))
+    ) {
+        score -= 650
+    }
+
+    if (nextProgress in 0 until FINISHED_PROGRESS) {
+        score += nextProgress * 6
+    }
+
+    if (currentProgress == -1 && nextProgress == 0) {
+        val activeTokens = player.tokens.count { progress -> progress in 0 until FINISHED_PROGRESS }
+        score += when (activeTokens) {
+            0 -> 320
+            1 -> 180
+            2 -> 60
+            else -> -120
+        }
+    }
+
+    if (diceValue == 6 && nextProgress in 0..MAIN_PATH_LAST_PROGRESS) {
+        score += 40
+    }
+
+    return score
+}
+
+private fun isCellThreatenedByOpponents(
+    players: List<MatchPlayerState>,
+    playerIndex: Int,
+    cellKey: String,
+): Boolean {
+    players.forEachIndexed { opponentIndex, opponent ->
+        if (opponentIndex == playerIndex || opponent.isEffectivelyAbandoned()) {
+            return@forEachIndexed
+        }
+
+        opponent.tokens.forEachIndexed { opponentTokenIndex, opponentProgress ->
+            if (opponentProgress !in 0..MAIN_PATH_LAST_PROGRESS) {
+                return@forEachIndexed
+            }
+
+            for (dice in 1..6) {
+                if (!canMoveToken(opponentProgress, dice)) {
+                    continue
+                }
+
+                val reachProgress = if (opponentProgress == -1) 0 else opponentProgress + dice
+                if (
+                    boardCellKey(opponent.color, reachProgress, opponentTokenIndex) == cellKey
+                ) {
+                    return true
+                }
+            }
+        }
+    }
+
+    return false
 }
 
 private fun randomDice(consecutiveSixCount: Int = 0): Int {
@@ -1375,7 +1499,8 @@ class MatchService(
                 match.phaseDeadlineAt != null &&
                 !now.isBefore(match.phaseDeadlineAt) -> {
                 val tokenIndex = chooseBotToken(
-                    match.players[match.currentPlayerIndex],
+                    match.players,
+                    match.currentPlayerIndex,
                     match.selectableTokenIndexes,
                     match.dice ?: 1,
                 )

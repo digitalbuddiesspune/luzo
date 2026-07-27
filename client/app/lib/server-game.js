@@ -154,7 +154,7 @@ async function requestJson(path, { method = "GET", sessionToken, body } = {}) {
     };
 
     if (typeof window !== "undefined") {
-      console.error("[Ludo API error]", details);
+      console.warn("[Ludo API error]", details);
     }
 
     throw new ApiRequestError(message, details);

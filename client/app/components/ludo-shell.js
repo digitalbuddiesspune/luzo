@@ -11,6 +11,7 @@ import {
   mockBootState,
 } from "@/app/lib/mock-state";
 import { IS_FRIENDS_MODE_VISIBLE } from "@/app/lib/features";
+import { Dice3D } from "@/app/components/dice-3d";
 import {
   createPrivateRoom as createPrivateRoomRequest,
   ensureGuestSession,
@@ -211,15 +212,6 @@ const YARD_LOOKUP = new Map(
   ),
 );
 
-const DICE_ASSETS = {
-  1: "/assets/dice-1.svg",
-  2: "/assets/dice-2.svg",
-  3: "/assets/dice-3.svg",
-  4: "/assets/dice-4.svg",
-  5: "/assets/dice-5.svg",
-  6: "/assets/dice-6.svg",
-};
-
 const BOT_NAME_BY_COLOR = {
   green: "Aarav",
   yellow: "Meera",
@@ -264,7 +256,6 @@ const CAPTURE_RETURN_STEP_MS = 28;
 const CAPTURE_RETURN_SAMPLES_PER_SEGMENT = 4;
 const TURN_WARNING_THRESHOLD_SECONDS = 5;
 const DICE_ROLL_MIN_SPIN_MS = 1300;
-const DICE_ROLL_FACE_INTERVAL_MS = 145;
 const MAIN_PATH_LAST_PROGRESS = 50;
 const HOME_LANE_START_PROGRESS = 51;
 const HOME_LANE_LAST_PROGRESS = 55;
@@ -278,9 +269,22 @@ const soundController = {
   context: null,
   muted: false,
   diceRollAudio: null,
+  matchStartAudio: null,
+  tokenCaptureAudio: null,
+  lobbyMusicAudio: null,
+  lobbyMusicActive: false,
 
   setMuted(nextMuted) {
     this.muted = nextMuted;
+
+    if (nextMuted) {
+      this.pauseLobbyMusic();
+      return;
+    }
+
+    if (this.lobbyMusicActive) {
+      this.playLobbyMusic();
+    }
   },
 
   ensureContext() {
@@ -546,6 +550,76 @@ const soundController = {
         startTime: start + index * 0.11,
       });
     });
+  },
+
+  matchStart() {
+    if (this.muted || typeof window === "undefined") {
+      return;
+    }
+
+    if (!this.matchStartAudio) {
+      this.matchStartAudio = new window.Audio("/sounds/ludoking_start.mp3");
+      this.matchStartAudio.preload = "auto";
+    }
+
+    this.matchStartAudio.currentTime = 0;
+    this.matchStartAudio.play().catch(() => {});
+  },
+
+  tokenCapture() {
+    if (this.muted || typeof window === "undefined") {
+      return;
+    }
+
+    if (!this.tokenCaptureAudio) {
+      this.tokenCaptureAudio = new window.Audio("/sounds/skelly.mp3");
+      this.tokenCaptureAudio.preload = "auto";
+    }
+
+    this.tokenCaptureAudio.currentTime = 0;
+    this.tokenCaptureAudio.play().catch(() => {});
+  },
+
+  playLobbyMusic() {
+    if (this.muted || typeof window === "undefined" || !this.lobbyMusicActive) {
+      return;
+    }
+
+    if (!this.lobbyMusicAudio) {
+      this.lobbyMusicAudio = new window.Audio("/sounds/ludo_king.mp3");
+      this.lobbyMusicAudio.preload = "auto";
+      this.lobbyMusicAudio.loop = true;
+      this.lobbyMusicAudio.volume = 0.45;
+    }
+
+    this.lobbyMusicAudio.play().catch(() => {});
+  },
+
+  pauseLobbyMusic() {
+    if (this.lobbyMusicAudio) {
+      this.lobbyMusicAudio.pause();
+    }
+  },
+
+  setLobbyMusicActive(active) {
+    this.lobbyMusicActive = active;
+
+    if (active) {
+      this.playLobbyMusic();
+      return;
+    }
+
+    this.pauseLobbyMusic();
+
+    if (this.lobbyMusicAudio) {
+      this.lobbyMusicAudio.currentTime = 0;
+    }
+  },
+
+  resumeLobbyMusicIfNeeded() {
+    if (this.lobbyMusicActive) {
+      this.playLobbyMusic();
+    }
   },
 };
 
@@ -1165,20 +1239,175 @@ function rollInteractiveMatch(match) {
   return applyTokenMove(rolledMatch, forcedTokenIndex);
 }
 
-function chooseBotToken(player, movableTokenIndexes, diceValue) {
-  return (
-    movableTokenIndexes.find((tokenIndex) => {
-      const progress = player.tokens[tokenIndex];
+function isCellThreatenedByOpponents(players, playerIndex, cellKey) {
+  return players.some((opponent, opponentIndex) => {
+    if (opponentIndex === playerIndex || opponent.isAbandoned) {
+      return false;
+    }
 
-      if (progress === -1) {
-        return diceValue === 6;
+    return opponent.tokens.some((opponentProgress, opponentTokenIndex) => {
+      if (opponentProgress < 0 || opponentProgress > MAIN_PATH_LAST_PROGRESS) {
+        return false;
       }
 
-      return progress + diceValue === FINISHED_PROGRESS;
-    }) ??
-    movableTokenIndexes.find((tokenIndex) => player.tokens[tokenIndex] >= 0) ??
-    movableTokenIndexes[0]
-  );
+      for (let dice = 1; dice <= 6; dice += 1) {
+        if (!canMoveToken(opponentProgress, dice)) {
+          continue;
+        }
+
+        const reachProgress =
+          opponentProgress === -1 ? 0 : opponentProgress + dice;
+        if (
+          getBoardCellKey(
+            opponent.color,
+            reachProgress,
+            opponentTokenIndex,
+          ) === cellKey
+        ) {
+          return true;
+        }
+      }
+
+      return false;
+    });
+  });
+}
+
+function scoreBotMove(players, playerIndex, tokenIndex, diceValue) {
+  const player = players[playerIndex];
+  const currentProgress = player.tokens[tokenIndex];
+  const nextProgress =
+    currentProgress === -1 ? 0 : currentProgress + diceValue;
+  let score = 0;
+
+  const tokensAfterMove = [...player.tokens];
+  tokensAfterMove[tokenIndex] = nextProgress;
+  if (tokensAfterMove.every((progress) => progress === FINISHED_PROGRESS)) {
+    return 10_000;
+  }
+
+  if (nextProgress === FINISHED_PROGRESS) {
+    score += 1_200;
+  }
+
+  if (nextProgress >= 0 && nextProgress <= MAIN_PATH_LAST_PROGRESS) {
+    const landingKey = getBoardCellKey(
+      player.color,
+      nextProgress,
+      tokenIndex,
+    );
+
+    if (!SAFE_CELL_KEYS.has(landingKey)) {
+      players.forEach((opponent, opponentIndex) => {
+        if (opponentIndex === playerIndex || opponent.isAbandoned) {
+          return;
+        }
+
+        opponent.tokens.forEach((opponentProgress, opponentTokenIndex) => {
+          if (
+            opponentProgress >= 0 &&
+            opponentProgress <= MAIN_PATH_LAST_PROGRESS &&
+            getBoardCellKey(
+              opponent.color,
+              opponentProgress,
+              opponentTokenIndex,
+            ) === landingKey
+          ) {
+            score += 900 + opponentProgress * 8;
+          }
+        });
+      });
+    } else {
+      score += 350;
+    }
+  } else if (
+    nextProgress >= HOME_LANE_START_PROGRESS &&
+    nextProgress <= HOME_LANE_LAST_PROGRESS
+  ) {
+    score += 450;
+  }
+
+  if (
+    currentProgress >= 0 &&
+    currentProgress <= MAIN_PATH_LAST_PROGRESS &&
+    !SAFE_CELL_KEYS.has(
+      getBoardCellKey(player.color, currentProgress, tokenIndex),
+    ) &&
+    isCellThreatenedByOpponents(
+      players,
+      playerIndex,
+      getBoardCellKey(player.color, currentProgress, tokenIndex),
+    ) &&
+    (nextProgress > currentProgress || nextProgress >= HOME_LANE_START_PROGRESS)
+  ) {
+    score += 500;
+  }
+
+  if (
+    nextProgress >= 0 &&
+    nextProgress <= MAIN_PATH_LAST_PROGRESS &&
+    !SAFE_CELL_KEYS.has(getBoardCellKey(player.color, nextProgress, tokenIndex)) &&
+    isCellThreatenedByOpponents(
+      players,
+      playerIndex,
+      getBoardCellKey(player.color, nextProgress, tokenIndex),
+    )
+  ) {
+    score -= 650;
+  }
+
+  if (nextProgress >= 0 && nextProgress < FINISHED_PROGRESS) {
+    score += nextProgress * 6;
+  }
+
+  if (currentProgress === -1 && nextProgress === 0) {
+    const activeTokens = player.tokens.filter(
+      (progress) => progress >= 0 && progress < FINISHED_PROGRESS,
+    ).length;
+
+    if (activeTokens === 0) {
+      score += 320;
+    } else if (activeTokens === 1) {
+      score += 180;
+    } else if (activeTokens === 2) {
+      score += 60;
+    } else {
+      score -= 120;
+    }
+  }
+
+  if (diceValue === 6 && nextProgress >= 0 && nextProgress <= MAIN_PATH_LAST_PROGRESS) {
+    score += 40;
+  }
+
+  return score;
+}
+
+function chooseBotToken(players, playerIndex, movableTokenIndexes, diceValue) {
+  if (!movableTokenIndexes.length) {
+    return 0;
+  }
+
+  if (movableTokenIndexes.length === 1) {
+    return movableTokenIndexes[0];
+  }
+
+  return movableTokenIndexes.reduce((bestTokenIndex, tokenIndex) => {
+    const bestScore = scoreBotMove(
+      players,
+      playerIndex,
+      bestTokenIndex,
+      diceValue,
+    );
+    const candidateScore = scoreBotMove(
+      players,
+      playerIndex,
+      tokenIndex,
+      diceValue,
+    );
+
+    return candidateScore > bestScore ? tokenIndex : bestTokenIndex;
+  }, movableTokenIndexes[0]);
 }
 
 function applyTokenMove(match, tokenIndex) {
@@ -1430,6 +1659,7 @@ function useSoundUnlock() {
 
     const unlockSound = () => {
       soundController.ensureContext();
+      soundController.resumeLobbyMusicIfNeeded();
     };
 
     window.addEventListener("pointerdown", unlockSound, { passive: true });
@@ -1463,6 +1693,16 @@ function useSoundSetting() {
   }, [isSoundOn]);
 
   return [isSoundOn, setIsSoundOn];
+}
+
+function useLobbyBackgroundMusic(shouldPlay) {
+  useEffect(() => {
+    soundController.setLobbyMusicActive(shouldPlay);
+
+    return () => {
+      soundController.setLobbyMusicActive(false);
+    };
+  }, [shouldPlay]);
 }
 
 function useGlobalButtonClickSound() {
@@ -2588,52 +2828,12 @@ function beginDiceRollSound() {
   soundController.diceRollSpin();
 }
 
-function getDiceAsset(value) {
-  const safeValue = Math.min(6, Math.max(1, Number(value) || 1));
-  return DICE_ASSETS[safeValue];
-}
-
-function DiceImage({ value, className = "" }) {
-  return (
-    <img
-      className={`die-image ${className}`.trim()}
-      src={getDiceAsset(value)}
-      alt={`Dice showing ${Math.min(6, Math.max(1, Number(value) || 1))}`}
-      width={72}
-      height={72}
-      draggable={false}
-    />
-  );
-}
-
-function RollingDiceImage() {
-  const [face, setFace] = useState(() => Math.floor(Math.random() * 6) + 1);
-
-  useEffect(() => {
-    const intervalId = window.setInterval(() => {
-      setFace((current) => {
-        let nextFace = Math.floor(Math.random() * 6) + 1;
-
-        while (nextFace === current) {
-          nextFace = Math.floor(Math.random() * 6) + 1;
-        }
-
-        return nextFace;
-      });
-    }, DICE_ROLL_FACE_INTERVAL_MS);
-
-    return () => window.clearInterval(intervalId);
-  }, []);
-
-  return <DiceImage value={face} className="is-tumbling" />;
-}
-
 function DieFace({ value, active, showRollCue = false }) {
   return (
     <div
       className={`die-face-shell ${active ? "is-active" : ""} ${showRollCue ? "has-roll-cue" : ""}`}
     >
-      <DiceImage value={value} />
+      <Dice3D value={value} active={active} rollDurationMs={DICE_ROLL_MIN_SPIN_MS} />
       {showRollCue ? <RollCueArrow /> : null}
     </div>
   );
@@ -2664,7 +2864,16 @@ function RollDiceButton({ value, onRollDice, rolling = false, showRollCue = fals
       disabled={rolling}
       aria-label="Roll dice"
     >
-      {rolling ? <RollingDiceImage /> : <DiceImage value={value} />}
+      {rolling ? (
+        <Dice3D
+          value={value}
+          rolling
+          active
+          rollDurationMs={DICE_ROLL_MIN_SPIN_MS}
+        />
+      ) : (
+        <Dice3D value={value} active rollDurationMs={DICE_ROLL_MIN_SPIN_MS} />
+      )}
       {showRollCue && !rolling ? <RollCueArrow /> : null}
     </button>
   );
@@ -2677,6 +2886,7 @@ function PlayerStatusCard({
   isCurrentTurn,
   diceValue,
   lastDiceValue = 1,
+  rollTargetValue = null,
   turnProgress,
   canRollDice = false,
   isRollingDice = false,
@@ -2687,15 +2897,18 @@ function PlayerStatusCard({
     (token) => token >= FINISHED_PROGRESS,
   ).length;
   const showRollCue = canRollDice || isWaitingToRoll || isRollingDice;
-  const diceSlot = diceValue ? (
-    <DieFace value={diceValue} active={isCurrentTurn} />
-  ) : isRollingDice ? (
+  const spinningValue = rollTargetValue ?? lastDiceValue;
+  // Prefer rolling animation over the settled face so opponents/bots don't
+  // skip the tumble when the server result arrives early.
+  const diceSlot = isRollingDice ? (
     <RollDiceButton
-      value={lastDiceValue}
+      value={spinningValue}
       onRollDice={onRollDice}
-      rolling={isRollingDice}
+      rolling
       showRollCue
     />
+  ) : diceValue ? (
+    <DieFace value={diceValue} active={isCurrentTurn} />
   ) : canRollDice ? (
     <RollDiceButton
       value={lastDiceValue}
@@ -2703,7 +2916,12 @@ function PlayerStatusCard({
       showRollCue
     />
   ) : isWaitingToRoll ? (
-    <DieFace value={lastDiceValue} active showRollCue />
+    <RollDiceButton
+      value={lastDiceValue}
+      onRollDice={onRollDice}
+      rolling
+      showRollCue
+    />
   ) : (
     <div className="die-slot" aria-hidden="true" />
   );
@@ -2994,6 +3212,7 @@ function LudoBoard({
   onSelectToken,
   onAnimationChange,
   onTokenStep,
+  onTokenCapture,
   userPlayerId,
 }) {
   const [displayPlayers, setDisplayPlayers] = useState(() =>
@@ -3044,6 +3263,7 @@ function LudoBoard({
 
     captureAnimationTimeoutsRef.current.push(
       window.setTimeout(() => {
+        onTokenCapture?.();
         setCapturedTokenAnimations(initialAnimations);
       }, startDelayMs),
     );
@@ -3200,7 +3420,7 @@ function LudoBoard({
         setDisplayPlayers(pendingPlayers);
       }
     }, totalAnimationDuration);
-  }, [match.players, onAnimationChange, onTokenStep]);
+  }, [match.players, onAnimationChange, onTokenCapture, onTokenStep]);
 
   const { tokenMap, yardTokenMap } = useMemo(() => {
     const boardEntries = new Map();
@@ -3386,6 +3606,8 @@ function BoardScreen({
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
   const [isSoundOn, setIsSoundOn] = useSoundSetting();
   const [autoSpinExpiredTurnId, setAutoSpinExpiredTurnId] = useState(null);
+  const [opponentDiceSpin, setOpponentDiceSpin] = useState(null);
+  const [boardSyncMatch, setBoardSyncMatch] = useState(match);
   const [isBoardAnimating, setIsBoardAnimating] = useState(false);
   const [isPassingDice, setIsPassingDice] = useState(false);
   const [heldTurnUserId, setHeldTurnUserId] = useState(match.currentTurnUserId);
@@ -3396,6 +3618,12 @@ function BoardScreen({
   const previousTurnUserIdRef = useRef(match.currentTurnUserId);
   const previousPhaseRef = useRef(match.phase);
   const currentTurnUserIdRef = useRef(match.currentTurnUserId);
+  const previousOpponentDiceRef = useRef({
+    turnUserId: match.currentTurnUserId,
+    dice: match.dice ?? null,
+  });
+  const opponentSpinTimeoutRef = useRef(null);
+  const queuedBoardMatchRef = useRef(match);
   const [lastDiceByPlayer, setLastDiceByPlayer] = useState(() => new Map());
   const matchPotAmount = match.pot ?? 0;
   const [potIntroPhase, setPotIntroPhase] = useState("visible");
@@ -3415,6 +3643,8 @@ function BoardScreen({
     if (potIntroPhase !== "visible") {
       return undefined;
     }
+
+    soundController.matchStart();
 
     const hideTimeoutId = window.setTimeout(() => {
       setPotIntroPhase("exiting");
@@ -3442,6 +3672,10 @@ function BoardScreen({
 
     onPotIntroComplete?.();
   }, [potIntroPhase, onPotIntroComplete]);
+
+  useEffect(() => {
+    setLastDiceByPlayer(new Map());
+  }, [match.id]);
 
   useEffect(() => {
     setLastDiceByPlayer((currentDiceByPlayer) => {
@@ -3584,7 +3818,27 @@ function BoardScreen({
     return lastDiceByPlayer.get(playerId) ?? match.dice ?? 1;
   }
 
+  function getRollTargetValue(playerId) {
+    if (opponentDiceSpin?.userId === playerId) {
+      return opponentDiceSpin.value;
+    }
+
+    if (rollingDiceUserId === playerId && match.dice) {
+      return match.dice;
+    }
+
+    return null;
+  }
+
   function getVisibleDiceValue(playerId) {
+    if (opponentDiceSpin?.userId === playerId) {
+      return opponentDiceSpin.revealing ? opponentDiceSpin.value : null;
+    }
+
+    if (rollingDiceUserId === playerId) {
+      return null;
+    }
+
     if (
       (isBoardAnimating || isPassingDice) &&
       heldTurnUserId === playerId &&
@@ -3601,22 +3855,26 @@ function BoardScreen({
       return lastDiceByPlayer.get(playerId);
     }
 
-    if (match.currentTurnUserId === playerId && match.dice) {
+    const isCurrentTurnPlayer = match.currentTurnUserId === playerId;
+
+    if (isCurrentTurnPlayer && match.dice) {
       return match.dice;
     }
 
-    if (
-      match.phase !== "rolling" &&
-      match.lastRollUserId === playerId &&
-      match.lastRollDice
-    ) {
-      return match.lastRollDice;
+    // Current player has not rolled yet this turn — leave dice slot to roll UI.
+    if (isCurrentTurnPlayer) {
+      return null;
     }
 
-    return null;
+    return (
+      lastDiceByPlayer.get(playerId) ??
+      (match.lastRollUserId === playerId ? match.lastRollDice : null) ??
+      null
+    );
   }
 
-  const isHoldingTurnDisplay = isBoardAnimating || isPassingDice;
+  const isHoldingTurnDisplay =
+    isBoardAnimating || isPassingDice || Boolean(opponentDiceSpin);
   const canRollDice =
     !isPotIntroBlocking &&
     !isHoldingTurnDisplay &&
@@ -3625,26 +3883,121 @@ function BoardScreen({
     !match.dice &&
     Boolean(onRollDice);
   const visibleTurnUserId = isHoldingTurnDisplay
-    ? heldTurnUserId
+    ? heldTurnUserId ?? opponentDiceSpin?.userId ?? match.currentTurnUserId
     : match.currentTurnUserId;
   const currentTurnPlayer = match.players.find(
     (player) => player.id === visibleTurnUserId,
   );
   const autoRollingDiceUserId =
     !isPotIntroBlocking &&
-    !isHoldingTurnDisplay &&
-    match.phase === "rolling" && !match.dice && currentTurnPlayer?.isBot
+    !opponentDiceSpin &&
+    match.phase === "rolling" &&
+    !match.dice &&
+    currentTurnPlayer?.isBot
       ? visibleTurnUserId
       : null;
   const waitingToRollUserId =
     !isPotIntroBlocking &&
-    !isHoldingTurnDisplay &&
+    !opponentDiceSpin &&
     match.phase === "rolling" &&
     !match.dice &&
     visibleTurnUserId !== userPlayerId &&
     !currentTurnPlayer?.isBot
       ? visibleTurnUserId
       : null;
+
+  useEffect(() => {
+    setBoardSyncMatch(match);
+    queuedBoardMatchRef.current = match;
+    setOpponentDiceSpin(null);
+  }, [match.id]);
+
+  useEffect(() => {
+    queuedBoardMatchRef.current = match;
+
+    if (opponentDiceSpin) {
+      return;
+    }
+
+    setBoardSyncMatch(match);
+  }, [match, opponentDiceSpin]);
+
+  useEffect(() => {
+    if (isPotIntroBlocking) {
+      return undefined;
+    }
+
+    const previousDice = previousOpponentDiceRef.current;
+    const turnUserId = match.currentTurnUserId;
+    const dice = match.dice ?? null;
+    const diceJustAppeared =
+      dice != null &&
+      turnUserId &&
+      turnUserId !== userPlayerId &&
+      (previousDice.dice == null ||
+        previousDice.turnUserId !== turnUserId ||
+        previousDice.dice !== dice);
+
+    previousOpponentDiceRef.current = {
+      turnUserId,
+      dice,
+    };
+
+    if (!diceJustAppeared) {
+      return undefined;
+    }
+
+    if (opponentSpinTimeoutRef.current) {
+      window.clearTimeout(opponentSpinTimeoutRef.current);
+    }
+
+    // Freeze the board on the pre-move snapshot, then reveal dice + move together.
+    setHeldTurnUserId(turnUserId);
+    setHeldDiceValue(dice);
+    settledTurnUserIdRef.current = turnUserId;
+    settledDiceValueRef.current = dice;
+    setLastDiceByPlayer((currentDiceByPlayer) => {
+      const nextDiceByPlayer = new Map(currentDiceByPlayer);
+      nextDiceByPlayer.set(turnUserId, dice);
+      return nextDiceByPlayer;
+    });
+    setOpponentDiceSpin({ userId: turnUserId, value: dice, revealing: false });
+    setAutoSpinExpiredTurnId(null);
+    beginDiceRollSound();
+
+    opponentSpinTimeoutRef.current = window.setTimeout(() => {
+      // Reveal the locked dice face and release the queued board move together.
+      setOpponentDiceSpin((current) =>
+        current?.userId === turnUserId
+          ? { ...current, revealing: true }
+          : current,
+      );
+      setBoardSyncMatch(queuedBoardMatchRef.current);
+
+      opponentSpinTimeoutRef.current = window.setTimeout(() => {
+        opponentSpinTimeoutRef.current = null;
+        setOpponentDiceSpin((current) =>
+          current?.userId === turnUserId ? null : current,
+        );
+      }, 320);
+    }, DICE_ROLL_MIN_SPIN_MS);
+
+    return undefined;
+  }, [
+    isPotIntroBlocking,
+    match.currentTurnUserId,
+    match.dice,
+    userPlayerId,
+  ]);
+
+  useEffect(() => {
+    return () => {
+      if (opponentSpinTimeoutRef.current) {
+        window.clearTimeout(opponentSpinTimeoutRef.current);
+        opponentSpinTimeoutRef.current = null;
+      }
+    };
+  }, []);
 
   useEffect(() => {
     if (!autoRollingDiceUserId) {
@@ -3654,11 +4007,8 @@ function BoardScreen({
 
     setAutoSpinExpiredTurnId(null);
     beginDiceRollSound();
-    const timeoutId = window.setTimeout(() => {
-      setAutoSpinExpiredTurnId(autoRollingDiceUserId);
-    }, 2600);
-
-    return () => window.clearTimeout(timeoutId);
+    // Keep tumbling until the real dice arrives — never flash a stale face.
+    return undefined;
   }, [autoRollingDiceUserId, match.sequence]);
 
   const isRollingPlayerChoosing =
@@ -3719,9 +4069,12 @@ function BoardScreen({
                 isCurrentTurn={visibleTurnUserId === player.id}
                 diceValue={getVisibleDiceValue(player.id)}
                 lastDiceValue={getLastDiceValue(player.id)}
+                rollTargetValue={getRollTargetValue(player.id)}
                 canRollDice={canRollDice && visibleTurnUserId === player.id}
                 isRollingDice={
                   rollingDiceUserId === player.id ||
+                  (opponentDiceSpin?.userId === player.id &&
+                    !opponentDiceSpin.revealing) ||
                   (autoRollingDiceUserId === player.id &&
                     autoSpinExpiredTurnId !== player.id)
                 }
@@ -3751,7 +4104,7 @@ function BoardScreen({
         <div className="board-stage-shell">
           <div className="board-stage-rail" aria-hidden="true" />
           <LudoBoard
-            match={match}
+            match={boardSyncMatch}
             selectableTokenIndexes={
               isRollingPlayerChoosing ? match.selectableTokenIndexes : []
             }
@@ -3760,6 +4113,7 @@ function BoardScreen({
             }
             onAnimationChange={handleBoardAnimationChange}
             onTokenStep={() => soundController.tokenStep()}
+            onTokenCapture={() => soundController.tokenCapture()}
             userPlayerId={userPlayerId}
           />
         </div>
@@ -3775,9 +4129,12 @@ function BoardScreen({
                 isCurrentTurn={visibleTurnUserId === player.id}
                 diceValue={getVisibleDiceValue(player.id)}
                 lastDiceValue={getLastDiceValue(player.id)}
+                rollTargetValue={getRollTargetValue(player.id)}
                 canRollDice={canRollDice && visibleTurnUserId === player.id}
                 isRollingDice={
                   rollingDiceUserId === player.id ||
+                  (opponentDiceSpin?.userId === player.id &&
+                    !opponentDiceSpin.revealing) ||
                   (autoRollingDiceUserId === player.id &&
                     autoSpinExpiredTurnId !== player.id)
                 }
@@ -4663,6 +5020,7 @@ export function MenuPageShell({ appState = mockBootState }) {
   const [isSoundOn, setIsSoundOn] = useSoundSetting();
   useSoundUnlock();
   useGlobalButtonClickSound();
+  useLobbyBackgroundMusic(true);
 
   if (accessMessage) {
     return <OperatorAccessBlockedScreen message={accessMessage} />;
@@ -4829,6 +5187,8 @@ function PrivateRoomPageShell({ appState }) {
   const [rollingDiceUserId, setRollingDiceUserId] = useState(null);
   const [isMatchIntroComplete, setIsMatchIntroComplete] = useState(false);
   const privateMatchUserId = session?.userId ?? appState.profile.id;
+
+  useLobbyBackgroundMusic(!privateRoom && !match);
 
   useEffect(() => {
     setIsMatchIntroComplete(false);
@@ -5614,6 +5974,10 @@ function OnlineBoardPageShell({ appState, configuredMaxPlayers }) {
   );
   const onlineUserPlayerId = session?.userId ?? appState.profile.id;
 
+  useLobbyBackgroundMusic(
+    (isOnlineBootstrapping || (!lobbyRoom && !match)) && !isLeavingOnlineRoom,
+  );
+
   useEffect(() => {
     setIsMatchIntroComplete(false);
   }, [match?.id]);
@@ -6380,10 +6744,9 @@ function LocalBoardPageShell({ mode, appState }) {
           return currentMatch;
         }
 
-        const activePlayer =
-          currentMatch.players[currentMatch.currentPlayerIndex];
         const tokenIndex = chooseBotToken(
-          activePlayer,
+          currentMatch.players,
+          currentMatch.currentPlayerIndex,
           currentMatch.selectableTokenIndexes,
           currentMatch.dice ?? 1,
         );

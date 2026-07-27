@@ -2684,6 +2684,144 @@ img {
   pointer-events: none;
 }
 
+.dice-3d {
+  --dice-size: 2.35rem;
+  --dice-half: calc(var(--dice-size) / 2);
+  --dice-settle-duration: 700ms;
+  position: relative;
+  width: 100%;
+  aspect-ratio: 1;
+  display: grid;
+  place-items: center;
+  pointer-events: none;
+  filter: drop-shadow(0 0.18rem 0.28rem rgba(5, 20, 68, 0.28));
+}
+
+.dice-3d.is-active {
+  filter: drop-shadow(0 0 0.55rem rgba(182, 255, 213, 0.42))
+    drop-shadow(0 0.18rem 0.28rem rgba(5, 20, 68, 0.28));
+}
+
+.dice-3d-sr-label {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.dice-3d-scene {
+  width: var(--dice-size);
+  height: var(--dice-size);
+  perspective: 520px;
+  perspective-origin: 50% 42%;
+}
+
+.dice-3d-cube {
+  position: relative;
+  width: var(--dice-size);
+  height: var(--dice-size);
+  transform-style: preserve-3d;
+  transform: rotateX(0deg) rotateY(0deg);
+  will-change: transform;
+}
+
+.dice-3d-cube--rolling {
+  animation: dice3dTumble 0.52s linear infinite;
+}
+
+.dice-3d-cube--settling {
+  animation: none;
+  transition: transform var(--dice-settle-duration)
+    cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.dice-3d-face {
+  position: absolute;
+  inset: 0;
+  width: var(--dice-size);
+  height: var(--dice-size);
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  grid-template-rows: repeat(3, 1fr);
+  padding: 12%;
+  border-radius: 18%;
+  border: 1px solid rgba(12, 34, 88, 0.14);
+  background:
+    radial-gradient(circle at 28% 22%, rgba(255, 255, 255, 0.95), transparent 42%),
+    linear-gradient(145deg, #fffef9 0%, #edf2fa 58%, #d9e2f0 100%);
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.85),
+    inset 0 -0.12rem 0.28rem rgba(12, 34, 88, 0.08);
+  backface-visibility: hidden;
+}
+
+.dice-3d-dot {
+  width: 74%;
+  height: 74%;
+  border-radius: 50%;
+  align-self: center;
+  justify-self: center;
+  background: radial-gradient(circle at 32% 28%, #5a6578 0%, #1a2438 88%);
+  box-shadow:
+    inset 0 -0.04rem 0.08rem rgba(0, 0, 0, 0.35),
+    0 0.02rem 0.04rem rgba(255, 255, 255, 0.18);
+}
+
+.dice-3d-dot.is-empty {
+  visibility: hidden;
+}
+
+.dice-3d-face-1 {
+  transform: rotateY(0deg) translateZ(var(--dice-half));
+}
+
+.dice-3d-face-6 {
+  transform: rotateY(180deg) translateZ(var(--dice-half));
+}
+
+.dice-3d-face-2 {
+  transform: rotateY(90deg) translateZ(var(--dice-half));
+}
+
+.dice-3d-face-5 {
+  transform: rotateY(-90deg) translateZ(var(--dice-half));
+}
+
+.dice-3d-face-3 {
+  transform: rotateX(90deg) translateZ(var(--dice-half));
+}
+
+.dice-3d-face-4 {
+  transform: rotateX(-90deg) translateZ(var(--dice-half));
+}
+
+@keyframes dice3dTumble {
+  0% {
+    transform: rotateX(0deg) rotateY(0deg) rotateZ(0deg);
+  }
+
+  25% {
+    transform: rotateX(144deg) rotateY(126deg) rotateZ(36deg);
+  }
+
+  50% {
+    transform: rotateX(288deg) rotateY(252deg) rotateZ(72deg);
+  }
+
+  75% {
+    transform: rotateX(432deg) rotateY(378deg) rotateZ(108deg);
+  }
+
+  100% {
+    transform: rotateX(576deg) rotateY(504deg) rotateZ(144deg);
+  }
+}
+
 .die-face-shell.is-active .die-image {
   filter: drop-shadow(0 0 0.55rem rgba(182, 255, 213, 0.42))
     drop-shadow(0 0.18rem 0.28rem rgba(5, 20, 68, 0.28));
@@ -2743,6 +2881,11 @@ img {
   pointer-events: none;
   z-index: 3;
   animation: dicePlatformRoll var(--dice-roll-duration) ease-in-out infinite;
+}
+
+.die-face-shell.is-rolling .dice-3d {
+  filter: drop-shadow(0 0 0.45rem rgba(182, 255, 213, 0.34))
+    drop-shadow(0 0.18rem 0.28rem rgba(5, 20, 68, 0.28));
 }
 
 .die-image.is-tumbling {
@@ -2828,11 +2971,14 @@ img {
 @media (prefers-reduced-motion: reduce) {
   .die-face-shell.is-rolling,
   .die-image.is-tumbling,
+  .dice-3d-cube--rolling,
+  .dice-3d-cube--settling,
   .menu-live-goti,
   .dice-roll-cue-arrow,
   .board-home-image.is-turn-house,
   .token-choice-ring {
     animation: none;
+    transition: none;
   }
 }
 

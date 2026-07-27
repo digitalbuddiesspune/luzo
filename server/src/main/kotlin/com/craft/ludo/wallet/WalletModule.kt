@@ -279,6 +279,7 @@ class WalletService(
 
     fun getOverview(userId: String): Mono<WalletOverviewResponse> {
         return refreshOperatorWalletBalance(userId)
+            .onErrorResume { ensureGuestWalletBalance(userId) }
             .switchIfEmpty(ensureGuestWalletBalance(userId))
             .flatMap { account ->
             walletTransactionRepository.findByUserId(
