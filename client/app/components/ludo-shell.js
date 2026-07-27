@@ -225,7 +225,9 @@ const TURN_TICK_MS = 100;
 const ONLINE_SOCKET_RECONNECT_DELAY_MS = 1500;
 const ONLINE_LOBBY_POLL_MS = 2000;
 const ONLINE_LOBBY_FAST_POLL_MS = 400;
-const ONLINE_LOBBY_STUCK_STARTING_MS = 8000;
+// Must exceed server hung/recovery windows (12s hung claim, 15s full recovery)
+// so the client does not leave mid fee-debit and undo an in-flight bot start.
+const ONLINE_LOBBY_STUCK_STARTING_MS = 20000;
 const MATCH_SNAPSHOT_FALLBACK_POLL_MS = 5000;
 
 function resolveOnlineLobbyPollDelayMs(room, match) {

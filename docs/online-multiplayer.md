@@ -45,6 +45,11 @@ room. The room remains in `WAITING` state until one of these happens:
 - enough real players join to fill the room, or
 - the waiting deadline expires
 
+When the deadline expires (or is missing after a failed start recovery), the
+server **always** starts the match and fills empty seats with bots. This is
+driven by a ~150ms server scheduler, not by the client. Any healthy backend
+instance may start a due room, even if another instance originally owned it.
+
 The waiting deadline is controlled by `APP_GAMEPLAY_LOBBY_WAIT_MILLIS`.
 Public PvP is gated by `APP_GAMEPLAY_ONLINE_PVP_REAL_PLAYER_THRESHOLD`, which
 defaults to `0`. With the default, a joining player can enter an existing
@@ -61,7 +66,8 @@ effective waiting deadline to the client. This prevents older deployed backend
 instances that only understand `waitingDeadlineAt` from starting rooms created
 by newer code while a rolling deployment is in progress.
 
-The current client polls room state every 2 seconds while waiting.
+The current client polls room state every 2 seconds while waiting, and faster
+once the countdown reaches zero, until the match snapshot is returned.
 
 ## Bot Fill Behavior
 
@@ -103,12 +109,14 @@ At match start, the lobby service:
 If reservation fails, the flow rolls back and previously created reservations
 are refunded.
 
-Room start is guarded by both a Redis lock and a MongoDB claim. The room claim
-checks `ownerInstanceId` when present, so a current backend instance will not
-start a room owned by a different current instance. Entry-fee reservations are
-also idempotent per room, user, and amount: if two start paths race, only one
-path performs the debit/reservation and the other reuses the completed
-reservation instead of failing the room with a duplicate idempotency error.
+Room start is guarded by both a Redis lock and a MongoDB claim. Healthy rooms
+that are still waiting are started by their owning instance. Once the lobby
+deadline is due (or the room is corrupt/stale), any backend instance may take
+over and start the room so production always bot-fills on time. Entry-fee
+reservations are also idempotent per room, user, and amount: if two start paths
+race, only one path performs the debit/reservation and the other reuses the
+completed reservation instead of failing the room with a duplicate idempotency
+error.
 
 ## Realtime Match Flow
 

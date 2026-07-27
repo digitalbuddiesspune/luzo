@@ -18,6 +18,30 @@ class OnlineRoomStartDueTests {
     }
 
     @Test
+    fun `starts waiting room immediately when deadline is missing`() {
+        val now = Instant.parse("2026-01-01T12:00:00Z")
+        val room = onlineWaitingRoom(
+            ownedWaitingDeadlineAt = null,
+        )
+
+        assertThat(isOnlineRoomWaitingDeadlineDue(room, now)).isTrue()
+        assertThat(shouldStartOnlineWaitingRoom(room, now)).isTrue()
+        assertThat(canProcessOnlineWaitingRoom(room, now, "instance-b")).isTrue()
+    }
+
+    @Test
+    fun `non-owner cannot process healthy room before deadline`() {
+        val now = Instant.parse("2026-01-01T12:00:00Z")
+        val room = onlineWaitingRoom(
+            ownedWaitingDeadlineAt = now.plusSeconds(30),
+            ownerInstanceId = "instance-a",
+        )
+
+        assertThat(shouldStartOnlineWaitingRoom(room, now)).isFalse()
+        assertThat(canProcessOnlineWaitingRoom(room, now, "instance-b")).isFalse()
+    }
+
+    @Test
     fun `does not start waiting room before lobby deadline`() {
         val now = Instant.parse("2026-01-01T12:00:00Z")
         val room = onlineWaitingRoom(

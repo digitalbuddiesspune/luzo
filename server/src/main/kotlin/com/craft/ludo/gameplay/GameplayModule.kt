@@ -379,7 +379,8 @@ internal fun isOnlineRoomStartingStale(room: RoomDocument, now: Instant): Boolea
 }
 
 internal fun isOnlineRoomWaitingDeadlineDue(room: RoomDocument, now: Instant): Boolean {
-    val deadline = room.effectiveWaitingDeadlineAt() ?: return false
+    // Null deadline means the room must start ASAP (leave-from-STARTING / recovery).
+    val deadline = room.effectiveWaitingDeadlineAt() ?: return true
     return !now.isBefore(deadline)
 }
 

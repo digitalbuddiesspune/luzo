@@ -79,11 +79,7 @@ class OnlineMatchmakingService(
                 room.mode == RoomMode.ONLINE_PUBLIC &&
                     room.matchId == null &&
                     room.seats.none { it.isBot } &&
-                    shouldStartOnlineWaitingRoom(room, now) &&
-                    (
-                        room.ownerInstanceId.isNullOrBlank() ||
-                            room.ownerInstanceId == currentInstanceId
-                        )
+                    canProcessOnlineWaitingRoom(room, now, currentInstanceId)
             }
 
         val hungStarting = roomRepository.findAllByStatusOrderByCreatedAtAsc(RoomStatus.STARTING)
@@ -105,13 +101,7 @@ class OnlineMatchmakingService(
             .thenMany(
                 hungStarting.concatMap { room ->
                     instanceCoordinator.withLock("room-tick", room.id) {
-                        log.warn(
-                            "Finishing hung online STARTING room roomId={} roomCode={} startAttemptId={}",
-                            room.id,
-                            room.code,
-                            room.startAttemptId,
-                        )
-                        finishLobbyRoom(room).then()
+                        recoverHungStartingRoom(room)
                     }
                 },
             )
@@ -196,10 +186,12 @@ class OnlineMatchmakingService(
         if (room.effectiveWaitingDeadlineAt() != null) {
             return Mono.just(room)
         }
+        // Missing deadline means the room should start ASAP (e.g. rolled back from STARTING).
         return roomRepository.save(
             room.copy(
-                ownedWaitingDeadlineAt = now.plusMillis(lobbyWaitMillis),
+                ownedWaitingDeadlineAt = now,
                 waitingDeadlineAt = null,
+                ownerInstanceId = room.ownerInstanceId ?: instanceCoordinator.instanceId,
                 updatedAt = now,
             ),
         )
@@ -585,10 +577,19 @@ class OnlineMatchmakingService(
     }
 
     private fun leaveLobby(room: RoomDocument, userId: String): Mono<Void> {
+        val now = Instant.now(clock)
         val remaining = room.seats.filter { it.userId != userId && !it.isBot }
         return if (remaining.isEmpty()) {
             roomRepository.delete(room).then()
         } else {
+            val wasStarting = room.status == RoomStatus.STARTING
+            val existingDeadline = room.effectiveWaitingDeadlineAt()
+            // STARTING claims clear the deadline; restore an immediate due so remaining
+            // players still get a bot-filled match instead of waiting another full lobby.
+            val nextDeadline = when {
+                wasStarting || existingDeadline == null -> now
+                else -> existingDeadline
+            }
             roomRepository.save(
                 room.copy(
                     seats = normalizeSeatColors(remaining),
@@ -596,9 +597,60 @@ class OnlineMatchmakingService(
                     startAttemptId = null,
                     // Strip any accidental bots when leaving a STARTING claim.
                     walletReservations = emptyList(),
-                    updatedAt = Instant.now(clock),
+                    waitingDeadlineAt = null,
+                    ownedWaitingDeadlineAt = nextDeadline,
+                    updatedAt = now,
                 ),
             ).then()
+        }
+    }
+
+    /**
+     * Recover a hung STARTING room so the match can still start with bots.
+     * Rooms with real wallet debits already in flight are finished (safer than double-charge).
+     * Hung claims with no real reservations roll back to WAITING and retry start immediately.
+     */
+    private fun recoverHungStartingRoom(room: RoomDocument): Mono<Void> {
+        val now = Instant.now(clock)
+        val humans = room.seats.filter { !it.isBot && !it.isAbandoned }
+        if (humans.isEmpty()) {
+            return roomRepository.delete(room).then()
+        }
+
+        val hasRealReservation = room.walletReservations.any { reservation -> !reservation.synthetic }
+        if (hasRealReservation) {
+            log.warn(
+                "Finishing hung online STARTING room with reservations roomId={} roomCode={} startAttemptId={}",
+                room.id,
+                room.code,
+                room.startAttemptId,
+            )
+            return finishLobbyRoom(room).then()
+        }
+
+        log.warn(
+            "Retrying hung online STARTING room with bot fill roomId={} roomCode={} startAttemptId={}",
+            room.id,
+            room.code,
+            room.startAttemptId,
+        )
+
+        return roomRepository.save(
+            room.copy(
+                seats = normalizeSeatColors(humans),
+                status = RoomStatus.WAITING,
+                startAttemptId = null,
+                walletReservations = emptyList(),
+                waitingDeadlineAt = null,
+                ownedWaitingDeadlineAt = now,
+                ownerInstanceId = instanceCoordinator.instanceId,
+                updatedAt = now,
+            ),
+        ).flatMap { waiting ->
+            startPublicRoom(waiting.id)
+                .doOnError { error -> logStartFailure(waiting, error) }
+                .onErrorResume { Mono.empty() }
+                .then()
         }
     }
 
