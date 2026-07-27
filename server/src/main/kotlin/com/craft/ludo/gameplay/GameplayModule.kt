@@ -341,6 +341,42 @@ internal fun allowsPublicPvpMatchmaking(
     threshold: Int = 0,
 ): Boolean = waitingRealPlayerCount + joiningRealPlayerCount > threshold
 
+internal const val ONLINE_ROOM_STARTING_RECOVERY_MILLIS = 4_000L
+
+internal fun isOnlineRoomStartingStale(room: RoomDocument, now: Instant): Boolean {
+    return room.status == RoomStatus.STARTING &&
+        room.matchId == null &&
+        room.updatedAt.plusMillis(ONLINE_ROOM_STARTING_RECOVERY_MILLIS).isBefore(now)
+}
+
+internal fun isOnlineRoomWaitingDeadlineDue(room: RoomDocument, now: Instant): Boolean {
+    val deadline = room.effectiveWaitingDeadlineAt() ?: return false
+    return !now.isBefore(deadline)
+}
+
+internal fun isOnlineWaitingRoomFull(room: RoomDocument): Boolean {
+    return room.status == RoomStatus.WAITING &&
+        room.mode == RoomMode.ONLINE_PUBLIC &&
+        room.matchId == null &&
+        countRealSeats(room) >= room.maxPlayers
+}
+
+internal fun shouldStartOnlineWaitingRoom(room: RoomDocument, now: Instant): Boolean {
+    if (room.mode != RoomMode.ONLINE_PUBLIC || room.matchId != null) {
+        return false
+    }
+
+    return when (room.status) {
+        RoomStatus.WAITING -> isOnlineRoomWaitingDeadlineDue(room, now) || isOnlineWaitingRoomFull(room)
+        RoomStatus.STARTING -> isOnlineRoomStartingStale(room, now)
+        else -> false
+    }
+}
+
+internal fun canProcessOnlineWaitingRoom(room: RoomDocument, now: Instant): Boolean {
+    return shouldStartOnlineWaitingRoom(room, now)
+}
+
 private val boardPath = listOf(
     BoardCell(6, 1),
     BoardCell(6, 2),
@@ -655,6 +691,24 @@ internal fun resolveForcedAutoMoveToken(
     // Only auto-play when there is exactly one legal move.
     // If a six can also open yard tokens, let the player choose.
     return selectableTokenIndexes.singleOrNull()
+}
+
+internal fun resolveTwoPlayerForfeitWinner(
+    playersBeforeLeave: List<MatchPlayerState>,
+    playersAfterLeave: List<MatchPlayerState>,
+): MatchPlayerState? {
+    val activeRealHumansBeforeLeave = playersBeforeLeave.count { player ->
+        !player.isBot && !player.isEffectivelyAbandoned()
+    }
+    val remainingRealHumans = playersAfterLeave.filter { player ->
+        !player.isBot && !player.isEffectivelyAbandoned()
+    }
+
+    return if (activeRealHumansBeforeLeave == 2 && remainingRealHumans.size == 1) {
+        remainingRealHumans.first()
+    } else {
+        null
+    }
 }
 
 private fun chooseBotToken(player: MatchPlayerState, movableTokenIndexes: List<Int>, diceValue: Int): Int {
@@ -1182,15 +1236,9 @@ class MatchService(
                     ),
                 )
 
-                val activeParticipantsBeforeLeave = match.players.count { player ->
-                    !player.isEffectivelyAbandoned()
-                }
-                val remainingPlayers = updatedPlayers.filter { player -> !player.isEffectivelyAbandoned() }
-                val updatedMatch = if (
-                    activeParticipantsBeforeLeave == 2 &&
-                    remainingPlayers.size == 1
-                ) {
-                    val winner = remainingPlayers.first()
+                val forfeitWinner = resolveTwoPlayerForfeitWinner(match.players, updatedPlayers)
+                val updatedMatch = if (forfeitWinner != null) {
+                    val winner = forfeitWinner
                     abandonedMatch.copy(
                         status = MatchStatus.FINISHED,
                         phase = MatchPhase.FINISHED,
@@ -1970,13 +2018,11 @@ class LobbyService(
         val now = Instant.now(clock)
 
         return roomRepository.findAllByStatusOrderByCreatedAtAsc(RoomStatus.WAITING)
-            .filter { room ->
-                room.mode == RoomMode.ONLINE_PUBLIC &&
-                    room.matchId == null &&
-                    room.effectiveWaitingDeadlineAt() != null &&
-                    (room.ownerInstanceId == null || room.ownerInstanceId == instanceCoordinator.instanceId) &&
-                    !now.isBefore(room.effectiveWaitingDeadlineAt())
-            }
+            .filter { room -> canProcessOnlineWaitingRoom(room, now) }
+            .concatWith(
+                roomRepository.findAllByStatusOrderByCreatedAtAsc(RoomStatus.STARTING)
+                    .filter { room -> canProcessOnlineWaitingRoom(room, now) },
+            )
             .concatMap { room ->
                 instanceCoordinator.withLock("room-tick", room.id) {
                     startWaitingRoomWithOptimisticRetry(room.id)
@@ -2205,16 +2251,30 @@ class LobbyService(
         val matchId = room.matchId
         if (room.status != RoomStatus.ACTIVE || matchId == null) {
             val now = Instant.now(clock)
-            if (
-                room.mode == RoomMode.ONLINE_PUBLIC &&
-                room.status == RoomStatus.WAITING &&
-                room.matchId == null &&
-                room.effectiveWaitingDeadlineAt() != null &&
-                !now.isBefore(room.effectiveWaitingDeadlineAt())
-            ) {
-                return startWaitingRoomWithOptimisticRetry(room.id)
-                    .flatMap { startedRoom -> buildJoinResponse(startedRoom, principal, requestedMaxPlayers) }
-                    .doOnError { error -> logWaitingRoomStartFailure(room, error) }
+            if (room.mode == RoomMode.ONLINE_PUBLIC && room.matchId == null) {
+                if (shouldStartOnlineWaitingRoom(room, now)) {
+                    return startWaitingRoomWithOptimisticRetry(room.id)
+                        .flatMap { startedRoom -> buildJoinResponse(startedRoom, principal, requestedMaxPlayers) }
+                        .doOnError { error -> logWaitingRoomStartFailure(room, error) }
+                }
+
+                if (room.status == RoomStatus.STARTING) {
+                    return roomRepository.findById(room.id)
+                        .flatMap { latestRoom ->
+                            if (
+                                latestRoom.status == RoomStatus.STARTING &&
+                                !isOnlineRoomStartingStale(latestRoom, now)
+                            ) {
+                                Mono.just(
+                                    JoinOnlineMatchResponse(
+                                        room = latestRoom.toSummary(),
+                                    ),
+                                )
+                            } else {
+                                buildJoinResponse(latestRoom, principal, requestedMaxPlayers)
+                            }
+                        }
+                }
             }
 
             return Mono.just(
@@ -2334,11 +2394,54 @@ class LobbyService(
             }
     }
 
-    private fun startWaitingRoom(room: RoomDocument, now: Instant): Mono<RoomDocument> {
-        if (room.status != RoomStatus.WAITING || room.matchId != null) {
+    private fun adoptOnlineRoomOwnership(room: RoomDocument, now: Instant): Mono<RoomDocument> {
+        if (room.ownerInstanceId == instanceCoordinator.instanceId) {
             return Mono.just(room)
         }
-        if (room.ownerInstanceId != null && room.ownerInstanceId != instanceCoordinator.instanceId) {
+
+        log.info(
+            "Adopting online waiting room ownership roomId={} previousOwnerInstanceId={} currentInstanceId={}",
+            room.id,
+            room.ownerInstanceId,
+            instanceCoordinator.instanceId,
+        )
+
+        return roomRepository.save(
+            room.copy(
+                ownerInstanceId = instanceCoordinator.instanceId,
+                updatedAt = now,
+            ),
+        )
+    }
+
+    private fun startWaitingRoom(room: RoomDocument, now: Instant): Mono<RoomDocument> {
+        if (room.matchId != null) {
+            return Mono.just(room)
+        }
+
+        if (room.status == RoomStatus.STARTING) {
+            if (!isOnlineRoomStartingStale(room, now)) {
+                return Mono.just(room)
+            }
+
+            return revertStartingRoom(room.id)
+                .then(roomRepository.findById(room.id))
+                .flatMap { revertedRoom ->
+                    if (revertedRoom == null || revertedRoom.matchId != null) {
+                        Mono.justOrEmpty(revertedRoom)
+                    } else {
+                        startWaitingRoom(revertedRoom, now)
+                    }
+                }
+        }
+
+        if (room.status != RoomStatus.WAITING) {
+            return Mono.just(room)
+        }
+
+        val ownedByCurrentInstance = room.ownerInstanceId == null ||
+            room.ownerInstanceId == instanceCoordinator.instanceId
+        if (!ownedByCurrentInstance && !isOnlineRoomWaitingDeadlineDue(room, now)) {
             log.info(
                 "Skipping waiting room start owned by another instance roomId={} ownerInstanceId={} currentInstanceId={}",
                 room.id,
@@ -2348,21 +2451,29 @@ class LobbyService(
             return Mono.just(room)
         }
 
-        val normalizedRealSeats = randomizeSeatColors(room.seats.filter { !it.isBot })
-        val realSeats = normalizedRealSeats.size
-        if (realSeats == 1) {
-            val realSeat = normalizedRealSeats.first()
-            return hasEarlierPublicRoomForUser(realSeat.userId, room)
-                .flatMap { hasEarlierRoom ->
-                    if (hasEarlierRoom) {
-                        roomRepository.delete(room).then(Mono.empty())
-                    } else {
-                        startWaitingRoomAfterDuplicateCheck(room, normalizedRealSeats, now)
-                    }
-                }
+        val roomToStart = if (ownedByCurrentInstance) {
+            room
+        } else {
+            room.copy(ownerInstanceId = instanceCoordinator.instanceId, updatedAt = now)
         }
 
-        return startWaitingRoomAfterDuplicateCheck(room, normalizedRealSeats, now)
+        return adoptOnlineRoomOwnership(roomToStart, now).flatMap { adoptedRoom ->
+            val normalizedRealSeats = randomizeSeatColors(adoptedRoom.seats.filter { !it.isBot })
+            val realSeats = normalizedRealSeats.size
+            if (realSeats == 1) {
+                val realSeat = normalizedRealSeats.first()
+                hasEarlierPublicRoomForUser(realSeat.userId, adoptedRoom)
+                    .flatMap { hasEarlierRoom ->
+                        if (hasEarlierRoom) {
+                            roomRepository.delete(adoptedRoom).then(Mono.empty())
+                        } else {
+                            startWaitingRoomAfterDuplicateCheck(adoptedRoom, normalizedRealSeats, now)
+                        }
+                    }
+            } else {
+                startWaitingRoomAfterDuplicateCheck(adoptedRoom, normalizedRealSeats, now)
+            }
+        }
     }
 
     private fun startWaitingRoomWithOptimisticRetry(
@@ -2542,11 +2653,14 @@ class LobbyService(
                 if (room.status != RoomStatus.STARTING || room.matchId != null) {
                     Mono.empty()
                 } else {
+                    val now = Instant.now(clock)
                     roomRepository.save(
                         room.copy(
                             status = RoomStatus.WAITING,
                             startAttemptId = null,
-                            updatedAt = Instant.now(clock),
+                            ownedWaitingDeadlineAt = now,
+                            waitingDeadlineAt = null,
+                            updatedAt = now,
                         ),
                     ).then()
                 }
@@ -2573,12 +2687,15 @@ class LobbyService(
                 if (retainedReservations.size == room.walletReservations.size && room.status == RoomStatus.WAITING) {
                     Mono.empty()
                 } else {
+                    val now = Instant.now(clock)
                     roomRepository.save(
                         room.copy(
                             status = RoomStatus.WAITING,
                             walletReservations = retainedReservations,
                             startAttemptId = null,
-                            updatedAt = Instant.now(clock),
+                            waitingDeadlineAt = null,
+                            ownedWaitingDeadlineAt = now,
+                            updatedAt = now,
                         ),
                     ).then()
                 }

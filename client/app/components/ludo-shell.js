@@ -228,9 +228,37 @@ const BOT_NAME_BY_COLOR = {
 const TURN_ROLL_DELAY_MS = 700;
 const BOT_MOVE_DELAY_MS = 850;
 const TURN_ADVANCE_DELAY_MS = 750;
+const DICE_PASS_DELAY_MS = 750;
 const TURN_TICK_MS = 100;
 const ONLINE_SOCKET_RECONNECT_DELAY_MS = 1500;
+const ONLINE_LOBBY_POLL_MS = 2000;
+const ONLINE_LOBBY_FAST_POLL_MS = 400;
 const MATCH_SNAPSHOT_FALLBACK_POLL_MS = 5000;
+
+function resolveOnlineLobbyPollDelayMs(room, match) {
+  if (match) {
+    return ONLINE_LOBBY_POLL_MS;
+  }
+
+  if (!room) {
+    return ONLINE_LOBBY_POLL_MS;
+  }
+
+  const isStarting = String(room.status || "").toUpperCase() === "STARTING";
+  const waitingDeadlineMs = room.waitingDeadlineAt
+    ? new Date(room.waitingDeadlineAt).getTime()
+    : null;
+  const isTimerElapsed =
+    waitingDeadlineMs == null || waitingDeadlineMs <= Date.now();
+
+  return isStarting || isTimerElapsed
+    ? ONLINE_LOBBY_FAST_POLL_MS
+    : ONLINE_LOBBY_POLL_MS;
+}
+
+function isOnlineLobbyStarting(room) {
+  return String(room?.status || "").toUpperCase() === "STARTING";
+}
 const TOKEN_STEP_ANIMATION_MS = 225;
 const CAPTURE_RETURN_STEP_MS = 28;
 const CAPTURE_RETURN_SAMPLES_PER_SEGMENT = 4;
@@ -249,6 +277,7 @@ const SAFE_CELL_KEYS = new Set([
 const soundController = {
   context: null,
   muted: false,
+  diceRollAudio: null,
 
   setMuted(nextMuted) {
     this.muted = nextMuted;
@@ -336,7 +365,7 @@ const soundController = {
       frequency: 760,
       slideTo: 560,
       duration: 0.05,
-      gain: 0.052,
+      gain: 0.085,
       type: "triangle",
       startTime: start,
     });
@@ -344,7 +373,7 @@ const soundController = {
       frequency: 920,
       slideTo: 700,
       duration: 0.03,
-      gain: 0.034,
+      gain: 0.055,
       type: "sine",
       startTime: start + 0.012,
     });
@@ -387,55 +416,19 @@ const soundController = {
   },
 
   diceRollSpin() {
-    const context = this.ensureContext();
-
-    if (!context || this.muted) {
+    if (this.muted || typeof window === "undefined") {
       return;
     }
 
-    const duration = 1.05;
-    const start = context.currentTime;
-    const sampleRate = context.sampleRate;
-    const bufferSize = Math.floor(sampleRate * duration);
-    const buffer = context.createBuffer(1, bufferSize, sampleRate);
-    const data = buffer.getChannelData(0);
-
-    for (let index = 0; index < bufferSize; index += 1) {
-      const envelope = Math.sin((index / bufferSize) * Math.PI);
-      data[index] = (Math.random() * 2 - 1) * envelope * 0.35;
+    if (!this.diceRollAudio) {
+      this.diceRollAudio = new window.Audio(
+        "/sounds/frontend_public_sounds_DiceRolling.mp3",
+      );
+      this.diceRollAudio.preload = "auto";
     }
 
-    const source = context.createBufferSource();
-    source.buffer = buffer;
-
-    const filter = context.createBiquadFilter();
-    filter.type = "bandpass";
-    filter.frequency.setValueAtTime(680, start);
-    filter.frequency.exponentialRampToValueAtTime(420, start + duration);
-    filter.Q.value = 0.55;
-
-    const gainNode = context.createGain();
-    gainNode.gain.setValueAtTime(0.0001, start);
-    gainNode.gain.exponentialRampToValueAtTime(0.026, start + 0.08);
-    gainNode.gain.exponentialRampToValueAtTime(0.01, start + duration * 0.55);
-    gainNode.gain.exponentialRampToValueAtTime(0.0001, start + duration);
-
-    source.connect(filter);
-    filter.connect(gainNode);
-    gainNode.connect(context.destination);
-    source.start(start);
-    source.stop(start + duration + 0.02);
-
-    [0.12, 0.3, 0.48, 0.66, 0.84].forEach((offset, index) => {
-      this.pulse({
-        frequency: 185 + index * 16,
-        slideTo: 125,
-        duration: 0.08,
-        gain: 0.013,
-        type: "triangle",
-        startTime: start + offset,
-      });
-    });
+    this.diceRollAudio.currentTime = 0;
+    this.diceRollAudio.play().catch(() => {});
   },
 
   diceRoll() {
@@ -841,6 +834,81 @@ function scheduleMatchSnapshotSync({
   };
 
   syncNext();
+}
+
+function countActiveHumanPlayers(players = []) {
+  return players.filter((player) => !player.isBot && !player.isAbandoned).length;
+}
+
+function hasTwoPlayerHumanMatch(match) {
+  return (match?.players ?? []).filter((player) => !player.isBot).length === 2;
+}
+
+function didOpponentAbandonMatch(match, userPlayerId) {
+  if (!match || !userPlayerId) {
+    return false;
+  }
+
+  return (match.players ?? []).some(
+    (player) =>
+      !player.isBot && player.id !== userPlayerId && player.isAbandoned,
+  );
+}
+
+function getLeaveActiveMatchMessage({ isPrivate, activeHumanCount }) {
+  if (activeHumanCount === 2) {
+    return "If you leave now, your opponent wins the match.";
+  }
+
+  return isPrivate
+    ? "If you leave now, you will abandon the game. The match may continue with the remaining players."
+    : "If you leave now, you will abandon the game. The match may continue without you.";
+}
+
+function useOpponentForfeitSnapshotSync({
+  match,
+  userPlayerId,
+  sessionToken,
+  setMatch,
+  timeoutRef,
+}) {
+  useEffect(() => {
+    if (
+      !sessionToken ||
+      !match?.id ||
+      !userPlayerId ||
+      match.phase === "finished" ||
+      !hasTwoPlayerHumanMatch(match) ||
+      !didOpponentAbandonMatch(match, userPlayerId)
+    ) {
+      return undefined;
+    }
+
+    scheduleMatchSnapshotSync({
+      timeoutRef,
+      sessionToken,
+      matchId: match.id,
+      minimumSequence: match.sequence ?? 0,
+      setMatch,
+      enabled: true,
+      delays: [200, 600, 1500, 3500],
+    });
+
+    return () => {
+      if (timeoutRef.current) {
+        window.clearTimeout(timeoutRef.current);
+        timeoutRef.current = null;
+      }
+    };
+  }, [
+    match?.id,
+    match?.phase,
+    match?.players,
+    match?.sequence,
+    sessionToken,
+    userPlayerId,
+    setMatch,
+  ]);
 }
 
 function applyFreshMatch(setMatch, nextMatch) {
@@ -1811,7 +1879,12 @@ function MenuHeader({
   );
 }
 
-function MenuActionCard({ title, artwork, onClick, className = "" }) {
+function MenuActionCard({
+  title,
+  artwork,
+  onClick,
+  className = "",
+}) {
   return (
     <button
       type="button"
@@ -1821,7 +1894,7 @@ function MenuActionCard({ title, artwork, onClick, className = "" }) {
       <img
         className="menu-action-image"
         src={artwork}
-        alt={title}
+        alt=""
         width={485}
         height={736}
         draggable={false}
@@ -2038,30 +2111,17 @@ function MenuScreen({
         onNotifications={onOpenHistory}
       />
 
-      <section className="menu-stage-mobile">
-        <div className="menu-live-goti-row" aria-hidden="true">
-          {["red", "green", "yellow", "blue"].map((color, index) => (
-            <img
-              key={color}
-              className={`menu-live-goti menu-live-goti-${color}`}
-              src={TOKEN_ASSETS[color]}
-              alt=""
-              width={100}
-              height={125}
-              draggable={false}
-              style={{ animationDelay: `${index * 0.18}s` }}
-            />
-          ))}
+      <section className="menu-home-layout">
+        <div className="menu-home-hero">
+          <img
+            className="menu-ludo-hero"
+            src="/assets/LudoHome.png"
+            alt=""
+            width={978}
+            height={717}
+            draggable={false}
+          />
         </div>
-
-        <img
-          className="menu-ludo-hero"
-          src="/assets/LudoHome.png"
-          alt=""
-          width={978}
-          height={717}
-          draggable={false}
-        />
 
         <div className="menu-game-banner" aria-label="Ludo game">
           <img
@@ -2074,7 +2134,7 @@ function MenuScreen({
           />
         </div>
 
-        <div className="menu-action-stack">
+        <div className="menu-action-grid">
           <MenuActionCard
             title="Multiplayer 4"
             artwork="/assets/Multiplayer4Option.png"
@@ -2088,13 +2148,6 @@ function MenuScreen({
           />
         </div>
 
-        {/* <button
-          type="button"
-          className="menu-more-link"
-          onClick={onOpenUtilities}
-        >
-          More modes
-        </button> */}
       </section>
     </AppFrame>
   );
@@ -2655,6 +2708,7 @@ function BoardToken({
   color,
   stackIndex,
   isSelectable,
+  showChoiceRing = false,
   isUserTurnToken = false,
   onSelect,
 }) {
@@ -2672,7 +2726,7 @@ function BoardToken({
   const markerContent = (
     <>
       <span className="token-base-ring" aria-hidden="true" />
-      {isSelectable ? (
+      {showChoiceRing ? (
         <span className="token-choice-ring" aria-hidden="true" />
       ) : null}
       {tokenImage}
@@ -2701,7 +2755,7 @@ function BoardToken({
   );
 }
 
-function HouseToken({ color, isSelectable, onSelect }) {
+function HouseToken({ color, isSelectable, showChoiceRing = false, onSelect }) {
   const pressHandlers = useImmediatePress(onSelect, !isSelectable);
   const tokenImage = (
     <img
@@ -2716,7 +2770,7 @@ function HouseToken({ color, isSelectable, onSelect }) {
   const markerContent = (
     <>
       <span className="token-base-ring" aria-hidden="true" />
-      {isSelectable ? (
+      {showChoiceRing ? (
         <span className="token-choice-ring" aria-hidden="true" />
       ) : null}
       {tokenImage}
@@ -2992,6 +3046,9 @@ function LudoBoard({
   const shouldHighlightUserBoardTokens =
     match.currentTurnUserId === userPlayerId &&
     (match.phase === "rolling" || match.phase === "awaiting-move");
+  const isRollingPlayerChoosing =
+    match.phase === "awaiting-move" &&
+    match.currentTurnUserId === userPlayerId;
 
   return (
     <div className="ludo-board-frame">
@@ -3022,8 +3079,10 @@ function LudoBoard({
             {Array.from({ length: 4 }, (_, slotIndex) => {
               const token = yardTokenMap[color][slotIndex];
               const isSelectable =
+                isRollingPlayerChoosing &&
                 token?.playerId === userPlayerId &&
                 isTokenSelectable(selectableTokenIndexes, token.tokenIndex);
+              const showChoiceRing = isSelectable;
 
               return (
                 <div
@@ -3034,6 +3093,7 @@ function LudoBoard({
                     <HouseToken
                       color={token.color}
                       isSelectable={isSelectable}
+                      showChoiceRing={showChoiceRing}
                       onSelect={
                         isSelectable
                           ? () => onSelectToken?.(token.tokenIndex)
@@ -3108,8 +3168,10 @@ function LudoBoard({
                 )}
                 {tokens.map((token, tokenIndex) => {
                   const isSelectable =
+                    isRollingPlayerChoosing &&
                     token.playerId === userPlayerId &&
                     isTokenSelectable(selectableTokenIndexes, token.tokenIndex);
+                  const showChoiceRing = isSelectable;
                   const isUserTurnToken =
                     shouldHighlightUserBoardTokens &&
                     token.playerId === userPlayerId;
@@ -3120,6 +3182,7 @@ function LudoBoard({
                       color={token.color}
                       stackIndex={tokenIndex}
                       isSelectable={isSelectable}
+                      showChoiceRing={showChoiceRing}
                       isUserTurnToken={isUserTurnToken}
                       onSelect={
                         isSelectable
@@ -3178,10 +3241,15 @@ function BoardScreen({
   const [isSoundOn, setIsSoundOn] = useSoundSetting();
   const [autoSpinExpiredTurnId, setAutoSpinExpiredTurnId] = useState(null);
   const [isBoardAnimating, setIsBoardAnimating] = useState(false);
+  const [isPassingDice, setIsPassingDice] = useState(false);
   const [heldTurnUserId, setHeldTurnUserId] = useState(match.currentTurnUserId);
   const [heldDiceValue, setHeldDiceValue] = useState(match.dice ?? null);
   const settledTurnUserIdRef = useRef(match.currentTurnUserId);
   const settledDiceValueRef = useRef(match.dice ?? null);
+  const passDiceTimeoutRef = useRef(null);
+  const previousTurnUserIdRef = useRef(match.currentTurnUserId);
+  const previousPhaseRef = useRef(match.phase);
+  const currentTurnUserIdRef = useRef(match.currentTurnUserId);
   const [lastDiceByPlayer, setLastDiceByPlayer] = useState(() => new Map());
   const matchPotAmount = match.pot ?? 0;
   const [potIntroPhase, setPotIntroPhase] = useState("visible");
@@ -3250,13 +3318,97 @@ function BoardScreen({
   ]);
 
   useEffect(() => {
-    if (!isBoardAnimating) {
+    currentTurnUserIdRef.current = match.currentTurnUserId;
+  }, [match.currentTurnUserId]);
+
+  useEffect(() => {
+    return () => {
+      if (passDiceTimeoutRef.current) {
+        window.clearTimeout(passDiceTimeoutRef.current);
+      }
+    };
+  }, []);
+
+  function clearPassDiceTimeout() {
+    if (passDiceTimeoutRef.current) {
+      window.clearTimeout(passDiceTimeoutRef.current);
+      passDiceTimeoutRef.current = null;
+    }
+  }
+
+  function syncHeldTurnToMatch() {
+    clearPassDiceTimeout();
+    setIsPassingDice(false);
+    setHeldTurnUserId(currentTurnUserIdRef.current);
+    setHeldDiceValue(match.dice ?? null);
+    settledTurnUserIdRef.current = currentTurnUserIdRef.current;
+    settledDiceValueRef.current = match.dice ?? null;
+  }
+
+  function releaseDicePassHold() {
+    clearPassDiceTimeout();
+    setIsPassingDice(false);
+    setHeldTurnUserId(currentTurnUserIdRef.current);
+    setHeldDiceValue(null);
+    settledTurnUserIdRef.current = currentTurnUserIdRef.current;
+    settledDiceValueRef.current = null;
+  }
+
+  function shouldDelayDicePass(previousTurnUserId, previousPhase) {
+    return (
+      previousTurnUserId &&
+      previousTurnUserId !== match.currentTurnUserId &&
+      match.phase === "rolling" &&
+      !match.dice &&
+      previousPhase !== "advancing"
+    );
+  }
+
+  function beginDicePassHold(previousTurnUserId) {
+    clearPassDiceTimeout();
+    setHeldTurnUserId(previousTurnUserId);
+    setHeldDiceValue(
+      settledDiceValueRef.current ??
+        lastDiceByPlayer.get(previousTurnUserId) ??
+        match.lastRollDice ??
+        null,
+    );
+    setIsPassingDice(true);
+    passDiceTimeoutRef.current = window.setTimeout(() => {
+      passDiceTimeoutRef.current = null;
+      releaseDicePassHold();
+    }, DICE_PASS_DELAY_MS);
+  }
+
+  useEffect(() => {
+    if (isBoardAnimating || isPassingDice) {
+      previousTurnUserIdRef.current = match.currentTurnUserId;
+      previousPhaseRef.current = match.phase;
+      return;
+    }
+
+    const previousTurnUserId = previousTurnUserIdRef.current;
+    const previousPhase = previousPhaseRef.current;
+
+    if (shouldDelayDicePass(previousTurnUserId, previousPhase)) {
+      beginDicePassHold(previousTurnUserId);
+    } else {
       setHeldTurnUserId(match.currentTurnUserId);
       setHeldDiceValue(match.dice ?? null);
       settledTurnUserIdRef.current = match.currentTurnUserId;
       settledDiceValueRef.current = match.dice ?? null;
     }
-  }, [isBoardAnimating, match.currentTurnUserId, match.dice]);
+
+    previousTurnUserIdRef.current = match.currentTurnUserId;
+    previousPhaseRef.current = match.phase;
+  }, [
+    isBoardAnimating,
+    isPassingDice,
+    match.currentTurnUserId,
+    match.dice,
+    match.lastRollDice,
+    match.phase,
+  ]);
 
   function handleBoardAnimationChange(isAnimating) {
     if (isAnimating) {
@@ -3267,8 +3419,19 @@ function BoardScreen({
     }
 
     setIsBoardAnimating(false);
-    setHeldTurnUserId(match.currentTurnUserId);
-    setHeldDiceValue(match.dice ?? null);
+    const heldUserId = settledTurnUserIdRef.current ?? heldTurnUserId;
+
+    if (
+      heldUserId &&
+      heldUserId !== match.currentTurnUserId &&
+      match.phase === "rolling" &&
+      !match.dice
+    ) {
+      beginDicePassHold(heldUserId);
+      return;
+    }
+
+    syncHeldTurnToMatch();
   }
 
   function getLastDiceValue(playerId) {
@@ -3276,8 +3439,20 @@ function BoardScreen({
   }
 
   function getVisibleDiceValue(playerId) {
-    if (isBoardAnimating && heldTurnUserId === playerId && heldDiceValue) {
+    if (
+      (isBoardAnimating || isPassingDice) &&
+      heldTurnUserId === playerId &&
+      heldDiceValue
+    ) {
       return heldDiceValue;
+    }
+
+    if (
+      isPassingDice &&
+      heldTurnUserId === playerId &&
+      lastDiceByPlayer.get(playerId)
+    ) {
+      return lastDiceByPlayer.get(playerId);
     }
 
     if (match.currentTurnUserId === playerId && match.dice) {
@@ -3295,14 +3470,15 @@ function BoardScreen({
     return null;
   }
 
+  const isHoldingTurnDisplay = isBoardAnimating || isPassingDice;
   const canRollDice =
     !isPotIntroBlocking &&
-    !isBoardAnimating &&
+    !isHoldingTurnDisplay &&
     match.phase === "rolling" &&
     match.currentTurnUserId === userPlayerId &&
     !match.dice &&
     Boolean(onRollDice);
-  const visibleTurnUserId = isBoardAnimating
+  const visibleTurnUserId = isHoldingTurnDisplay
     ? heldTurnUserId
     : match.currentTurnUserId;
   const currentTurnPlayer = match.players.find(
@@ -3310,13 +3486,13 @@ function BoardScreen({
   );
   const autoRollingDiceUserId =
     !isPotIntroBlocking &&
-    !isBoardAnimating &&
+    !isHoldingTurnDisplay &&
     match.phase === "rolling" && !match.dice && currentTurnPlayer?.isBot
       ? visibleTurnUserId
       : null;
   const waitingToRollUserId =
     !isPotIntroBlocking &&
-    !isBoardAnimating &&
+    !isHoldingTurnDisplay &&
     match.phase === "rolling" &&
     !match.dice &&
     visibleTurnUserId !== userPlayerId &&
@@ -3338,6 +3514,12 @@ function BoardScreen({
 
     return () => window.clearTimeout(timeoutId);
   }, [autoRollingDiceUserId, match.sequence]);
+
+  const isRollingPlayerChoosing =
+    !isPotIntroBlocking &&
+    !isHoldingTurnDisplay &&
+    match.phase === "awaiting-move" &&
+    match.currentTurnUserId === userPlayerId;
 
   return (
     <AppFrame
@@ -3425,18 +3607,10 @@ function BoardScreen({
           <LudoBoard
             match={match}
             selectableTokenIndexes={
-              isPotIntroBlocking ||
-              isBoardAnimating ||
-              match.phase !== "awaiting-move"
-                ? []
-                : match.selectableTokenIndexes
+              isRollingPlayerChoosing ? match.selectableTokenIndexes : []
             }
             onSelectToken={
-              isPotIntroBlocking ||
-              isBoardAnimating ||
-              match.phase !== "awaiting-move"
-                ? undefined
-                : onSelectToken
+              isRollingPlayerChoosing ? onSelectToken : undefined
             }
             onAnimationChange={handleBoardAnimationChange}
             onTokenStep={() => soundController.tokenStep()}
@@ -3498,7 +3672,8 @@ function WaitingLobbyScreen({
   onOpenWallet,
   onOpenHistory,
 }) {
-  const hasTimedOut = countdownMs <= 0;
+  const isStarting = isOnlineLobbyStarting(room);
+  const hasTimedOut = countdownMs <= 0 || isStarting;
 
   return (
     <AppFrame
@@ -3562,7 +3737,11 @@ function WaitingLobbyScreen({
             {hasTimedOut ? "00:00" : formatCountdown(countdownMs)}
           </strong>
           <span className="waiting-timer-meta">
-            {hasTimedOut ? "Preparing table" : "Table starts when ready"}
+            {isStarting
+              ? "Starting match..."
+              : hasTimedOut
+                ? "Preparing table"
+                : "Table starts when ready"}
           </span>
         </div>
 
@@ -3724,7 +3903,9 @@ function computeMatchResultStats(match, winnerId) {
     winner?.tokens?.filter((progress) => progress >= FINISHED_PROGRESS).length ??
     0;
   const isForfeitWin = (match.events || []).some((event) =>
-    /opponent left|abandoned the game/i.test(event.detail || ""),
+    /opponent left the 2-player match|won because the opponent left/i.test(
+      event.detail || "",
+    ),
   );
   const accuracy =
     isForfeitWin && totalMoves <= 0
@@ -4494,6 +4675,7 @@ function PrivateRoomPageShell({ appState }) {
   const pollTimeoutRef = useRef(null);
   const moveSyncTimeoutRef = useRef(null);
   const snapshotPollTimeoutRef = useRef(null);
+  const forfeitSyncTimeoutRef = useRef(null);
   const latestSequenceRef = useRef(0);
   const settledMatchIdRef = useRef(null);
   const isLeavingRoomRef = useRef(false);
@@ -4522,6 +4704,13 @@ function PrivateRoomPageShell({ appState }) {
     sessionToken: session?.sessionToken,
     setMatch,
     enabled: !isRealtimeConnected,
+  });
+  useOpponentForfeitSnapshotSync({
+    match,
+    userPlayerId: privateMatchUserId,
+    sessionToken: session?.sessionToken,
+    setMatch,
+    timeoutRef: forfeitSyncTimeoutRef,
   });
   const returnToMenu = useCallback(() => {
     navigateToHref(router, PANEL_ROUTES.menu);
@@ -5208,7 +5397,10 @@ function PrivateRoomPageShell({ appState }) {
         title="Leave Private Room?"
         message={
           match
-            ? "If you leave now, your player will exit the private room and a bot will take over your seat."
+            ? getLeaveActiveMatchMessage({
+                isPrivate: true,
+                activeHumanCount: countActiveHumanPlayers(match.players),
+              })
             : "If you leave now, you will exit the private room and no entry fee will be deducted."
         }
         onConfirm={handleConfirmLeaveRoom}
@@ -5252,6 +5444,7 @@ function OnlineBoardPageShell({ appState, configuredMaxPlayers }) {
   const moveSyncTimeoutRef = useRef(null);
   const lobbyPollTimeoutRef = useRef(null);
   const snapshotPollTimeoutRef = useRef(null);
+  const forfeitSyncTimeoutRef = useRef(null);
   const latestSequenceRef = useRef(match?.sequence ?? 0);
   const settledMatchIdRef = useRef(null);
   const isLeavingOnlineRoomRef = useRef(false);
@@ -5280,6 +5473,13 @@ function OnlineBoardPageShell({ appState, configuredMaxPlayers }) {
     sessionToken: session?.sessionToken,
     setMatch,
     enabled: !isRealtimeConnected,
+  });
+  useOpponentForfeitSnapshotSync({
+    match,
+    userPlayerId: onlineUserPlayerId,
+    sessionToken: session?.sessionToken,
+    setMatch,
+    timeoutRef: forfeitSyncTimeoutRef,
   });
   const returnToMenu = useCallback(() => {
     navigateToHref(router, PANEL_ROUTES.menu);
@@ -5413,10 +5613,12 @@ function OnlineBoardPageShell({ appState, configuredMaxPlayers }) {
         setLobbyRoom(response.room);
         setMatch(null);
         setIsOnlineBootstrapping(false);
-        setStatusMessage("");
+        setStatusMessage(
+          isOnlineLobbyStarting(response.room) ? "Starting match..." : "",
+        );
         lobbyPollTimeoutRef.current = window.setTimeout(() => {
           pollLobby(sessionToken);
-        }, 2000);
+        }, resolveOnlineLobbyPollDelayMs(response.room, response.match));
       } catch (error) {
         if (!cancelled) {
           console.error("[Ludo online lobby] Failed to poll or start online match", {
@@ -5856,7 +6058,10 @@ function OnlineBoardPageShell({ appState, configuredMaxPlayers }) {
         message={
           lobbyRoom
             ? "If you leave now, your seat will be removed from the waiting lobby and no coins will be deducted."
-            : "If you leave now, your player will exit the current online room. Refresh or connection loss will not remove you."
+            : getLeaveActiveMatchMessage({
+                isPrivate: false,
+                activeHumanCount: countActiveHumanPlayers(match?.players),
+              })
         }
         onConfirm={handleConfirmLeaveOnlineRoom}
         onCancel={() => setIsLeaveConfirmOpen(false)}
