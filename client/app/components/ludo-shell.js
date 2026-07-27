@@ -5156,10 +5156,80 @@ function navigateToHref(router, href, { replace = false } = {}) {
   }
 }
 
+function navigateToMenu(router) {
+  // Always replace so browser Back does not re-enter /play/* and auto-start a match.
+  navigateToHref(router, PANEL_ROUTES.menu, { replace: true });
+}
+
+function resolveLudoExitUrl() {
+  if (typeof window === "undefined") {
+    return null;
+  }
+
+  try {
+    const referrer = document.referrer?.trim();
+    if (!referrer) {
+      return null;
+    }
+
+    const referrerUrl = new URL(referrer);
+    if (referrerUrl.origin === window.location.origin) {
+      return null;
+    }
+
+    return referrer;
+  } catch {
+    return null;
+  }
+}
+
+function useMenuBrowserBackExit() {
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return undefined;
+    }
+
+    const pushGuardState = () => {
+      window.history.pushState(
+        {
+          ...(window.history.state ?? {}),
+          ludoMenuGuard: true,
+          stamp: Date.now(),
+        },
+        "",
+        window.location.href,
+      );
+    };
+
+    const handlePopState = () => {
+      const exitUrl = resolveLudoExitUrl();
+      if (exitUrl) {
+        window.location.replace(exitUrl);
+        return;
+      }
+
+      // No external platform referrer: stay on the menu instead of falling into
+      // a leftover /play/online history entry that would restart matchmaking.
+      pushGuardState();
+    };
+
+    pushGuardState();
+    window.addEventListener("popstate", handlePopState);
+
+    return () => {
+      window.removeEventListener("popstate", handlePopState);
+    };
+  }, []);
+}
+
 function navigateToPanel(router, panel, onAfterNavigate) {
   const href = PANEL_ROUTES[panel] ?? PANEL_ROUTES.menu;
 
   onAfterNavigate?.();
+  if (href === PANEL_ROUTES.menu) {
+    navigateToMenu(router);
+    return;
+  }
   navigateToHref(router, href);
 }
 
@@ -5217,6 +5287,7 @@ export function MenuPageShell({ appState = mockBootState }) {
   useSoundUnlock();
   useGlobalButtonClickSound();
   useLobbyBackgroundMusic(true);
+  useMenuBrowserBackExit();
 
   if (accessMessage) {
     return <OperatorAccessBlockedScreen message={accessMessage} />;
@@ -5415,7 +5486,7 @@ function PrivateRoomPageShell({ appState }) {
     timeoutRef: forfeitSyncTimeoutRef,
   });
   const returnToMenu = useCallback(() => {
-    navigateToHref(router, PANEL_ROUTES.menu);
+    navigateToMenu(router);
   }, [router]);
   const startNewPrivateRoom = useCallback(() => {
     setPrivateRoom(null);
@@ -5855,7 +5926,7 @@ function PrivateRoomPageShell({ appState }) {
       setStatusMessage("Leaving room...");
       await leavePrivateRoom(session.sessionToken);
       setIsLeaveConfirmOpen(false);
-      navigateToHref(router, PANEL_ROUTES.menu);
+      navigateToMenu(router);
     } catch (error) {
       setIsLeavingRoom(false);
       isLeavingRoomRef.current = false;
@@ -6086,9 +6157,7 @@ function PrivateRoomPageShell({ appState }) {
           entryFee={entryFee}
           roomCode={roomCode}
           statusMessage={statusMessage}
-          onBack={() =>
-            navigateToHref(router, PANEL_ROUTES.menu)
-          }
+          onBack={() => navigateToMenu(router)}
           onChangeTab={setActiveTab}
           onRoomNameChange={setRoomName}
           onDisplayNameChange={setDisplayName}
@@ -6212,7 +6281,7 @@ function OnlineBoardPageShell({ appState, configuredMaxPlayers }) {
     timeoutRef: forfeitSyncTimeoutRef,
   });
   const returnToMenu = useCallback(() => {
-    navigateToHref(router, PANEL_ROUTES.menu);
+    navigateToMenu(router);
   }, [router]);
   const startNewOnlineGame = useCallback(() => {
     setLobbyRoom(null);
@@ -6236,7 +6305,7 @@ function OnlineBoardPageShell({ appState, configuredMaxPlayers }) {
 
     // Platform launches often hit /play/online without players=2|4.
     // Send users to the mode selection menu instead of defaulting to 4-player.
-    navigateToHref(router, PANEL_ROUTES.menu, { replace: true });
+    navigateToMenu(router);
   }, [hasExplicitPlayerCount, router]);
 
   useEffect(() => {
@@ -6779,11 +6848,11 @@ function OnlineBoardPageShell({ appState, configuredMaxPlayers }) {
       setStatusMessage(lobbyRoom ? "Leaving lobby..." : "Leaving room...");
       await leaveOnlineRoom(session.sessionToken);
       setIsLeaveConfirmOpen(false);
-      navigateToHref(router, PANEL_ROUTES.menu);
+      navigateToMenu(router);
     } catch (error) {
       if (error.message?.toLowerCase().includes("not found for user")) {
         setIsLeaveConfirmOpen(false);
-        navigateToHref(router, PANEL_ROUTES.menu);
+        navigateToMenu(router);
         return;
       }
 
