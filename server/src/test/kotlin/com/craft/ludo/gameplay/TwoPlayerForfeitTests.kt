@@ -57,6 +57,23 @@ class TwoPlayerForfeitTests {
         assertThat(winner?.userId).isEqualTo("player-a")
     }
 
+    @Test
+    fun `awards remaining bot the win in a two seat human vs bot match`() {
+        val playersBeforeLeave = listOf(
+            humanPlayer("player-a", "Alice"),
+            botPlayer("bot-red", "Red Bot"),
+        )
+        val playersAfterLeave = listOf(
+            abandonedHumanPlayer("Alice"),
+            botPlayer("bot-red", "Red Bot"),
+        )
+
+        val winner = resolveTwoPlayerForfeitWinner(playersBeforeLeave, playersAfterLeave)
+
+        assertThat(winner?.userId).isEqualTo("bot-red")
+        assertThat(winner?.displayName).isEqualTo("Red Bot")
+    }
+
     private fun humanPlayer(userId: String, displayName: String): MatchPlayerState {
         return MatchPlayerState(
             userId = userId,

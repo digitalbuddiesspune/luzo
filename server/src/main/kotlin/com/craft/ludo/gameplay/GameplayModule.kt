@@ -762,11 +762,19 @@ internal fun resolveTwoPlayerForfeitWinner(
         !player.isBot && !player.isEffectivelyAbandoned()
     }
 
-    return if (activeRealHumansBeforeLeave == 2 && remainingRealHumans.size == 1) {
-        remainingRealHumans.first()
-    } else {
-        null
+    // Classic PvP: exactly two real humans were playing, one left → other human wins.
+    if (activeRealHumansBeforeLeave == 2 && remainingRealHumans.size == 1) {
+        return remainingRealHumans.first()
     }
+
+    // True 2-seat match (human vs human, or human vs bot): remaining seat wins and match ends.
+    val activeSeatsBeforeLeave = playersBeforeLeave.count { player -> !player.isEffectivelyAbandoned() }
+    val remainingActiveSeats = playersAfterLeave.filter { player -> !player.isEffectivelyAbandoned() }
+    if (playersBeforeLeave.size == 2 && activeSeatsBeforeLeave == 2 && remainingActiveSeats.size == 1) {
+        return remainingActiveSeats.first()
+    }
+
+    return null
 }
 
 internal fun countActiveRealHumans(players: List<MatchPlayerState>): Int {
@@ -1416,9 +1424,13 @@ class MatchService(
                     else -> abandonedMatch
                 }
 
+                val nextRoomStatus =
+                    if (updatedMatch.status == MatchStatus.FINISHED) RoomStatus.FINISHED else room.status
+
                 roomRepository.save(
                     room.copy(
                         seats = updatedRoomSeats,
+                        status = nextRoomStatus,
                         updatedAt = now,
                     ),
                 ).then(persistMatchTransition(updatedMatch)).then()
@@ -1785,6 +1797,9 @@ class MatchService(
                     phase = MatchPhase.FINISHED,
                     winnerUserId = forfeitWinner.userId,
                     winnerDisplayName = forfeitWinner.displayName,
+                    selectableTokenIndexes = emptyList(),
+                    pendingNextPlayerIndex = null,
+                    phaseDeadlineAt = null,
                     turnDeadlineAt = null,
                     events = prependEvent(
                         abandonedMatch.events,
@@ -1830,6 +1845,8 @@ class MatchService(
     ): Mono<MatchDocument> {
         return roomRepository.findById(nextMatch.roomId)
             .flatMap { room ->
+                val nextRoomStatus =
+                    if (nextMatch.status == MatchStatus.FINISHED) RoomStatus.FINISHED else room.status
                 roomRepository.save(
                     room.copy(
                         seats = room.seats.map { seat ->
@@ -1843,6 +1860,7 @@ class MatchService(
                                 seat
                             }
                         },
+                        status = nextRoomStatus,
                         updatedAt = nextMatch.updatedAt,
                     ),
                 )
@@ -1942,33 +1960,52 @@ class MatchService(
                     roomRepository.findById(saved.roomId)
                         .flatMap { room ->
                             val winnerUserId = saved.winnerUserId
-                                ?: return@flatMap Mono.error(
-                                    DomainException(HttpStatus.CONFLICT, "Finished match is missing a winner."),
+                            val settlement = if (winnerUserId.isNullOrBlank()) {
+                                log.warn(
+                                    "Finished match '{}' is missing a winner. Finalizing room '{}' without payout.",
+                                    saved.id,
+                                    room.id,
                                 )
+                                Mono.empty()
+                            } else {
+                                walletService.payoutWinner(
+                                    matchId = saved.id,
+                                    winnerUserId = winnerUserId,
+                                    reservations = room.walletReservations,
+                                )
+                                    .doOnSubscribe {
+                                        log.info(
+                                            "Ludo winner payout settlement requested roomId={} roomCode={} matchId={} winnerUserId={} reservations={}",
+                                            room.id,
+                                            room.code,
+                                            saved.id,
+                                            winnerUserId,
+                                            room.walletReservations.size,
+                                        )
+                                    }
+                                    .onErrorResume { error ->
+                                        log.warn(
+                                            "Winner payout failed for finished match '{}'. Finalizing room '{}' to end the game.",
+                                            saved.id,
+                                            room.id,
+                                            error,
+                                        )
+                                        Mono.empty()
+                                    }
+                            }
 
-                            walletService.payoutWinner(
-                                matchId = saved.id,
-                                winnerUserId = winnerUserId,
-                                reservations = room.walletReservations,
-                            )
-                                .doOnSubscribe {
-                                    log.info(
-                                        "Ludo winner payout settlement requested roomId={} roomCode={} matchId={} winnerUserId={} reservations={}",
-                                        room.id,
-                                        room.code,
-                                        saved.id,
-                                        winnerUserId,
-                                        room.walletReservations.size,
-                                    )
-                                }
-                                .then(
+                            settlement.then(
+                                if (room.status == RoomStatus.FINISHED) {
+                                    Mono.just(room)
+                                } else {
                                     roomRepository.save(
                                         room.copy(
                                             status = RoomStatus.FINISHED,
                                             updatedAt = saved.updatedAt,
                                         ),
-                                    ),
-                                )
+                                    )
+                                },
+                            )
                         }
                         .then()
                 } else {
@@ -2328,7 +2365,11 @@ class LobbyService(
         val query = Query.query(
             Criteria.where("mode").`is`(RoomMode.ONLINE_PUBLIC)
                 .and("status").`in`(RoomStatus.WAITING, RoomStatus.STARTING, RoomStatus.ACTIVE)
-                .and("seats.userId").`is`(userId),
+                .and("seats").elemMatch(
+                    Criteria.where("userId").`is`(userId)
+                        .and("isAbandoned").ne(true)
+                        .and("isBot").ne(true),
+                ),
         )
 
         return mongoTemplate.findOne(query, RoomDocument::class.java)
@@ -2338,7 +2379,11 @@ class LobbyService(
         val query = Query.query(
             Criteria.where("mode").`is`(RoomMode.PRIVATE_FRIENDS)
                 .and("status").`in`(RoomStatus.WAITING, RoomStatus.STARTING, RoomStatus.ACTIVE)
-                .and("seats.userId").`is`(userId),
+                .and("seats").elemMatch(
+                    Criteria.where("userId").`is`(userId)
+                        .and("isAbandoned").ne(true)
+                        .and("isBot").ne(true),
+                ),
         )
 
         return mongoTemplate.findOne(query, RoomDocument::class.java)
@@ -2613,19 +2658,113 @@ class LobbyService(
             .then(matchRepository.findById(matchId))
             .switchIfEmpty(Mono.error(DomainException(HttpStatus.NOT_FOUND, "Match not found.")))
             .flatMap { match ->
-                if (match.status == MatchStatus.FINISHED || match.phase == MatchPhase.FINISHED) {
-                    settleAndMarkRoomFinished(room, match)
-                        .then(createWaitingRoom(principal, requestedMaxPlayers))
-                } else {
-                    Mono.just(
-                        JoinOnlineMatchResponse(
-                            room = room.toSummary(),
-                            match = match.toSnapshot(),
-                            websocketPath = "/ws/matches/${match.id}?sessionToken=${principal.sessionToken}",
-                        ),
-                    )
+                val userStillActiveInMatch = match.players.any { player ->
+                    player.userId == principal.id && !player.isBot && !player.isEffectivelyAbandoned()
+                }
+
+                when {
+                    match.status == MatchStatus.FINISHED || match.phase == MatchPhase.FINISHED -> {
+                        settleAndMarkRoomFinished(room, match)
+                            .then(createWaitingRoom(principal, requestedMaxPlayers))
+                    }
+
+                    // Auto-abandoned after missed turns (or similar): release seat/room so they can join other matches.
+                    !userStillActiveInMatch -> {
+                        releaseAbandonedUserFromActiveRoom(room, match, principal.id)
+                            .then(createWaitingRoom(principal, requestedMaxPlayers))
+                    }
+
+                    else -> {
+                        Mono.just(
+                            JoinOnlineMatchResponse(
+                                room = room.toSummary(),
+                                match = match.toSnapshot(),
+                                websocketPath = "/ws/matches/${match.id}?sessionToken=${principal.sessionToken}",
+                            ),
+                        )
+                    }
                 }
             }
+    }
+
+    private fun releaseAbandonedUserFromActiveRoom(
+        room: RoomDocument,
+        match: MatchDocument,
+        userId: String,
+    ): Mono<RoomDocument> {
+        val now = Instant.now(clock)
+        val abandonedId = newId("abandoned")
+        val updatedSeats = room.seats.map { seat ->
+            if (seat.userId == userId && !seat.isBot && !seat.isAbandoned) {
+                seat.copy(
+                    userId = abandonedId,
+                    isAbandoned = true,
+                    joinedAt = now,
+                )
+            } else {
+                seat
+            }
+        }
+
+        // 2-player tables must close so the AFK/abandoned player can join other matches.
+        val shouldFinishRoom = match.players.size == 2
+
+        return roomRepository.save(
+            room.copy(
+                seats = updatedSeats,
+                status = if (shouldFinishRoom) RoomStatus.FINISHED else room.status,
+                updatedAt = now,
+            ),
+        ).flatMap { savedRoom ->
+            if (!shouldFinishRoom) {
+                return@flatMap Mono.just(savedRoom)
+            }
+
+            if (match.status == MatchStatus.FINISHED || match.phase == MatchPhase.FINISHED) {
+                return@flatMap settleAndMarkRoomFinished(savedRoom, match)
+            }
+
+            val winner = match.players.firstOrNull { player ->
+                player.userId != userId && !player.isEffectivelyAbandoned()
+            }
+            val finishedMatch = match.copy(
+                status = MatchStatus.FINISHED,
+                phase = MatchPhase.FINISHED,
+                players = match.players.map { player ->
+                    if (player.userId == userId && !player.isBot && !player.isEffectivelyAbandoned()) {
+                        player.copy(
+                            userId = abandonedId,
+                            isAbandoned = true,
+                            tokens = emptyList(),
+                        )
+                    } else {
+                        player
+                    }
+                },
+                winnerUserId = winner?.userId ?: match.winnerUserId,
+                winnerDisplayName = winner?.displayName ?: match.winnerDisplayName,
+                selectableTokenIndexes = emptyList(),
+                pendingNextPlayerIndex = null,
+                phaseDeadlineAt = null,
+                turnDeadlineAt = null,
+                updatedAt = now,
+                sequence = match.sequence + 1,
+                events = if (winner != null) {
+                    listOf(
+                        MatchEvent(
+                            actor = "System",
+                            detail = "${winner.displayName} won because the opponent left the 2-player match.",
+                            createdAt = now,
+                        ),
+                    ) + match.events.take(7)
+                } else {
+                    match.events
+                },
+            )
+
+            matchRepository.save(finishedMatch)
+                .flatMap { savedMatch -> settleAndMarkRoomFinished(savedRoom, savedMatch) }
+        }
     }
 
     private fun buildPrivateRoomState(room: RoomDocument, sessionToken: String): Mono<PrivateRoomStateResponse> {
@@ -3113,7 +3252,11 @@ class LobbyService(
         val query = Query.query(
             Criteria.where("mode").`is`(RoomMode.ONLINE_PUBLIC)
                 .and("status").`in`(RoomStatus.WAITING, RoomStatus.STARTING, RoomStatus.ACTIVE)
-                .and("seats.userId").`is`(userId),
+                .and("seats").elemMatch(
+                    Criteria.where("userId").`is`(userId)
+                        .and("isAbandoned").ne(true)
+                        .and("isBot").ne(true),
+                ),
         )
 
         return mongoTemplate.find(query, RoomDocument::class.java)
