@@ -468,29 +468,18 @@ const soundController = {
   },
 
   tokenStep() {
-    const context = this.ensureContext();
-
-    if (!context) {
+    if (this.muted || typeof window === "undefined") {
       return;
     }
 
-    const start = context.currentTime;
-    this.pulse({
-      frequency: 210,
-      slideTo: 150,
-      duration: 0.055,
-      gain: 0.045,
-      type: "square",
-      startTime: start,
-    });
-    this.pulse({
-      frequency: 480,
-      slideTo: 320,
-      duration: 0.04,
-      gain: 0.028,
-      type: "triangle",
-      startTime: start + 0.018,
-    });
+    if (!this.tokenStepAudio) {
+      this.tokenStepAudio = new window.Audio("/sounds/passingNext.mp3");
+      this.tokenStepAudio.preload = "auto";
+    }
+
+    // Clone so multi-cell goti moves can overlap step sounds cleanly.
+    const stepAudio = this.tokenStepAudio.cloneNode();
+    stepAudio.play().catch(() => {});
   },
 
   homeArrival() {
