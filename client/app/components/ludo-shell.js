@@ -154,10 +154,10 @@ const HOME_LANES = {
 };
 
 const SAFE_STAR_ASSETS = {
-  red: "/assets/BoardStarSafeHouse.png",
-  green: "/assets/BoardStarSafeHouse.png",
-  yellow: "/assets/BoardStarSafeHouse.png",
-  blue: "/assets/BoardStarSafeHouse.png",
+  red: "/assets/star.png",
+  green: "/assets/star.png",
+  yellow: "/assets/star.png",
+  blue: "/assets/star.png",
 };
 
 const TOKEN_ASSETS = {
@@ -235,7 +235,8 @@ const TOKEN_STEP_ANIMATION_MS = 225;
 const CAPTURE_RETURN_STEP_MS = 28;
 const CAPTURE_RETURN_SAMPLES_PER_SEGMENT = 4;
 const TURN_WARNING_THRESHOLD_SECONDS = 5;
-const DICE_ROLL_MIN_SPIN_MS = 520;
+const DICE_ROLL_MIN_SPIN_MS = 1300;
+const DICE_ROLL_FACE_INTERVAL_MS = 145;
 const MAIN_PATH_LAST_PROGRESS = 50;
 const HOME_LANE_START_PROGRESS = 51;
 const HOME_LANE_LAST_PROGRESS = 55;
@@ -385,23 +386,81 @@ const soundController = {
     });
   },
 
+  diceRollSpin() {
+    const context = this.ensureContext();
+
+    if (!context || this.muted) {
+      return;
+    }
+
+    const duration = 1.05;
+    const start = context.currentTime;
+    const sampleRate = context.sampleRate;
+    const bufferSize = Math.floor(sampleRate * duration);
+    const buffer = context.createBuffer(1, bufferSize, sampleRate);
+    const data = buffer.getChannelData(0);
+
+    for (let index = 0; index < bufferSize; index += 1) {
+      const envelope = Math.sin((index / bufferSize) * Math.PI);
+      data[index] = (Math.random() * 2 - 1) * envelope * 0.35;
+    }
+
+    const source = context.createBufferSource();
+    source.buffer = buffer;
+
+    const filter = context.createBiquadFilter();
+    filter.type = "bandpass";
+    filter.frequency.setValueAtTime(680, start);
+    filter.frequency.exponentialRampToValueAtTime(420, start + duration);
+    filter.Q.value = 0.55;
+
+    const gainNode = context.createGain();
+    gainNode.gain.setValueAtTime(0.0001, start);
+    gainNode.gain.exponentialRampToValueAtTime(0.026, start + 0.08);
+    gainNode.gain.exponentialRampToValueAtTime(0.01, start + duration * 0.55);
+    gainNode.gain.exponentialRampToValueAtTime(0.0001, start + duration);
+
+    source.connect(filter);
+    filter.connect(gainNode);
+    gainNode.connect(context.destination);
+    source.start(start);
+    source.stop(start + duration + 0.02);
+
+    [0.12, 0.3, 0.48, 0.66, 0.84].forEach((offset, index) => {
+      this.pulse({
+        frequency: 185 + index * 16,
+        slideTo: 125,
+        duration: 0.08,
+        gain: 0.013,
+        type: "triangle",
+        startTime: start + offset,
+      });
+    });
+  },
+
   diceRoll() {
     const context = this.ensureContext();
 
-    if (!context) {
+    if (!context || this.muted) {
       return;
     }
 
     const start = context.currentTime;
-    [250, 320, 410].forEach((frequency, index) => {
-      this.pulse({
-        frequency,
-        slideTo: frequency + 40,
-        duration: 0.055,
-        gain: 0.022,
-        type: "sawtooth",
-        startTime: start + index * 0.035,
-      });
+    this.pulse({
+      frequency: 300,
+      slideTo: 155,
+      duration: 0.16,
+      gain: 0.036,
+      type: "triangle",
+      startTime: start,
+    });
+    this.pulse({
+      frequency: 540,
+      slideTo: 360,
+      duration: 0.11,
+      gain: 0.015,
+      type: "sine",
+      startTime: start + 0.04,
     });
   },
 
@@ -605,6 +664,17 @@ function getMovableTokenIndexes(player, diceValue) {
   }, []);
 }
 
+function isTokenSelectable(selectableTokenIndexes, tokenIndex) {
+  if (!selectableTokenIndexes?.length) {
+    return false;
+  }
+
+  const normalizedIndex = Number(tokenIndex);
+  return selectableTokenIndexes.some(
+    (index) => Number(index) === normalizedIndex,
+  );
+}
+
 function resolveForcedAutoMoveToken(selectableTokenIndexes) {
   // Only auto-play when there is exactly one legal move.
   // If a six can also open yard tokens, let the player choose.
@@ -612,7 +682,7 @@ function resolveForcedAutoMoveToken(selectableTokenIndexes) {
     return null;
   }
 
-  return selectableTokenIndexes[0];
+  return Number(selectableTokenIndexes[0]);
 }
 
 function getBoardCellKey(color, progress, tokenIndex = 0) {
@@ -955,6 +1025,10 @@ function rollInteractiveMatch(match) {
         : dice === 6
           ? match.currentPlayerIndex
           : (match.currentPlayerIndex + 1) % match.players.length,
+    turnEndsAt:
+      !activePlayer.isBot && selectableTokenIndexes.length > 0
+        ? Date.now() + match.turnTimer * 1000
+        : match.turnEndsAt,
     events: prependMatchEvent(match.events, activePlayer.name, detail),
   };
 
@@ -2407,6 +2481,10 @@ function HistorySideDrawer({ isOpen, history = [], onClose }) {
   );
 }
 
+function beginDiceRollSound() {
+  soundController.diceRollSpin();
+}
+
 function getDiceAsset(value) {
   const safeValue = Math.min(6, Math.max(1, Number(value) || 1));
   return DICE_ASSETS[safeValue];
@@ -2426,12 +2504,20 @@ function DiceImage({ value, className = "" }) {
 }
 
 function RollingDiceImage() {
-  const [face, setFace] = useState(1);
+  const [face, setFace] = useState(() => Math.floor(Math.random() * 6) + 1);
 
   useEffect(() => {
     const intervalId = window.setInterval(() => {
-      setFace((current) => (current % 6) + 1);
-    }, 70);
+      setFace((current) => {
+        let nextFace = Math.floor(Math.random() * 6) + 1;
+
+        while (nextFace === current) {
+          nextFace = Math.floor(Math.random() * 6) + 1;
+        }
+
+        return nextFace;
+      });
+    }, DICE_ROLL_FACE_INTERVAL_MS);
 
     return () => window.clearInterval(intervalId);
   }, []);
@@ -2575,7 +2661,7 @@ function BoardToken({
   const pressHandlers = useImmediatePress(onSelect, !isSelectable);
   const tokenImage = (
     <img
-      className={`board-token ${isSelectable ? "is-selectable" : `stack-${stackIndex}`} ${isUserTurnToken ? "is-user-turn-token" : ""}`}
+      className={`board-token ${isSelectable ? "is-selectable" : ""} ${isUserTurnToken ? "is-user-turn-token" : ""}`}
       src={TOKEN_ASSETS[color]}
       alt=""
       width={100}
@@ -2583,9 +2669,24 @@ function BoardToken({
       draggable={false}
     />
   );
+  const markerContent = (
+    <>
+      <span className="token-base-ring" aria-hidden="true" />
+      {isSelectable ? (
+        <span className="token-choice-ring" aria-hidden="true" />
+      ) : null}
+      {tokenImage}
+    </>
+  );
 
   if (!isSelectable) {
-    return tokenImage;
+    return (
+      <span
+        className={`board-token-marker stack-${stackIndex}${isUserTurnToken ? " is-user-turn-token" : ""}`}
+      >
+        {markerContent}
+      </span>
+    );
   }
 
   return (
@@ -2595,8 +2696,7 @@ function BoardToken({
       {...pressHandlers}
       aria-label={`Move ${color} token`}
     >
-      <span className="token-choice-ring" aria-hidden="true" />
-      {tokenImage}
+      {markerContent}
     </button>
   );
 }
@@ -2613,9 +2713,18 @@ function HouseToken({ color, isSelectable, onSelect }) {
       draggable={false}
     />
   );
+  const markerContent = (
+    <>
+      <span className="token-base-ring" aria-hidden="true" />
+      {isSelectable ? (
+        <span className="token-choice-ring" aria-hidden="true" />
+      ) : null}
+      {tokenImage}
+    </>
+  );
 
   if (!isSelectable) {
-    return tokenImage;
+    return <span className="house-token-marker">{markerContent}</span>;
   }
 
   return (
@@ -2625,8 +2734,7 @@ function HouseToken({ color, isSelectable, onSelect }) {
       {...pressHandlers}
       aria-label={`Move ${color} token`}
     >
-      <span className="token-choice-ring" aria-hidden="true" />
-      {tokenImage}
+      {markerContent}
     </button>
   );
 }
@@ -2915,7 +3023,7 @@ function LudoBoard({
               const token = yardTokenMap[color][slotIndex];
               const isSelectable =
                 token?.playerId === userPlayerId &&
-                selectableTokenIndexes.includes(token.tokenIndex);
+                isTokenSelectable(selectableTokenIndexes, token.tokenIndex);
 
               return (
                 <div
@@ -3001,7 +3109,7 @@ function LudoBoard({
                 {tokens.map((token, tokenIndex) => {
                   const isSelectable =
                     token.playerId === userPlayerId &&
-                    selectableTokenIndexes.includes(token.tokenIndex);
+                    isTokenSelectable(selectableTokenIndexes, token.tokenIndex);
                   const isUserTurnToken =
                     shouldHighlightUserBoardTokens &&
                     token.playerId === userPlayerId;
@@ -3223,6 +3331,7 @@ function BoardScreen({
     }
 
     setAutoSpinExpiredTurnId(null);
+    beginDiceRollSound();
     const timeoutId = window.setTimeout(() => {
       setAutoSpinExpiredTurnId(autoRollingDiceUserId);
     }, 2600);
@@ -4869,6 +4978,10 @@ function PrivateRoomPageShell({ appState }) {
       return;
     }
 
+    if (match.phase !== "awaiting-move" || match.currentTurnUserId !== session.userId) {
+      return;
+    }
+
     try {
       setIsSubmittingMove(true);
       const updatedMatch = await submitMatchMove(
@@ -4947,12 +5060,13 @@ function PrivateRoomPageShell({ appState }) {
     try {
       const rollStartedAt = Date.now();
       setRollingDiceUserId(session.userId);
+      beginDiceRollSound();
       setIsSubmittingMove(true);
       const updatedMatch = await rollMatchDice(session.sessionToken, match.id);
-      await waitForMinimumDuration(rollStartedAt, DICE_ROLL_MIN_SPIN_MS);
       let normalizedMatch = normalizeMatchSnapshot(updatedMatch);
       applyFreshMatch(setMatch, normalizedMatch);
       setStatusMessage("");
+      setIsSubmittingMove(false);
 
       const forcedTokenIndex = resolveForcedAutoMoveToken(
         normalizedMatch.selectableTokenIndexes,
@@ -4962,6 +5076,7 @@ function PrivateRoomPageShell({ appState }) {
         forcedTokenIndex != null &&
         normalizedMatch.currentTurnUserId === session.userId
       ) {
+        setIsSubmittingMove(true);
         const movedMatch = await submitMatchMove(
           session.sessionToken,
           match.id,
@@ -4969,7 +5084,10 @@ function PrivateRoomPageShell({ appState }) {
         );
         normalizedMatch = normalizeMatchSnapshot(movedMatch);
         applyFreshMatch(setMatch, normalizedMatch);
+        setIsSubmittingMove(false);
       }
+
+      await waitForMinimumDuration(rollStartedAt, DICE_ROLL_MIN_SPIN_MS);
 
       scheduleMatchSnapshotSync({
         timeoutRef: moveSyncTimeoutRef,
@@ -5487,6 +5605,10 @@ function OnlineBoardPageShell({ appState, configuredMaxPlayers }) {
       return;
     }
 
+    if (match.phase !== "awaiting-move" || match.currentTurnUserId !== session.userId) {
+      return;
+    }
+
     try {
       setIsSubmittingMove(true);
       const updatedMatch = await submitMatchMove(
@@ -5565,12 +5687,13 @@ function OnlineBoardPageShell({ appState, configuredMaxPlayers }) {
     try {
       const rollStartedAt = Date.now();
       setRollingDiceUserId(session.userId);
+      beginDiceRollSound();
       setIsSubmittingMove(true);
       const updatedMatch = await rollMatchDice(session.sessionToken, match.id);
-      await waitForMinimumDuration(rollStartedAt, DICE_ROLL_MIN_SPIN_MS);
       let normalizedMatch = normalizeMatchSnapshot(updatedMatch);
       applyFreshMatch(setMatch, normalizedMatch);
       setStatusMessage("");
+      setIsSubmittingMove(false);
 
       const forcedTokenIndex = resolveForcedAutoMoveToken(
         normalizedMatch.selectableTokenIndexes,
@@ -5580,6 +5703,7 @@ function OnlineBoardPageShell({ appState, configuredMaxPlayers }) {
         forcedTokenIndex != null &&
         normalizedMatch.currentTurnUserId === session.userId
       ) {
+        setIsSubmittingMove(true);
         const movedMatch = await submitMatchMove(
           session.sessionToken,
           match.id,
@@ -5587,7 +5711,10 @@ function OnlineBoardPageShell({ appState, configuredMaxPlayers }) {
         );
         normalizedMatch = normalizeMatchSnapshot(movedMatch);
         applyFreshMatch(setMatch, normalizedMatch);
+        setIsSubmittingMove(false);
       }
+
+      await waitForMinimumDuration(rollStartedAt, DICE_ROLL_MIN_SPIN_MS);
 
       scheduleMatchSnapshotSync({
         timeoutRef: moveSyncTimeoutRef,
@@ -6002,7 +6129,7 @@ function LocalBoardPageShell({ mode, appState }) {
       if (
         currentMatch.phase !== "awaiting-move" ||
         activePlayer.isBot ||
-        !currentMatch.selectableTokenIndexes.includes(tokenIndex)
+        !isTokenSelectable(currentMatch.selectableTokenIndexes, tokenIndex)
       ) {
         return currentMatch;
       }
@@ -6025,21 +6152,22 @@ function LocalBoardPageShell({ mode, appState }) {
     }
 
     setRollingDiceUserId(activePlayer.id);
+    beginDiceRollSound();
+    setMatch((currentMatch) => {
+      const currentActivePlayer =
+        currentMatch.players[currentMatch.currentPlayerIndex];
+
+      if (
+        currentMatch.phase !== "rolling" ||
+        currentMatch.winnerId ||
+        currentActivePlayer.isBot
+      ) {
+        return currentMatch;
+      }
+
+      return rollInteractiveMatch(currentMatch);
+    });
     window.setTimeout(() => {
-      setMatch((currentMatch) => {
-        const currentActivePlayer =
-          currentMatch.players[currentMatch.currentPlayerIndex];
-
-        if (
-          currentMatch.phase !== "rolling" ||
-          currentMatch.winnerId ||
-          currentActivePlayer.isBot
-        ) {
-          return currentMatch;
-        }
-
-        return rollInteractiveMatch(currentMatch);
-      });
       setRollingDiceUserId(null);
     }, DICE_ROLL_MIN_SPIN_MS);
   }

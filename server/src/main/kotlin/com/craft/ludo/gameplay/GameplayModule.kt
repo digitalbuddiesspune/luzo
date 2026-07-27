@@ -1373,6 +1373,14 @@ class MatchService(
                 activePlayer.isBot -> now.plusMillis(botMoveDelayMillis)
                 else -> null
             },
+            turnDeadlineAt = if (
+                !activePlayer.isBot &&
+                selectableTokenIndexes.isNotEmpty()
+            ) {
+                now.plusSeconds(match.turnTimeoutSeconds)
+            } else {
+                match.turnDeadlineAt
+            },
             updatedAt = now,
             sequence = match.sequence + 1,
             events = prependEvent(match.events, activePlayer.displayName, detail, now),
