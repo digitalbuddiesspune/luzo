@@ -89,20 +89,27 @@ class OnlineMatchmakingService(
                     isOnlineRoomStartingStale(room, now)
             }
 
+        // Mongo WAITING->STARTING claim is the real mutex. Skipping Redis lock avoids
+        // missed bot-fills when overlapping scheduler ticks fail to acquire the lock.
         return dueWaiting
             .concatMap { room ->
-                instanceCoordinator.withLock("room-tick", room.id) {
-                    startPublicRoom(room.id)
-                        .doOnError { error -> logStartFailure(room, error) }
-                        .onErrorResume { Mono.empty() }
-                        .then()
-                }
+                startPublicRoom(room.id)
+                    .doOnSubscribe {
+                        log.info(
+                            "Scheduler starting due online lobby roomId={} roomCode={} deadline={} seats={}",
+                            room.id,
+                            room.code,
+                            room.effectiveWaitingDeadlineAt(),
+                            room.seats.size,
+                        )
+                    }
+                    .doOnError { error -> logStartFailure(room, error) }
+                    .onErrorResume { Mono.empty() }
+                    .then()
             }
             .thenMany(
                 hungStarting.concatMap { room ->
-                    instanceCoordinator.withLock("room-tick", room.id) {
-                        recoverHungStartingRoom(room)
-                    }
+                    recoverHungStartingRoom(room)
                 },
             )
             .then()
@@ -156,7 +163,7 @@ class OnlineMatchmakingService(
                 room.status,
                 room.ownerInstanceId,
             )
-            return finishLobbyRoom(room).then(createWaitingRoom(principal, maxPlayers))
+            return finishLobbyRoom(room).then(createWaitingRoom(principal, maxPlayers, startImmediately = true))
         }
 
         if (room.status == RoomStatus.STARTING && room.matchId == null) {
@@ -169,9 +176,16 @@ class OnlineMatchmakingService(
                 if (shouldStartOnlineWaitingRoom(waitingRoom, Instant.now(clock))) {
                     startPublicRoom(waitingRoom.id)
                         .flatMap { started -> toJoinResponse(started, principal, maxPlayers) }
+                        .switchIfEmpty(
+                            Mono.defer {
+                                // Start path finished/deleted the room without emitting —
+                                // seat the player in a room that starts immediately with bots.
+                                createWaitingRoom(principal, maxPlayers, startImmediately = true)
+                            },
+                        )
                         .onErrorResume { error ->
                             logStartFailure(waitingRoom, error)
-                            createWaitingRoom(principal, maxPlayers)
+                            createWaitingRoom(principal, maxPlayers, startImmediately = true)
                         }
                 } else {
                     Mono.just(JoinOnlineMatchResponse(room = waitingRoom.toSummary()))
@@ -179,18 +193,29 @@ class OnlineMatchmakingService(
             }
         }
 
-        return finishLobbyRoom(room).then(createWaitingRoom(principal, maxPlayers))
+        return finishLobbyRoom(room).then(createWaitingRoom(principal, maxPlayers, startImmediately = true))
     }
 
     private fun hydrateDeadlineIfNeeded(room: RoomDocument, now: Instant): Mono<RoomDocument> {
         if (room.effectiveWaitingDeadlineAt() != null) {
+            // Keep legacy + owned fields in sync so every deployed reader sees the same due time.
+            if (room.waitingDeadlineAt == null || room.ownedWaitingDeadlineAt == null) {
+                val deadline = room.effectiveWaitingDeadlineAt()!!
+                return roomRepository.save(
+                    room.copy(
+                        waitingDeadlineAt = deadline,
+                        ownedWaitingDeadlineAt = deadline,
+                        updatedAt = now,
+                    ),
+                )
+            }
             return Mono.just(room)
         }
         // Missing deadline means the room should start ASAP (e.g. rolled back from STARTING).
         return roomRepository.save(
             room.copy(
                 ownedWaitingDeadlineAt = now,
-                waitingDeadlineAt = null,
+                waitingDeadlineAt = now,
                 ownerInstanceId = room.ownerInstanceId ?: instanceCoordinator.instanceId,
                 updatedAt = now,
             ),
@@ -251,8 +276,10 @@ class OnlineMatchmakingService(
     private fun createWaitingRoom(
         principal: SessionPrincipal,
         maxPlayers: Int,
+        startImmediately: Boolean = false,
     ): Mono<JoinOnlineMatchResponse> {
         val now = Instant.now(clock)
+        val deadline = if (startImmediately) now else now.plusMillis(lobbyWaitMillis)
         val room = RoomDocument(
             mode = RoomMode.ONLINE_PUBLIC,
             status = RoomStatus.WAITING,
@@ -261,8 +288,9 @@ class OnlineMatchmakingService(
             ownerInstanceId = instanceCoordinator.instanceId,
             createdAt = now,
             updatedAt = now,
-            waitingDeadlineAt = null,
-            ownedWaitingDeadlineAt = now.plusMillis(lobbyWaitMillis),
+            // Dual-write so legacy and current readers agree on the due time.
+            waitingDeadlineAt = deadline,
+            ownedWaitingDeadlineAt = deadline,
             seats = normalizeSeatColors(
                 listOf(
                     RoomSeat(
@@ -282,16 +310,28 @@ class OnlineMatchmakingService(
         return roomRepository.save(room)
             .doOnNext { saved ->
                 log.info(
-                    "Ludo online lobby created roomId={} roomCode={} userId={} maxPlayers={} entryFee={} waitingDeadlineAt={}",
+                    "Ludo online lobby created roomId={} roomCode={} userId={} maxPlayers={} entryFee={} waitingDeadlineAt={} startImmediately={}",
                     saved.id,
                     saved.code,
                     principal.id,
                     saved.maxPlayers,
                     saved.entryFee,
                     saved.effectiveWaitingDeadlineAt(),
+                    startImmediately,
                 )
             }
-            .map { saved -> JoinOnlineMatchResponse(room = saved.toSummary()) }
+            .flatMap { saved ->
+                if (!startImmediately && !shouldStartOnlineWaitingRoom(saved, Instant.now(clock))) {
+                    return@flatMap Mono.just(JoinOnlineMatchResponse(room = saved.toSummary()))
+                }
+                startPublicRoom(saved.id)
+                    .flatMap { started -> toJoinResponse(started, principal, maxPlayers) }
+                    .switchIfEmpty(Mono.just(JoinOnlineMatchResponse(room = saved.toSummary())))
+                    .onErrorResume { error ->
+                        logStartFailure(saved, error)
+                        Mono.just(JoinOnlineMatchResponse(room = saved.toSummary()))
+                    }
+            }
     }
 
     /**
@@ -597,7 +637,7 @@ class OnlineMatchmakingService(
                     startAttemptId = null,
                     // Strip any accidental bots when leaving a STARTING claim.
                     walletReservations = emptyList(),
-                    waitingDeadlineAt = null,
+                    waitingDeadlineAt = nextDeadline,
                     ownedWaitingDeadlineAt = nextDeadline,
                     updatedAt = now,
                 ),
@@ -641,7 +681,7 @@ class OnlineMatchmakingService(
                 status = RoomStatus.WAITING,
                 startAttemptId = null,
                 walletReservations = emptyList(),
-                waitingDeadlineAt = null,
+                waitingDeadlineAt = now,
                 ownedWaitingDeadlineAt = now,
                 ownerInstanceId = instanceCoordinator.instanceId,
                 updatedAt = now,

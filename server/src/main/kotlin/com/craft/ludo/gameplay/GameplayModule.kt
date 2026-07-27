@@ -2762,11 +2762,37 @@ class MatchLifecycleScheduler(
     private val lobbyService: LobbyService,
     private val instanceCoordinator: AppInstanceCoordinator,
 ) {
+    private val log = LoggerFactory.getLogger(MatchLifecycleScheduler::class.java)
+    private val tickInFlight = java.util.concurrent.atomic.AtomicBoolean(false)
+
     @Scheduled(fixedDelay = 150)
     fun tickMatches() {
-        instanceCoordinator.recordHeartbeat().subscribe()
-        lobbyService.processDueWaitingRooms().subscribe()
-        matchService.processDueMatches().subscribe()
+        if (!tickInFlight.compareAndSet(false, true)) {
+            return
+        }
+
+        instanceCoordinator.recordHeartbeat()
+            .onErrorResume { Mono.empty() }
+            .then(lobbyService.processDueWaitingRooms())
+            .then(matchService.processDueMatches())
+            .doOnError { error ->
+                log.error(
+                    "Match lifecycle tick failed reason={}",
+                    error.message ?: error.javaClass.simpleName,
+                    error,
+                )
+            }
+            .doFinally { tickInFlight.set(false) }
+            .subscribe(
+                {},
+                { error ->
+                    log.error(
+                        "Match lifecycle tick subscription failed reason={}",
+                        error.message ?: error.javaClass.simpleName,
+                        error,
+                    )
+                },
+            )
     }
 }
 
