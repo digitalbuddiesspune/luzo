@@ -1219,15 +1219,35 @@ class MatchService(
                 updatedAt = now,
             ),
         )
-            .then(matchRepository.save(match))
-            .onErrorResume { error ->
-                if (error is OptimisticLockingFailureException) {
-                    matchRepository.findById(matchId)
-                        .flatMap { matchRepository.delete(it) }
-                        .then(Mono.error(error))
-                } else {
-                    Mono.error(error)
-                }
+            .flatMap { activeRoom ->
+                matchRepository.save(match)
+                    .onErrorResume { error ->
+                        log.error(
+                            "Match save failed after room went ACTIVE; reverting room roomId={} matchId={} reason={}",
+                            activeRoom.id,
+                            matchId,
+                            error.message ?: error.javaClass.simpleName,
+                            error,
+                        )
+                        val rollback = roomRepository.save(
+                            activeRoom.copy(
+                                status = RoomStatus.WAITING,
+                                matchId = null,
+                                startAttemptId = null,
+                                seats = normalizeSeatColors(activeRoom.seats.filter { !it.isBot && !it.isAbandoned }),
+                                walletReservations = emptyList(),
+                                ownedWaitingDeadlineAt = Instant.now(clock).plusMillis(2_000),
+                                waitingDeadlineAt = null,
+                                updatedAt = Instant.now(clock),
+                            ),
+                        ).then(
+                            matchRepository.findById(matchId)
+                                .flatMap { matchRepository.delete(it) }
+                                .onErrorResume { Mono.empty() },
+                        )
+
+                        rollback.then(Mono.error(error))
+                    }
             }
             .flatMap { saved ->
                 log.info(
@@ -2625,7 +2645,24 @@ class LobbyService(
                                 startAttemptDepth + 1,
                             )
                         }
-                        .doOnError { error -> logWaitingRoomStartFailure(room, error) }
+                        .switchIfEmpty(
+                            // Duplicate-room cleanup can yield empty; keep the player in lobby instead of failing join.
+                            Mono.just(
+                                JoinOnlineMatchResponse(
+                                    room = room.toSummary(),
+                                ),
+                            ),
+                        )
+                        .onErrorResume { error ->
+                            logWaitingRoomStartFailure(room, error)
+                            roomRepository.findById(room.id)
+                                .defaultIfEmpty(room)
+                                .map { latestRoom ->
+                                    JoinOnlineMatchResponse(
+                                        room = latestRoom.toSummary(),
+                                    )
+                                }
+                        }
                 }
 
                 if (room.status == RoomStatus.STARTING) {
@@ -2656,7 +2693,6 @@ class LobbyService(
 
         return matchService.processDueMatches()
             .then(matchRepository.findById(matchId))
-            .switchIfEmpty(Mono.error(DomainException(HttpStatus.NOT_FOUND, "Match not found.")))
             .flatMap { match ->
                 val userStillActiveInMatch = match.players.any { player ->
                     player.userId == principal.id && !player.isBot && !player.isEffectivelyAbandoned()
@@ -2685,6 +2721,23 @@ class LobbyService(
                     }
                 }
             }
+            .switchIfEmpty(
+                // ACTIVE room with dangling/missing match doc — free the player instead of 404 looping.
+                Mono.defer {
+                    log.warn(
+                        "Active online room missing match doc; finishing room to unblock join roomId={} roomCode={} matchId={}",
+                        room.id,
+                        room.code,
+                        matchId,
+                    )
+                    roomRepository.save(
+                        room.copy(
+                            status = RoomStatus.FINISHED,
+                            updatedAt = Instant.now(clock),
+                        ),
+                    ).then(createWaitingRoom(principal, requestedMaxPlayers))
+                },
+            )
     }
 
     private fun releaseAbandonedUserFromActiveRoom(
@@ -3185,11 +3238,16 @@ class LobbyService(
                     Mono.empty()
                 } else {
                     val now = Instant.now(clock)
+                    // Strip bot seats left by the failed start claim so the lobby is joinable again,
+                    // and back off the deadline slightly to avoid a tight start/fail loop.
+                    val realSeats = normalizeSeatColors(room.seats.filter { !it.isBot && !it.isAbandoned })
                     roomRepository.save(
                         room.copy(
                             status = RoomStatus.WAITING,
+                            seats = realSeats,
                             startAttemptId = null,
-                            ownedWaitingDeadlineAt = now,
+                            walletReservations = emptyList(),
+                            ownedWaitingDeadlineAt = now.plusMillis(2_000),
                             waitingDeadlineAt = null,
                             updatedAt = now,
                         ),
@@ -3277,7 +3335,10 @@ class LobbyService(
                 Mono.error(DomainException(HttpStatus.NOT_FOUND, "Waiting lobby not found for user.")),
             )
             .flatMap { room ->
-                if (room.status != RoomStatus.WAITING || room.matchId != null) {
+                val canLeaveLobby =
+                    room.matchId == null &&
+                        (room.status == RoomStatus.WAITING || room.status == RoomStatus.STARTING)
+                if (!canLeaveLobby) {
                     Mono.error(DomainException(HttpStatus.CONFLICT, "Lobby can only be left before the match starts."))
                 } else {
                     val remainingSeats = room.seats.filter { it.userId != userId && !it.isBot }
@@ -3287,6 +3348,8 @@ class LobbyService(
                         roomRepository.save(
                             room.copy(
                                 seats = normalizeSeatColors(remainingSeats),
+                                status = RoomStatus.WAITING,
+                                startAttemptId = null,
                                 updatedAt = Instant.now(clock),
                             ),
                         ).then()
@@ -3303,6 +3366,7 @@ class LobbyService(
             .flatMap { room ->
                 when {
                     room.status == RoomStatus.WAITING && room.matchId == null -> leaveWaitingLobby(userId)
+                    room.status == RoomStatus.STARTING && room.matchId == null -> leaveWaitingLobby(userId)
                     room.status == RoomStatus.ACTIVE && room.matchId != null -> matchService.leaveActiveMatch(room, userId)
                     else -> Mono.error(
                         DomainException(HttpStatus.CONFLICT, "Online room can no longer be left."),
