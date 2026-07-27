@@ -458,14 +458,22 @@ const soundController = {
     }
 
     const start = context.currentTime;
-    [520, 660, 820, 1040].forEach((frequency, index) => {
+    [523, 659, 784, 1046, 1318].forEach((frequency, index) => {
       this.pulse({
         frequency,
-        duration: 0.16,
-        gain: 0.034,
-        type: "triangle",
-        startTime: start + index * 0.1,
+        duration: 0.2,
+        gain: 0.045 - index * 0.004,
+        type: index % 2 === 0 ? "triangle" : "sine",
+        startTime: start + index * 0.12,
       });
+    });
+    this.pulse({
+      frequency: 1568,
+      slideTo: 2093,
+      duration: 0.35,
+      gain: 0.03,
+      type: "sine",
+      startTime: start + 0.62,
     });
   },
 
@@ -3582,6 +3590,74 @@ function ConfirmDialog({
   );
 }
 
+function formatMatchDuration(totalSeconds) {
+  const safeSeconds = Math.max(0, Math.floor(totalSeconds || 0));
+  const minutes = Math.floor(safeSeconds / 60);
+  const seconds = safeSeconds % 60;
+  return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+}
+
+function computeMatchResultStats(match, winnerId) {
+  const winner = match.players.find((player) => player.id === winnerId);
+  const winnerName = winner?.name || match.winnerDisplayName || "";
+  const winnerEvents = (match.events || []).filter(
+    (event) => event.actor === winnerName,
+  );
+  const totalMoves = winnerEvents.filter((event) =>
+    /opened token|moved token/i.test(event.detail || ""),
+  ).length;
+  const productiveMoves = winnerEvents.filter((event) =>
+    /opened token|moved token|Captured|reached home/i.test(event.detail || ""),
+  ).length;
+  const finishedTokens =
+    winner?.tokens?.filter((progress) => progress >= FINISHED_PROGRESS).length ??
+    0;
+  const isForfeitWin = (match.events || []).some((event) =>
+    /opponent left|abandoned the game/i.test(event.detail || ""),
+  );
+  const accuracy =
+    isForfeitWin && totalMoves <= 0
+      ? 100
+      : totalMoves <= 0
+        ? Math.min(100, Math.round((finishedTokens / 4) * 100) || 100)
+        : Math.min(
+            100,
+            Math.max(
+              40,
+              Math.round(
+                ((productiveMoves + finishedTokens * 2) /
+                  Math.max(totalMoves + finishedTokens, 1)) *
+                  50,
+              ),
+            ),
+          );
+  const startedAt = match.createdAt
+    ? new Date(match.createdAt).getTime()
+    : null;
+  const endedAt = match.updatedAt
+    ? new Date(match.updatedAt).getTime()
+    : Date.now();
+  const durationSeconds =
+    startedAt && Number.isFinite(startedAt)
+      ? Math.max(1, Math.round((endedAt - startedAt) / 1000))
+      : Math.max(1, (match.events?.length || 1) * 8);
+  const playerPosition =
+    Math.max(
+      1,
+      match.players.findIndex((player) => player.id === winnerId) + 1,
+    ) || 1;
+
+  return {
+    winner,
+    playerPosition,
+    totalMoves,
+    accuracy,
+    durationLabel: formatMatchDuration(durationSeconds),
+    potAmount: match.pot ?? 0,
+    isForfeitWin,
+  };
+}
+
 function MatchPotIntroOverlay({ potAmount, phase }) {
   if (phase !== "visible" && phase !== "exiting") {
     return null;
@@ -3606,56 +3682,127 @@ function MatchResultDialog({
   userPlayerId,
   onGoHome,
   onStartNewGame,
-  newGameLabel = "New Game",
+  newGameLabel = "Play Again",
 }) {
   if (!match || match.phase !== "finished" || !match.winnerId) {
     return null;
   }
 
   const didWin = match.winnerId === userPlayerId;
-  const amount = didWin ? match.pot ?? 0 : 0;
+  const stats = computeMatchResultStats(match, match.winnerId);
+  const winnerColor = stats.winner?.color || "blue";
+  const winnerName =
+    stats.winner?.name || match.winnerDisplayName || `Player ${stats.playerPosition}`;
 
   return (
-    <div className="dialog-scrim match-result-scrim" role="presentation">
+    <div
+      className={`dialog-scrim match-result-scrim ${didWin ? "is-win" : "is-loss"}`}
+      role="presentation"
+    >
       <aside
-        className={`dialog-card match-result-card ${
-          didWin ? "is-win" : "is-loss"
-        }`}
+        className={`match-result-panel ${didWin ? "is-win" : "is-loss"}`}
         role="dialog"
         aria-modal="true"
         aria-label={didWin ? "You won the match" : "Match finished"}
       >
-        <span className="match-result-label">
-          {didWin ? "Victory" : "Game Over"}
-        </span>
-        <strong>
-          {didWin
-            ? "You Won"
-            : `${match.winnerDisplayName || "Opponent"} Won`}
-        </strong>
-        <p>
-          {didWin
-            ? `${formatCurrency(amount)} has been added to your wallet.`
-            : "Returning to the home screen."}
-        </p>
-        <div className="match-result-amount">
-          <img src="/assets/MainCoinIcon.png" alt="" draggable={false} />
-          <span>{formatCurrency(amount)}</span>
+        <img
+          className="match-result-empty-art"
+          src="/assets/empty.png"
+          alt=""
+          draggable={false}
+        />
+
+        <div className="match-result-confetti" aria-hidden="true">
+          {Array.from({ length: 18 }, (_, index) => (
+            <span key={index} className={`match-result-confetti-bit bit-${index % 6}`} />
+          ))}
         </div>
+
+        <div className="match-result-hero">
+          <div className="match-result-crown" aria-hidden="true">
+            ♛
+          </div>
+          <div className="match-result-ribbon">
+            <strong>{didWin ? "YOU WON!" : "GAME OVER"}</strong>
+          </div>
+          <p className="match-result-congrats">
+            {didWin ? "Congratulations!" : "Better luck next time"}
+          </p>
+          <p className="match-result-subtitle">
+            {didWin
+              ? stats.isForfeitWin
+                ? "Opponent left — you are the winner!"
+                : "You are the Ludo King!"
+              : `${winnerName} won the match`}
+          </p>
+        </div>
+
+        <div className="match-result-winner-card">
+          <div className="match-result-goti-wrap">
+            <img
+              className="match-result-goti"
+              src={TOKEN_ASSETS[winnerColor] || TOKEN_ASSETS.blue}
+              alt=""
+              draggable={false}
+            />
+            <span className="match-result-winner-badge">Winner</span>
+          </div>
+          <div className="match-result-winner-copy">
+            <span className="match-result-player-label">Player Position</span>
+            <strong>Player {stats.playerPosition}</strong>
+            <span className="match-result-player-name">{winnerName}</span>
+            <div className="match-result-pot-chip">
+              <img src="/assets/MainCoinIcon.png" alt="" draggable={false} />
+              <span>Pot {formatCurrency(stats.potAmount)}</span>
+            </div>
+          </div>
+        </div>
+
+        <div className="match-result-stats-grid">
+          <div className="match-result-stat">
+            <span className="match-result-stat-icon" aria-hidden="true">
+              🏆
+            </span>
+            <span className="match-result-stat-label">Rank</span>
+            <strong>{didWin ? "#1" : "#2"}</strong>
+          </div>
+          <div className="match-result-stat">
+            <span className="match-result-stat-icon" aria-hidden="true">
+              🎲
+            </span>
+            <span className="match-result-stat-label">Total Moves</span>
+            <strong>{stats.totalMoves}</strong>
+          </div>
+          <div className="match-result-stat">
+            <span className="match-result-stat-icon" aria-hidden="true">
+              ◎
+            </span>
+            <span className="match-result-stat-label">Accuracy</span>
+            <strong>{stats.accuracy}%</strong>
+          </div>
+          <div className="match-result-stat">
+            <span className="match-result-stat-icon" aria-hidden="true">
+              ⏱
+            </span>
+            <span className="match-result-stat-label">Game Time</span>
+            <strong>{stats.durationLabel}</strong>
+          </div>
+        </div>
+
         <div className="match-result-actions">
-          <button
-            type="button"
-            className="match-result-button match-result-button-secondary"
-            onClick={onGoHome}
-          >
-            Home
-          </button>
           <button
             type="button"
             className="match-result-button match-result-button-primary"
             onClick={onStartNewGame}
           >
             {newGameLabel}
+          </button>
+          <button
+            type="button"
+            className="match-result-button match-result-button-secondary"
+            onClick={onGoHome}
+          >
+            Home
           </button>
         </div>
       </aside>
@@ -4803,9 +4950,27 @@ function PrivateRoomPageShell({ appState }) {
       setIsSubmittingMove(true);
       const updatedMatch = await rollMatchDice(session.sessionToken, match.id);
       await waitForMinimumDuration(rollStartedAt, DICE_ROLL_MIN_SPIN_MS);
-      const normalizedMatch = normalizeMatchSnapshot(updatedMatch);
+      let normalizedMatch = normalizeMatchSnapshot(updatedMatch);
       applyFreshMatch(setMatch, normalizedMatch);
       setStatusMessage("");
+
+      const forcedTokenIndex = resolveForcedAutoMoveToken(
+        normalizedMatch.selectableTokenIndexes,
+      );
+      if (
+        normalizedMatch.phase === "awaiting-move" &&
+        forcedTokenIndex != null &&
+        normalizedMatch.currentTurnUserId === session.userId
+      ) {
+        const movedMatch = await submitMatchMove(
+          session.sessionToken,
+          match.id,
+          forcedTokenIndex,
+        );
+        normalizedMatch = normalizeMatchSnapshot(movedMatch);
+        applyFreshMatch(setMatch, normalizedMatch);
+      }
+
       scheduleMatchSnapshotSync({
         timeoutRef: moveSyncTimeoutRef,
         sessionToken: session.sessionToken,
@@ -5405,9 +5570,27 @@ function OnlineBoardPageShell({ appState, configuredMaxPlayers }) {
       setIsSubmittingMove(true);
       const updatedMatch = await rollMatchDice(session.sessionToken, match.id);
       await waitForMinimumDuration(rollStartedAt, DICE_ROLL_MIN_SPIN_MS);
-      const normalizedMatch = normalizeMatchSnapshot(updatedMatch);
+      let normalizedMatch = normalizeMatchSnapshot(updatedMatch);
       applyFreshMatch(setMatch, normalizedMatch);
       setStatusMessage("");
+
+      const forcedTokenIndex = resolveForcedAutoMoveToken(
+        normalizedMatch.selectableTokenIndexes,
+      );
+      if (
+        normalizedMatch.phase === "awaiting-move" &&
+        forcedTokenIndex != null &&
+        normalizedMatch.currentTurnUserId === session.userId
+      ) {
+        const movedMatch = await submitMatchMove(
+          session.sessionToken,
+          match.id,
+          forcedTokenIndex,
+        );
+        normalizedMatch = normalizeMatchSnapshot(movedMatch);
+        applyFreshMatch(setMatch, normalizedMatch);
+      }
+
       scheduleMatchSnapshotSync({
         timeoutRef: moveSyncTimeoutRef,
         sessionToken: session.sessionToken,
@@ -5767,12 +5950,29 @@ function LocalBoardPageShell({ mode, appState }) {
 
       if (
         !activePlayer.isBot &&
-        currentMatch.phase === "awaiting-move" &&
-        currentMatch.selectableTokenIndexes.length > 0
+        currentMatch.phase === "awaiting-move"
       ) {
-        return applyTokenMove(
-          currentMatch,
-          currentMatch.selectableTokenIndexes[0],
+        const forcedTokenIndex = resolveForcedAutoMoveToken(
+          currentMatch.selectableTokenIndexes,
+        );
+
+        if (forcedTokenIndex != null) {
+          return applyTokenMove(currentMatch, forcedTokenIndex);
+        }
+
+        // Multiple choices left unused: skip the turn instead of forcing a goti.
+        return startPlayerTurn(
+          {
+            ...currentMatch,
+            dice: null,
+            selectableTokenIndexes: [],
+            events: prependMatchEvent(
+              currentMatch.events,
+              activePlayer.name,
+              "ran out of time.",
+            ),
+          },
+          (currentMatch.currentPlayerIndex + 1) % currentMatch.players.length,
         );
       }
 

@@ -224,6 +224,8 @@ data class MatchSnapshotResponse(
     val winnerDisplayName: String?,
     val sequence: Long,
     val events: List<MatchEvent>,
+    val createdAt: Instant? = null,
+    val updatedAt: Instant? = null,
 )
 
 data class JoinOnlineMatchResponse(
@@ -591,6 +593,8 @@ private fun MatchDocument.toSnapshot(): MatchSnapshotResponse {
         winnerDisplayName = winnerDisplayName,
         sequence = sequence,
         events = events,
+        createdAt = createdAt,
+        updatedAt = updatedAt,
     )
 }
 
@@ -1177,7 +1181,33 @@ class MatchService(
                         now,
                     ),
                 )
-                val updatedMatch = if (shouldSkipCurrentTurn(abandonedMatch)) {
+
+                val activeParticipantsBeforeLeave = match.players.count { player ->
+                    !player.isEffectivelyAbandoned()
+                }
+                val remainingPlayers = updatedPlayers.filter { player -> !player.isEffectivelyAbandoned() }
+                val updatedMatch = if (
+                    activeParticipantsBeforeLeave == 2 &&
+                    remainingPlayers.size == 1
+                ) {
+                    val winner = remainingPlayers.first()
+                    abandonedMatch.copy(
+                        status = MatchStatus.FINISHED,
+                        phase = MatchPhase.FINISHED,
+                        winnerUserId = winner.userId,
+                        winnerDisplayName = winner.displayName,
+                        selectableTokenIndexes = emptyList(),
+                        pendingNextPlayerIndex = null,
+                        phaseDeadlineAt = null,
+                        turnDeadlineAt = null,
+                        events = prependEvent(
+                            abandonedMatch.events,
+                            "System",
+                            "${winner.displayName} won because the opponent left the 2-player match.",
+                            now,
+                        ),
+                    )
+                } else if (shouldSkipCurrentTurn(abandonedMatch)) {
                     skipAbandonedCurrentPlayer(abandonedMatch, now)
                 } else {
                     abandonedMatch
@@ -1439,32 +1469,39 @@ class MatchService(
 
     private fun handleHumanTimeout(match: MatchDocument, now: Instant): MatchDocument {
         val activePlayer = match.players[match.currentPlayerIndex]
+        val forcedTokenIndex = resolveForcedAutoMoveToken(match.selectableTokenIndexes)
 
-        return if (match.selectableTokenIndexes.isNotEmpty()) {
-            val timedOutMove = applyTokenMove(match, match.selectableTokenIndexes.first(), now)
+        // Only auto-move when there is exactly one legal choice.
+        // If the player had multiple options and timed out, skip the turn.
+        if (forcedTokenIndex != null) {
+            val timedOutMove = applyTokenMove(match, forcedTokenIndex, now)
 
-            timedOutMove.copy(
+            return timedOutMove.copy(
                 events = prependEvent(
                     timedOutMove.events,
                     activePlayer.displayName,
-                    "timed out, so token ${match.selectableTokenIndexes.first() + 1} was auto-played.",
+                    "timed out, so token ${forcedTokenIndex + 1} was auto-played.",
                     now,
                 ),
             )
-        } else {
-            beginTurn(
-                match.copy(
-                    events = prependEvent(
-                        match.events,
-                        activePlayer.displayName,
-                        "ran out of time.",
-                        now,
-                    ),
-                ),
-                (match.currentPlayerIndex + 1) % match.players.size,
-                now,
-            )
         }
+
+        return beginTurn(
+            match.copy(
+                dice = null,
+                selectableTokenIndexes = emptyList(),
+                pendingNextPlayerIndex = null,
+                phaseDeadlineAt = null,
+                events = prependEvent(
+                    match.events,
+                    activePlayer.displayName,
+                    "ran out of time.",
+                    now,
+                ),
+            ),
+            (match.currentPlayerIndex + 1) % match.players.size,
+            now,
+        )
     }
 
     private fun advanceTurn(match: MatchDocument, now: Instant): MatchDocument {

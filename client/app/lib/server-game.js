@@ -380,10 +380,14 @@ export function normalizeMatchSnapshot(snapshot) {
           ? "Private Room"
           : snapshot.mode,
     sequence: snapshot.sequence,
-    phase: snapshot.phase?.toLowerCase() ?? "rolling",
+    phase: String(snapshot.phase ?? "rolling")
+      .toLowerCase()
+      .replaceAll("_", "-"),
     turnDeadlineAt: snapshot.turnDeadlineAt,
     turnTimeoutSeconds: snapshot.turnTimeoutSeconds,
-    selectableTokenIndexes: snapshot.selectableTokenIndexes ?? [],
+    selectableTokenIndexes: (snapshot.selectableTokenIndexes ?? [])
+      .map((index) => Number(index))
+      .filter((index) => Number.isInteger(index) && index >= 0),
     winnerId: snapshot.winnerUserId,
     winnerDisplayName: snapshot.winnerDisplayName,
     players: snapshot.players.map((player) => {
@@ -408,7 +412,10 @@ export function normalizeMatchSnapshot(snapshot) {
       id: event.id,
       actor: event.actor,
       detail: event.detail,
+      createdAt: event.createdAt,
     })),
+    createdAt: snapshot.createdAt,
+    updatedAt: snapshot.updatedAt,
   };
 }
 
