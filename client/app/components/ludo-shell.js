@@ -796,6 +796,10 @@ function buildOptimisticTokenMove(match, tokenIndex, userId) {
     ...match,
     players,
     selectableTokenIndexes: [],
+    // Bump client-side sequence so stale equal/older snapshots cannot
+    // temporarily overwrite this optimistic move and cause visual reverts.
+    sequence:
+      typeof match.sequence === "number" ? match.sequence + 1 : match.sequence,
   };
 }
 
@@ -1795,7 +1799,13 @@ function useGameplayTransitionSounds(match) {
       }
 
       if (match.dice != null && previousState.dice !== match.dice) {
-        soundController.diceRoll();
+        const roller = match.players?.find(
+          (player) => player.id === getActiveTurnPlayerId(match),
+        );
+        // Bot/opponent rolls already play the dice-rolling clip once.
+        if (!roller?.isBot) {
+          soundController.diceRoll();
+        }
       }
 
       if (hasNewHomeArrival(previousState.players, nextState.players)) {
@@ -3624,6 +3634,8 @@ function BoardScreen({
   });
   const opponentSpinTimeoutRef = useRef(null);
   const queuedBoardMatchRef = useRef(match);
+  const opponentSpinStartedAtRef = useRef(0);
+  const opponentRollSoundKeyRef = useRef(null);
   const [lastDiceByPlayer, setLastDiceByPlayer] = useState(() => new Map());
   const matchPotAmount = match.pot ?? 0;
   const [potIntroPhase, setPotIntroPhase] = useState("visible");
@@ -3910,20 +3922,25 @@ function BoardScreen({
     setBoardSyncMatch(match);
     queuedBoardMatchRef.current = match;
     setOpponentDiceSpin(null);
+    opponentSpinStartedAtRef.current = 0;
+    opponentRollSoundKeyRef.current = null;
+    if (opponentSpinTimeoutRef.current) {
+      window.clearTimeout(opponentSpinTimeoutRef.current);
+      opponentSpinTimeoutRef.current = null;
+    }
+    previousOpponentDiceRef.current = {
+      turnUserId: match.currentTurnUserId,
+      dice: match.dice ?? null,
+    };
   }, [match.id]);
 
   useEffect(() => {
     queuedBoardMatchRef.current = match;
 
-    if (opponentDiceSpin) {
-      return;
-    }
-
-    setBoardSyncMatch(match);
-  }, [match, opponentDiceSpin]);
-
-  useEffect(() => {
     if (isPotIntroBlocking) {
+      if (!opponentDiceSpin) {
+        setBoardSyncMatch(match);
+      }
       return undefined;
     }
 
@@ -3938,55 +3955,104 @@ function BoardScreen({
         previousDice.turnUserId !== turnUserId ||
         previousDice.dice !== dice);
 
+    if (diceJustAppeared) {
+      // Already handling this exact roll — don't restart timers/sound.
+      if (
+        opponentDiceSpin?.userId === turnUserId &&
+        opponentDiceSpin.value === dice &&
+        !opponentDiceSpin.revealing
+      ) {
+        previousOpponentDiceRef.current = { turnUserId, dice };
+        return undefined;
+      }
+
+      previousOpponentDiceRef.current = {
+        turnUserId,
+        dice,
+      };
+
+      if (opponentSpinTimeoutRef.current) {
+        window.clearTimeout(opponentSpinTimeoutRef.current);
+      }
+
+      const spinAlreadyStarted = opponentSpinStartedAtRef.current > 0;
+      if (!spinAlreadyStarted) {
+        opponentSpinStartedAtRef.current = Date.now();
+      }
+
+      const soundKey = `${turnUserId}:${dice}`;
+      if (opponentRollSoundKeyRef.current !== soundKey) {
+        // Only play if auto-roll hasn't already started the sound for this turn.
+        const autoSoundKey = `auto:${turnUserId}`;
+        if (opponentRollSoundKeyRef.current !== autoSoundKey) {
+          beginDiceRollSound();
+        }
+        opponentRollSoundKeyRef.current = soundKey;
+      }
+
+      const elapsedMs = Date.now() - opponentSpinStartedAtRef.current;
+      const remainingSpinMs = spinAlreadyStarted
+        ? Math.max(280, DICE_ROLL_MIN_SPIN_MS - elapsedMs)
+        : DICE_ROLL_MIN_SPIN_MS;
+
+      // Keep the current board snapshot (pre-move). Do NOT apply match.players yet.
+      setHeldTurnUserId(turnUserId);
+      setHeldDiceValue(dice);
+      settledTurnUserIdRef.current = turnUserId;
+      settledDiceValueRef.current = dice;
+      setLastDiceByPlayer((currentDiceByPlayer) => {
+        const nextDiceByPlayer = new Map(currentDiceByPlayer);
+        nextDiceByPlayer.set(turnUserId, dice);
+        return nextDiceByPlayer;
+      });
+      setOpponentDiceSpin({
+        userId: turnUserId,
+        value: dice,
+        revealing: false,
+      });
+      setAutoSpinExpiredTurnId(null);
+
+      opponentSpinTimeoutRef.current = window.setTimeout(() => {
+        // 1) Show the final dice face first
+        setOpponentDiceSpin((current) =>
+          current?.userId === turnUserId
+            ? { ...current, revealing: true }
+            : current,
+        );
+
+        // 2) Then release the queued goti move after the face is visible
+        opponentSpinTimeoutRef.current = window.setTimeout(() => {
+          setBoardSyncMatch(queuedBoardMatchRef.current);
+          opponentSpinTimeoutRef.current = window.setTimeout(() => {
+            opponentSpinTimeoutRef.current = null;
+            opponentSpinStartedAtRef.current = 0;
+            opponentRollSoundKeyRef.current = null;
+            setOpponentDiceSpin((current) =>
+              current?.userId === turnUserId ? null : current,
+            );
+          }, 200);
+        }, 350);
+      }, remainingSpinMs);
+
+      return undefined;
+    }
+
     previousOpponentDiceRef.current = {
       turnUserId,
       dice,
     };
 
-    if (!diceJustAppeared) {
+    // While opponent/bot dice is spinning or revealing, hold the board.
+    if (opponentDiceSpin) {
       return undefined;
     }
 
-    if (opponentSpinTimeoutRef.current) {
-      window.clearTimeout(opponentSpinTimeoutRef.current);
-    }
-
-    // Freeze the board on the pre-move snapshot, then reveal dice + move together.
-    setHeldTurnUserId(turnUserId);
-    setHeldDiceValue(dice);
-    settledTurnUserIdRef.current = turnUserId;
-    settledDiceValueRef.current = dice;
-    setLastDiceByPlayer((currentDiceByPlayer) => {
-      const nextDiceByPlayer = new Map(currentDiceByPlayer);
-      nextDiceByPlayer.set(turnUserId, dice);
-      return nextDiceByPlayer;
-    });
-    setOpponentDiceSpin({ userId: turnUserId, value: dice, revealing: false });
-    setAutoSpinExpiredTurnId(null);
-    beginDiceRollSound();
-
-    opponentSpinTimeoutRef.current = window.setTimeout(() => {
-      // Reveal the locked dice face and release the queued board move together.
-      setOpponentDiceSpin((current) =>
-        current?.userId === turnUserId
-          ? { ...current, revealing: true }
-          : current,
-      );
-      setBoardSyncMatch(queuedBoardMatchRef.current);
-
-      opponentSpinTimeoutRef.current = window.setTimeout(() => {
-        opponentSpinTimeoutRef.current = null;
-        setOpponentDiceSpin((current) =>
-          current?.userId === turnUserId ? null : current,
-        );
-      }, 320);
-    }, DICE_ROLL_MIN_SPIN_MS);
-
+    setBoardSyncMatch(match);
     return undefined;
   }, [
     isPotIntroBlocking,
-    match.currentTurnUserId,
-    match.dice,
+    match,
+    opponentDiceSpin,
     userPlayerId,
   ]);
 
@@ -4006,10 +4072,19 @@ function BoardScreen({
     }
 
     setAutoSpinExpiredTurnId(null);
-    beginDiceRollSound();
-    // Keep tumbling until the real dice arrives — never flash a stale face.
+
+    if (!opponentSpinStartedAtRef.current) {
+      opponentSpinStartedAtRef.current = Date.now();
+    }
+
+    const autoSoundKey = `auto:${autoRollingDiceUserId}`;
+    if (opponentRollSoundKeyRef.current !== autoSoundKey) {
+      opponentRollSoundKeyRef.current = autoSoundKey;
+      beginDiceRollSound();
+    }
+
     return undefined;
-  }, [autoRollingDiceUserId, match.sequence]);
+  }, [autoRollingDiceUserId]);
 
   const isRollingPlayerChoosing =
     !isPotIntroBlocking &&
