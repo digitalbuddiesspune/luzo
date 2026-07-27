@@ -45,11 +45,11 @@ class SuperiorBotEngineTests {
     }
 
     @Test
-    fun `bot completes token instead of low-value capture`() {
-        // Finishing token 0 (54+2=56) must beat capturing early yellow with token 1.
-        // green 1+2=3 lands on yellow progress 40? Use verified: green 0+3 captures yellow 42.
+    fun `bot prefers capturing opponent over finishing a single token`() {
+        // Same dice=3: finishing token 0 (53+3=56) vs capturing yellow with token 1 (0+3).
+        // Kill comes first when the finish does not win the match.
         val players = listOf(
-            bot("green", listOf(54, 0, -1, -1)),
+            bot("green", listOf(53, 0, -1, -1)),
             human("yellow", listOf(42, -1, -1, -1)),
         )
 
@@ -57,12 +57,12 @@ class SuperiorBotEngineTests {
             players = players,
             playerIndex = 0,
             movableTokenIndexes = listOf(0, 1),
-            diceValue = 2,
+            diceValue = 3,
             difficultyOverride = BotDifficulty.HARD,
             random = Random(2),
         )
 
-        assertThat(chosen).isEqualTo(0)
+        assertThat(chosen).isEqualTo(1)
     }
 
     @Test

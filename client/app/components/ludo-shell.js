@@ -217,10 +217,10 @@ const BOT_NAME_BY_COLOR = {
   yellow: "Meera",
   blue: "Kabir",
 };
-const TURN_ROLL_DELAY_MS = 700;
+const TURN_ROLL_DELAY_MS = 500;
 const BOT_MOVE_DELAY_MS = 850;
 const TURN_ADVANCE_DELAY_MS = 750;
-const DICE_PASS_DELAY_MS = 750;
+const DICE_PASS_DELAY_MS = 500;
 const TURN_TICK_MS = 100;
 const ONLINE_SOCKET_RECONNECT_DELAY_MS = 1500;
 const ONLINE_LOBBY_POLL_MS = 2000;
@@ -255,7 +255,7 @@ const TOKEN_STEP_ANIMATION_MS = 200;
 const CAPTURE_RETURN_STEP_MS = 28;
 const CAPTURE_RETURN_SAMPLES_PER_SEGMENT = 4;
 const TURN_WARNING_THRESHOLD_SECONDS = 5;
-const DICE_ROLL_MIN_SPIN_MS = 1300;
+const DICE_ROLL_MIN_SPIN_MS = 700;
 const MAIN_PATH_LAST_PROGRESS = 50;
 const HOME_LANE_START_PROGRESS = 51;
 const HOME_LANE_LAST_PROGRESS = 55;
@@ -1315,7 +1315,7 @@ function scoreBotMove(players, playerIndex, tokenIndex, diceValue) {
   const nextProgress =
     currentProgress === -1 ? 0 : currentProgress + diceValue;
   const activePlayers = players.filter((p) => !p.isAbandoned).length;
-  const twoPlayerAttackMultiplier = activePlayers === 2 ? 1.3 : 1;
+  const twoPlayerAttackMultiplier = activePlayers === 2 ? 1.6 : 1;
 
   const tokensAfterMove = [...player.tokens];
   tokensAfterMove[tokenIndex] = nextProgress;
@@ -1388,7 +1388,7 @@ function scoreBotMove(players, playerIndex, tokenIndex, diceValue) {
             const nearHomeBonus =
               opponentProgress >= 40 ? 180 : opponentProgress >= 25 ? 80 : 0;
             attack +=
-              (800 + opponentProgress * 4 + nearHomeBonus + threatBonus) *
+              (2500 + opponentProgress * 4 + nearHomeBonus + threatBonus) *
               twoPlayerAttackMultiplier;
           }
         });
@@ -1463,7 +1463,53 @@ function chooseBotToken(players, playerIndex, movableTokenIndexes, diceValue) {
     return movableTokenIndexes[0];
   }
 
-  return movableTokenIndexes.reduce((bestTokenIndex, tokenIndex) => {
+  const player = players[playerIndex];
+
+  const isWinningMove = (tokenIndex) => {
+    const currentProgress = player.tokens[tokenIndex];
+    const nextProgress = currentProgress === -1 ? 0 : currentProgress + diceValue;
+    const tokensAfterMove = [...player.tokens];
+    tokensAfterMove[tokenIndex] = nextProgress;
+    return tokensAfterMove.every((progress) => progress === FINISHED_PROGRESS);
+  };
+
+  const isCaptureMove = (tokenIndex) => {
+    const currentProgress = player.tokens[tokenIndex];
+    const nextProgress = currentProgress === -1 ? 0 : currentProgress + diceValue;
+    if (nextProgress < 0 || nextProgress > MAIN_PATH_LAST_PROGRESS) {
+      return false;
+    }
+    const landingKey = getBoardCellKey(player.color, nextProgress, tokenIndex);
+    if (SAFE_CELL_KEYS.has(landingKey)) {
+      return false;
+    }
+    return players.some((opponent, opponentIndex) => {
+      if (opponentIndex === playerIndex || opponent.isAbandoned) {
+        return false;
+      }
+      return opponent.tokens.some((opponentProgress, opponentTokenIndex) => {
+        if (opponentProgress < 0 || opponentProgress > MAIN_PATH_LAST_PROGRESS) {
+          return false;
+        }
+        return (
+          getBoardCellKey(opponent.color, opponentProgress, opponentTokenIndex) ===
+          landingKey
+        );
+      });
+    });
+  };
+
+  // Hard priority: win first, then kill opponent goti, then best score.
+  const winningMoves = movableTokenIndexes.filter(isWinningMove);
+  const candidateIndexes =
+    winningMoves.length > 0
+      ? winningMoves
+      : (() => {
+          const capturingMoves = movableTokenIndexes.filter(isCaptureMove);
+          return capturingMoves.length > 0 ? capturingMoves : movableTokenIndexes;
+        })();
+
+  return candidateIndexes.reduce((bestTokenIndex, tokenIndex) => {
     const bestScore = scoreBotMove(
       players,
       playerIndex,
@@ -1478,7 +1524,7 @@ function chooseBotToken(players, playerIndex, movableTokenIndexes, diceValue) {
     );
 
     return candidateScore > bestScore ? tokenIndex : bestTokenIndex;
-  }, movableTokenIndexes[0]);
+  }, candidateIndexes[0]);
 }
 
 function applyTokenMove(match, tokenIndex) {
@@ -3964,25 +4010,30 @@ function BoardScreen({
   const visibleTurnUserId = isHoldingTurnDisplay
     ? heldTurnUserId ?? opponentDiceSpin?.userId ?? match.currentTurnUserId
     : match.currentTurnUserId;
-  const currentTurnPlayer = match.players.find(
-    (player) => player.id === visibleTurnUserId,
+  const nextTurnPlayer = match.players.find(
+    (player) => player.id === match.currentTurnUserId,
   );
+  // Bot/opponent dice only start after the previous play + pass wait finishes.
   const autoRollingDiceUserId =
     !isPotIntroBlocking &&
+    !isBoardAnimating &&
+    !isPassingDice &&
     !opponentDiceSpin &&
     match.phase === "rolling" &&
     !match.dice &&
-    currentTurnPlayer?.isBot
-      ? visibleTurnUserId
+    nextTurnPlayer?.isBot
+      ? match.currentTurnUserId
       : null;
   const waitingToRollUserId =
     !isPotIntroBlocking &&
+    !isBoardAnimating &&
+    !isPassingDice &&
     !opponentDiceSpin &&
     match.phase === "rolling" &&
     !match.dice &&
-    visibleTurnUserId !== userPlayerId &&
-    !currentTurnPlayer?.isBot
-      ? visibleTurnUserId
+    match.currentTurnUserId !== userPlayerId &&
+    !nextTurnPlayer?.isBot
+      ? match.currentTurnUserId
       : null;
 
   useEffect(() => {
@@ -4008,6 +4059,12 @@ function BoardScreen({
       if (!opponentDiceSpin) {
         setBoardSyncMatch(match);
       }
+      return undefined;
+    }
+
+    // Wait until the previous player/opponent finish animating and the half-second
+    // dice pass delay completes before starting the next opponent dice.
+    if (isBoardAnimating || isPassingDice) {
       return undefined;
     }
 
@@ -4059,7 +4116,7 @@ function BoardScreen({
 
       const elapsedMs = Date.now() - opponentSpinStartedAtRef.current;
       const remainingSpinMs = spinAlreadyStarted
-        ? Math.max(280, DICE_ROLL_MIN_SPIN_MS - elapsedMs)
+        ? Math.max(180, DICE_ROLL_MIN_SPIN_MS - elapsedMs)
         : DICE_ROLL_MIN_SPIN_MS;
 
       // Keep the current board snapshot (pre-move). Do NOT apply match.players yet.
@@ -4097,8 +4154,8 @@ function BoardScreen({
             setOpponentDiceSpin((current) =>
               current?.userId === turnUserId ? null : current,
             );
-          }, 200);
-        }, 350);
+          }, 160);
+        }, 220);
       }, remainingSpinMs);
 
       return undefined;
@@ -4118,6 +4175,8 @@ function BoardScreen({
     return undefined;
   }, [
     isPotIntroBlocking,
+    isBoardAnimating,
+    isPassingDice,
     match,
     opponentDiceSpin,
     userPlayerId,

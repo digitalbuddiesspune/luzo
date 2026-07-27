@@ -65,7 +65,13 @@ object SuperiorBotEngine {
             )
         }
 
-        val best = tieBreak(evaluations, random)
+        val best = selectPriorityMove(
+            players = players,
+            playerIndex = playerIndex,
+            diceValue = diceValue,
+            evaluations = evaluations,
+            random = random,
+        )
         val elapsedMs = (System.nanoTime() - startedAt) / 1_000_000
 
         if (log.isDebugEnabled) {
@@ -96,6 +102,39 @@ object SuperiorBotEngine {
         }
 
         return best.move.tokenIndex
+    }
+
+    /**
+     * Hard priority: win the game first, otherwise kill opponent tokens,
+     * otherwise fall back to the highest scored strategic move.
+     */
+    private fun selectPriorityMove(
+        players: List<MatchPlayerState>,
+        playerIndex: Int,
+        diceValue: Int,
+        evaluations: List<MoveEvaluation>,
+        random: Random,
+    ): MoveEvaluation {
+        fun isWinning(evaluation: MoveEvaluation): Boolean {
+            val resulting = simulateMove(players, playerIndex, evaluation.move, diceValue)
+            return tokensAllFinished(resulting[playerIndex])
+        }
+
+        fun isCapture(evaluation: MoveEvaluation): Boolean {
+            return captureTargets(players, playerIndex, evaluation.move).isNotEmpty()
+        }
+
+        val winningMoves = evaluations.filter(::isWinning)
+        if (winningMoves.isNotEmpty()) {
+            return tieBreak(winningMoves, random)
+        }
+
+        val capturingMoves = evaluations.filter(::isCapture)
+        if (capturingMoves.isNotEmpty()) {
+            return tieBreak(capturingMoves, random)
+        }
+
+        return tieBreak(evaluations, random)
     }
 
     private fun evaluateEasy(
@@ -224,13 +263,10 @@ object SuperiorBotEngine {
             if (
                 guaranteedCaptureExists &&
                 captures.isEmpty() &&
-                resultingPlayers[playerIndex].tokens.none { it == FINISHED_PROGRESS && players[playerIndex].tokens[move.tokenIndex] != FINISHED_PROGRESS } &&
                 !tokensAllFinished(resultingPlayers[playerIndex])
             ) {
-                // Mild nudge only when ignoring capture without finishing/winning.
-                if (move.toProgress != FINISHED_PROGRESS) {
-                    finalScore += weights.ignoreGuaranteedCapture * 0.35
-                }
+                // Strongly punish skipping a kill when one is available (unless this move wins).
+                finalScore += weights.ignoreGuaranteedCapture
             }
 
             MoveEvaluation(
