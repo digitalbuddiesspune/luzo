@@ -13,7 +13,8 @@ class OnlineRoomStartDueTests {
         )
 
         assertThat(shouldStartOnlineWaitingRoom(room, now)).isTrue()
-        assertThat(canProcessOnlineWaitingRoom(room, now)).isTrue()
+        assertThat(canProcessOnlineWaitingRoom(room, now, "instance-a")).isTrue()
+        assertThat(canProcessOnlineWaitingRoom(room, now, "instance-b")).isTrue()
     }
 
     @Test
@@ -24,6 +25,46 @@ class OnlineRoomStartDueTests {
         )
 
         assertThat(shouldStartOnlineWaitingRoom(room, now)).isFalse()
+        assertThat(canProcessOnlineWaitingRoom(room, now, "instance-a")).isFalse()
+    }
+
+    @Test
+    fun `owner instance can process its own due room`() {
+        val now = Instant.parse("2026-01-01T12:00:00Z")
+        val room = onlineWaitingRoom(
+            ownedWaitingDeadlineAt = now.minusSeconds(1),
+            ownerInstanceId = "instance-a",
+        )
+
+        assertThat(canProcessOnlineWaitingRoom(room, now, "instance-a")).isTrue()
+    }
+
+    @Test
+    fun `marks waiting room with leftover bots as stuck`() {
+        val now = Instant.parse("2026-01-01T12:00:00Z")
+        val room = onlineWaitingRoom(
+            ownedWaitingDeadlineAt = now.plusSeconds(30),
+            seats = listOf(
+                RoomSeat(
+                    userId = "player-1",
+                    displayName = "Player 1",
+                    color = "blue",
+                    isBot = false,
+                    joinedAt = Instant.parse("2026-01-01T11:59:00Z"),
+                ),
+                RoomSeat(
+                    userId = "bot-1",
+                    displayName = "Bot",
+                    color = "red",
+                    isBot = true,
+                    joinedAt = Instant.parse("2026-01-01T11:59:00Z"),
+                ),
+            ),
+        )
+
+        assertThat(isCorruptOnlineWaitingRoom(room)).isTrue()
+        assertThat(isStuckOnlineLobbyRoom(room, now)).isTrue()
+        assertThat(canProcessOnlineWaitingRoom(room, now, "instance-b")).isTrue()
     }
 
     @Test
@@ -36,6 +77,7 @@ class OnlineRoomStartDueTests {
 
         assertThat(isOnlineRoomStartingStale(room, now)).isTrue()
         assertThat(shouldStartOnlineWaitingRoom(room, now)).isTrue()
+        assertThat(isStuckOnlineLobbyRoom(room, now)).isTrue()
     }
 
     @Test
@@ -49,6 +91,7 @@ class OnlineRoomStartDueTests {
 
         assertThat(isOnlineRoomStartingStale(room, now)).isFalse()
         assertThat(shouldStartOnlineWaitingRoom(room, now)).isFalse()
+        assertThat(isStuckOnlineLobbyRoom(room, now)).isFalse()
     }
 
     @Test
@@ -84,26 +127,28 @@ class OnlineRoomStartDueTests {
         ownedWaitingDeadlineAt: Instant? = Instant.parse("2026-01-01T12:00:00Z"),
         updatedAt: Instant = Instant.parse("2026-01-01T12:00:00Z"),
         startAttemptId: String? = null,
+        ownerInstanceId: String = "instance-a",
+        seats: List<RoomSeat> = listOf(
+            RoomSeat(
+                userId = "player-1",
+                displayName = "Player 1",
+                color = "blue",
+                isBot = false,
+                joinedAt = Instant.parse("2026-01-01T11:59:00Z"),
+            ),
+        ),
     ): RoomDocument {
         return RoomDocument(
             mode = RoomMode.ONLINE_PUBLIC,
             status = status,
             maxPlayers = 2,
             entryFee = 100,
-            ownerInstanceId = "instance-a",
+            ownerInstanceId = ownerInstanceId,
             createdAt = Instant.parse("2026-01-01T11:59:00Z"),
             updatedAt = updatedAt,
             ownedWaitingDeadlineAt = ownedWaitingDeadlineAt,
             startAttemptId = startAttemptId,
-            seats = listOf(
-                RoomSeat(
-                    userId = "player-1",
-                    displayName = "Player 1",
-                    color = "blue",
-                    isBot = false,
-                    joinedAt = Instant.parse("2026-01-01T11:59:00Z"),
-                ),
-            ),
+            seats = seats,
         )
     }
 }

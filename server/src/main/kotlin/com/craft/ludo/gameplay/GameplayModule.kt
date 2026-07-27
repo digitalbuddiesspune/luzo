@@ -401,8 +401,46 @@ internal fun shouldStartOnlineWaitingRoom(room: RoomDocument, now: Instant): Boo
     }
 }
 
-internal fun canProcessOnlineWaitingRoom(room: RoomDocument, now: Instant): Boolean {
-    return shouldStartOnlineWaitingRoom(room, now)
+internal fun isCorruptOnlineWaitingRoom(room: RoomDocument): Boolean {
+    return room.mode == RoomMode.ONLINE_PUBLIC &&
+        room.matchId == null &&
+        room.status == RoomStatus.WAITING &&
+        room.seats.any { seat -> seat.isBot }
+}
+
+/**
+ * Lobby rooms that cannot safely continue (failed start leftovers / hung claims).
+ * Join should abandon these and seat the player in a fresh room.
+ */
+internal fun isStuckOnlineLobbyRoom(room: RoomDocument, now: Instant): Boolean {
+    if (room.mode != RoomMode.ONLINE_PUBLIC || room.matchId != null) {
+        return false
+    }
+
+    return when (room.status) {
+        RoomStatus.WAITING -> isCorruptOnlineWaitingRoom(room)
+        RoomStatus.STARTING -> isOnlineRoomStartingStale(room, now)
+        else -> false
+    }
+}
+
+internal fun canProcessOnlineWaitingRoom(
+    room: RoomDocument,
+    now: Instant,
+    currentInstanceId: String,
+): Boolean {
+    if (!shouldStartOnlineWaitingRoom(room, now) && !isCorruptOnlineWaitingRoom(room)) {
+        return false
+    }
+
+    val ownerId = room.ownerInstanceId
+    // Only the owning instance ticks its rooms. Other instances may take over only when
+    // the lobby is due/corrupt/stale — prevents a broken peer from rewriting healthy rooms.
+    return ownerId.isNullOrBlank() ||
+        ownerId == currentInstanceId ||
+        isOnlineRoomWaitingDeadlineDue(room, now) ||
+        isCorruptOnlineWaitingRoom(room) ||
+        isOnlineRoomStartingStale(room, now)
 }
 
 private val boardPath = listOf(
@@ -2127,12 +2165,42 @@ class LobbyService(
 
     private fun joinOnlineMatchUnlocked(principal: SessionPrincipal, maxPlayers: Int): Mono<JoinOnlineMatchResponse> {
         return findExistingRoomForUser(principal.id)
-            .flatMap { room -> buildJoinResponse(room, principal, maxPlayers) }
+            .flatMap { room ->
+                val now = Instant.now(clock)
+                if (isStuckOnlineLobbyRoom(room, now)) {
+                    log.warn(
+                        "Abandoning stuck online lobby for user userId={} roomId={} roomCode={} status={} ownerInstanceId={}",
+                        principal.id,
+                        room.id,
+                        room.code,
+                        room.status,
+                        room.ownerInstanceId,
+                    )
+                    finishStuckOnlineLobbyRoom(room)
+                        .then(createWaitingRoom(principal, maxPlayers))
+                } else {
+                    buildJoinResponse(room, principal, maxPlayers)
+                }
+            }
             .switchIfEmpty(
                 findJoinablePublicRoom(principal, maxPlayers)
                     .flatMap { room -> joinExistingRoom(room, principal, maxPlayers) }
                     .switchIfEmpty(createWaitingRoom(principal, maxPlayers))
             )
+    }
+
+    private fun finishStuckOnlineLobbyRoom(room: RoomDocument): Mono<Void> {
+        if (room.matchId != null) {
+            return Mono.empty()
+        }
+
+        return roomRepository.save(
+            room.copy(
+                status = RoomStatus.FINISHED,
+                startAttemptId = null,
+                updatedAt = Instant.now(clock),
+            ),
+        ).then()
     }
 
     fun getPrivateRoomState(principal: SessionPrincipal): Mono<PrivateRoomStateResponse> {
@@ -2402,12 +2470,13 @@ class LobbyService(
 
     fun processDueWaitingRooms(): Mono<Void> {
         val now = Instant.now(clock)
+        val currentInstanceId = instanceCoordinator.instanceId
 
         return roomRepository.findAllByStatusOrderByCreatedAtAsc(RoomStatus.WAITING)
-            .filter { room -> canProcessOnlineWaitingRoom(room, now) }
+            .filter { room -> canProcessOnlineWaitingRoom(room, now, currentInstanceId) }
             .concatWith(
                 roomRepository.findAllByStatusOrderByCreatedAtAsc(RoomStatus.STARTING)
-                    .filter { room -> canProcessOnlineWaitingRoom(room, now) },
+                    .filter { room -> canProcessOnlineWaitingRoom(room, now, currentInstanceId) },
             )
             .concatMap { room ->
                 instanceCoordinator.withLock("room-tick", room.id) {
@@ -2490,7 +2559,11 @@ class LobbyService(
                     room.seats.size < room.maxPlayers &&
                     room.seats.none { it.userId == principal.id } &&
                     room.seats.none { it.isBot } &&
-                    !hasSameSourceRealPlayer(room.seats, principal)
+                    !hasSameSourceRealPlayer(room.seats, principal) &&
+                    (
+                        room.ownerInstanceId.isNullOrBlank() ||
+                            room.ownerInstanceId == instanceCoordinator.instanceId
+                        )
             }
             .next()
     }

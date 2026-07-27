@@ -225,6 +225,7 @@ const TURN_TICK_MS = 100;
 const ONLINE_SOCKET_RECONNECT_DELAY_MS = 1500;
 const ONLINE_LOBBY_POLL_MS = 2000;
 const ONLINE_LOBBY_FAST_POLL_MS = 400;
+const ONLINE_LOBBY_STUCK_STARTING_MS = 8000;
 const MATCH_SNAPSHOT_FALLBACK_POLL_MS = 5000;
 
 function resolveOnlineLobbyPollDelayMs(room, match) {
@@ -6170,6 +6171,7 @@ function OnlineBoardPageShell({ appState, configuredMaxPlayers }) {
   const latestSequenceRef = useRef(match?.sequence ?? 0);
   const settledMatchIdRef = useRef(null);
   const isLeavingOnlineRoomRef = useRef(false);
+  const lobbyStartingSinceRef = useRef(null);
   const hasActiveOnlineSession = Boolean(
     lobbyRoom || (match?.id && match.phase !== "finished"),
   );
@@ -6339,9 +6341,34 @@ function OnlineBoardPageShell({ appState, configuredMaxPlayers }) {
         setLobbyRoom(response.room);
         setMatch(null);
         setIsOnlineBootstrapping(false);
-        setStatusMessage(
-          isOnlineLobbyStarting(response.room) ? "Starting match..." : "",
-        );
+
+        if (isOnlineLobbyStarting(response.room)) {
+          if (!lobbyStartingSinceRef.current) {
+            lobbyStartingSinceRef.current = Date.now();
+          }
+          const stuckForMs = Date.now() - lobbyStartingSinceRef.current;
+          if (stuckForMs >= ONLINE_LOBBY_STUCK_STARTING_MS) {
+            console.warn("[Ludo online lobby] Starting state stuck; leaving and rejoining", {
+              roomId: response.room?.id,
+              stuckForMs,
+            });
+            lobbyStartingSinceRef.current = null;
+            try {
+              await leaveOnlineRoom(sessionToken);
+            } catch {}
+            if (!cancelled) {
+              setLobbyRoom(null);
+              setStatusMessage("Lobby stuck — finding a new table...");
+              setOnlineRestartKey((value) => value + 1);
+            }
+            return;
+          }
+          setStatusMessage("Starting match...");
+        } else {
+          lobbyStartingSinceRef.current = null;
+          setStatusMessage("");
+        }
+
         lobbyPollTimeoutRef.current = window.setTimeout(() => {
           pollLobby(sessionToken);
         }, resolveOnlineLobbyPollDelayMs(response.room, response.match));
