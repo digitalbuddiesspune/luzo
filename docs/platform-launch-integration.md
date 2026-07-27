@@ -52,25 +52,32 @@ and calls:
 
 Replace hosts with your deployed game frontend.
 
-### Home / menu
+### Home / menu (recommended launch)
+
+Shows the 2-play / 4-play mode selection screen first.
 
 ```text
 https://fashionbuddies.in/?id=<OPERATOR_TOKEN>&game_id=2
 ```
 
-### Online matchmaking
+### Online matchmaking (skip menu)
 
-```text
-https://fashionbuddies.in/play/online?id=<OPERATOR_TOKEN>&game_id=2
-```
-
-### Online with player count
+Requires an explicit `players` value. Without `players=2` or `players=4`,
+the client redirects to the home/menu screen above.
 
 ```text
 https://fashionbuddies.in/play/online?id=<OPERATOR_TOKEN>&game_id=2&players=4
 ```
 
-`players` is optional (`2` or `4`). It is a Ludo UI/lobby preference, not an operator auth field.
+### Online with player count
+
+```text
+https://fashionbuddies.in/play/online?id=<OPERATOR_TOKEN>&game_id=2&players=2
+https://fashionbuddies.in/play/online?id=<OPERATOR_TOKEN>&game_id=2&players=4
+```
+
+`players` must be `2` or `4` to start matchmaking immediately. It is a Ludo
+UI/lobby preference, not an operator auth field.
 
 ### Private room
 
@@ -81,7 +88,7 @@ https://fashionbuddies.in/play/private-room?id=<OPERATOR_TOKEN>&game_id=2
 ### Example for aakda.in → Ludo
 
 ```text
-https://fashionbuddies.in/play/online?id=eyJhbGciOi...&game_id=2
+https://fashionbuddies.in/?id=eyJhbGciOi...&game_id=2
 ```
 
 Keep `id` and `game_id` on every in-game navigation URL your platform controls.
@@ -137,7 +144,7 @@ Notes:
 ### Redirect (recommended)
 
 ```html
-<a href="https://fashionbuddies.in/play/online?id=USER_TOKEN&game_id=2">
+<a href="https://fashionbuddies.in/?id=USER_TOKEN&game_id=2">
   Play Ludo
 </a>
 ```
@@ -146,7 +153,7 @@ Notes:
 
 ```js
 function launchLudo(operatorToken, gameId = 2) {
-  const url = new URL("https://fashionbuddies.in/play/online");
+  const url = new URL("https://fashionbuddies.in/");
   url.searchParams.set("id", operatorToken);
   url.searchParams.set("game_id", String(gameId));
   window.location.href = url.toString();
@@ -157,7 +164,7 @@ function launchLudo(operatorToken, gameId = 2) {
 
 ```html
 <iframe
-  src="https://fashionbuddies.in/play/online?id=USER_TOKEN&game_id=2"
+  src="https://fashionbuddies.in/?id=USER_TOKEN&game_id=2"
   title="Ludo"
   allow="fullscreen"
   style="width:100%;height:100%;border:0;"
@@ -248,14 +255,14 @@ Operator sessions currently expire after **16 hours**.
 2. Open:
 
 ```text
-https://fashionbuddies.in/play/online?id=<REAL_TOKEN>&game_id=2
+https://fashionbuddies.in/?id=<REAL_TOKEN>&game_id=2
 ```
 
 3. Confirm:
-   - game loads (not access denied)
+   - mode selection screen loads (2-play / 4-play)
    - Network call to `/api/v1/identity/operator/session` returns `200`
    - response has `isOperatorSession: true`
-4. Start/join a match and confirm entry-fee debit on the platform side.
+4. Pick a mode, start/join a match, and confirm entry-fee debit on the platform side.
 
 ---
 
@@ -267,5 +274,5 @@ https://fashionbuddies.in/play/online?id=<REAL_TOKEN>&game_id=2
 | Recommended query field | `game_id` (alias `gameId`) |
 | Default game id | `2` |
 | Session endpoint | `POST /api/v1/identity/operator/session` |
-| Example launch URL | `https://fashionbuddies.in/play/online?id=TOKEN&game_id=2` |
+| Example launch URL | `https://fashionbuddies.in/?id=TOKEN&game_id=2` |
 | Platform example | `https://aakda.in/` |

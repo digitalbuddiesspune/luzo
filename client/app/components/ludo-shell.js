@@ -5130,7 +5130,7 @@ function withOperatorLaunchParams(href) {
   const launchId = currentParams.get("id")?.trim();
   const gameId = currentParams.get("game_id") ?? currentParams.get("gameId");
 
-  if (!launchId || !gameId) {
+  if (!launchId) {
     return href;
   }
 
@@ -5138,7 +5138,7 @@ function withOperatorLaunchParams(href) {
   const [path, query = ""] = pathname.split("?");
   const nextParams = new URLSearchParams(query);
   nextParams.set("id", launchId);
-  nextParams.set("game_id", gameId);
+  nextParams.set("game_id", gameId?.trim() || "2");
 
   return `${path}?${nextParams.toString()}${hash ? `#${hash}` : ""}`;
 }
@@ -6143,11 +6143,19 @@ function PrivateRoomPageShell({ appState }) {
 function OnlineBoardPageShell({ appState, configuredMaxPlayers }) {
   const router = useRouter();
   const searchParams = useSearchParams();
+  const playersParam = searchParams.get("players");
+  const hasExplicitPlayerCount =
+    configuredMaxPlayers === 2 ||
+    configuredMaxPlayers === 4 ||
+    playersParam === "2" ||
+    playersParam === "4";
   const maxPlayers =
-    configuredMaxPlayers === 2 || searchParams.get("players") === "2" ? 2 : 4;
+    configuredMaxPlayers === 2 || playersParam === "2" ? 2 : 4;
   const [isUtilityOpen, setIsUtilityOpen] = useState(false);
   const [isLeaveConfirmOpen, setIsLeaveConfirmOpen] = useState(false);
-  const [isOnlineBootstrapping, setIsOnlineBootstrapping] = useState(true);
+  const [isOnlineBootstrapping, setIsOnlineBootstrapping] = useState(
+    hasExplicitPlayerCount,
+  );
   const [isLeavingOnlineRoom, setIsLeavingOnlineRoom] = useState(false);
   const [now, setNow] = useState(Date.now());
   const [statusMessage, setStatusMessage] = useState(
@@ -6228,6 +6236,16 @@ function OnlineBoardPageShell({ appState, configuredMaxPlayers }) {
   useMatchResultSound(match, onlineUserPlayerId);
 
   useEffect(() => {
+    if (hasExplicitPlayerCount) {
+      return;
+    }
+
+    // Platform launches often hit /play/online without players=2|4.
+    // Send users to the mode selection menu instead of defaulting to 4-player.
+    navigateToHref(router, PANEL_ROUTES.menu, { replace: true });
+  }, [hasExplicitPlayerCount, router]);
+
+  useEffect(() => {
     latestSequenceRef.current = match?.sequence ?? 0;
   }, [match?.sequence]);
 
@@ -6240,6 +6258,10 @@ function OnlineBoardPageShell({ appState, configuredMaxPlayers }) {
   }, []);
 
   useEffect(() => {
+    if (!hasExplicitPlayerCount) {
+      return undefined;
+    }
+
     let cancelled = false;
 
     function clearRealtimeConnection() {
@@ -6424,7 +6446,12 @@ function OnlineBoardPageShell({ appState, configuredMaxPlayers }) {
         snapshotPollTimeoutRef.current = null;
       }
     };
-  }, [appState.profile.displayName, maxPlayers, onlineRestartKey]);
+  }, [
+    appState.profile.displayName,
+    hasExplicitPlayerCount,
+    maxPlayers,
+    onlineRestartKey,
+  ]);
 
   useEffect(() => {
     if (!session?.sessionToken || !match?.id || lobbyRoom) {
@@ -6769,6 +6796,10 @@ function OnlineBoardPageShell({ appState, configuredMaxPlayers }) {
       );
       setIsLeaveConfirmOpen(false);
     }
+  }
+
+  if (!hasExplicitPlayerCount) {
+    return null;
   }
 
   return (
