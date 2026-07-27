@@ -2621,19 +2621,21 @@ class LobbyService(
                 }
 
                 if (shouldStartOnlineWaitingRoom(room, now)) {
-                    if (startAttemptDepth >= 5) {
+                    if (startAttemptDepth >= 3) {
                         log.warn(
-                            "Aborting online room start retries roomId={} roomCode={} status={} startAttemptDepth={}",
+                            "Abandoning stuck online lobby after failed starts roomId={} roomCode={} status={} startAttemptDepth={}",
                             room.id,
                             room.code,
                             room.status,
                             startAttemptDepth,
                         )
-                        return Mono.just(
-                            JoinOnlineMatchResponse(
-                                room = room.toSummary(),
+                        return roomRepository.save(
+                            room.copy(
+                                status = RoomStatus.FINISHED,
+                                startAttemptId = null,
+                                updatedAt = now,
                             ),
-                        )
+                        ).then(createWaitingRoom(principal, requestedMaxPlayers))
                     }
 
                     return startWaitingRoomWithOptimisticRetry(room.id)
@@ -2646,22 +2648,32 @@ class LobbyService(
                             )
                         }
                         .switchIfEmpty(
-                            // Duplicate-room cleanup can yield empty; keep the player in lobby instead of failing join.
-                            Mono.just(
-                                JoinOnlineMatchResponse(
-                                    room = room.toSummary(),
-                                ),
-                            ),
+                            // Duplicate-room cleanup can yield empty; create a fresh lobby.
+                            createWaitingRoom(principal, requestedMaxPlayers),
                         )
                         .onErrorResume { error ->
                             logWaitingRoomStartFailure(room, error)
-                            roomRepository.findById(room.id)
-                                .defaultIfEmpty(room)
-                                .map { latestRoom ->
-                                    JoinOnlineMatchResponse(
-                                        room = latestRoom.toSummary(),
-                                    )
+                            resetRoomToWaitingAfterFailedStart(room.id)
+                                .then(roomRepository.findById(room.id))
+                                .flatMap { latestRoom ->
+                                    if (startAttemptDepth >= 2) {
+                                        roomRepository.save(
+                                            latestRoom.copy(
+                                                status = RoomStatus.FINISHED,
+                                                startAttemptId = null,
+                                                updatedAt = Instant.now(clock),
+                                            ),
+                                        ).then(createWaitingRoom(principal, requestedMaxPlayers))
+                                    } else {
+                                        buildJoinResponse(
+                                            latestRoom,
+                                            principal,
+                                            requestedMaxPlayers,
+                                            startAttemptDepth + 1,
+                                        )
+                                    }
                                 }
+                                .switchIfEmpty(createWaitingRoom(principal, requestedMaxPlayers))
                         }
                 }
 
@@ -2956,6 +2968,19 @@ class LobbyService(
             return Mono.just(room)
         }
 
+        // Corrupt leftover from a failed start: WAITING with bot seats. Strip before retrying.
+        if (room.seats.any { it.isBot }) {
+            return resetRoomToWaitingAfterFailedStart(room.id)
+                .then(roomRepository.findById(room.id))
+                .flatMap { cleaned ->
+                    if (cleaned == null) {
+                        Mono.empty()
+                    } else {
+                        startWaitingRoom(cleaned, Instant.now(clock))
+                    }
+                }
+        }
+
         val ownedByCurrentInstance = room.ownerInstanceId == null ||
             room.ownerInstanceId == instanceCoordinator.instanceId
         if (!ownedByCurrentInstance && !isOnlineRoomWaitingDeadlineDue(room, now)) {
@@ -3151,7 +3176,12 @@ class LobbyService(
             }
         }
 
-        return reserveEntryFeesForSeats(seatsNeedingReservation, claimedRoom.id, claimedRoom.entryFee)
+        return reserveEntryFeesForSeats(
+            seatsNeedingReservation,
+            claimedRoom.id,
+            claimedRoom.entryFee,
+            claimedRoom.startAttemptId,
+        )
             .doOnError { error -> logWaitingRoomStartFailure(claimedRoom, error) }
             .onErrorResume { error ->
                 revertStartingRoom(claimedRoom.id)
@@ -3232,27 +3262,37 @@ class LobbyService(
     }
 
     private fun revertStartingRoom(roomId: String): Mono<Void> {
+        return resetRoomToWaitingAfterFailedStart(roomId)
+    }
+
+    private fun resetRoomToWaitingAfterFailedStart(roomId: String): Mono<Void> {
         return roomRepository.findById(roomId)
             .flatMap { room ->
-                if (room.status != RoomStatus.STARTING || room.matchId != null) {
-                    Mono.empty()
-                } else {
-                    val now = Instant.now(clock)
-                    // Strip bot seats left by the failed start claim so the lobby is joinable again,
-                    // and back off the deadline slightly to avoid a tight start/fail loop.
-                    val realSeats = normalizeSeatColors(room.seats.filter { !it.isBot && !it.isAbandoned })
-                    roomRepository.save(
-                        room.copy(
-                            status = RoomStatus.WAITING,
-                            seats = realSeats,
-                            startAttemptId = null,
-                            walletReservations = emptyList(),
-                            ownedWaitingDeadlineAt = now.plusMillis(2_000),
-                            waitingDeadlineAt = null,
-                            updatedAt = now,
-                        ),
-                    ).then()
+                if (room.matchId != null) {
+                    return@flatMap Mono.empty<Void>()
                 }
+                if (room.status != RoomStatus.STARTING && room.status != RoomStatus.WAITING) {
+                    return@flatMap Mono.empty<Void>()
+                }
+
+                val now = Instant.now(clock)
+                // Always strip bots left by a failed start claim so the lobby can recover.
+                val realSeats = normalizeSeatColors(room.seats.filter { !it.isBot && !it.isAbandoned })
+                if (realSeats.isEmpty()) {
+                    return@flatMap roomRepository.delete(room).then()
+                }
+
+                roomRepository.save(
+                    room.copy(
+                        status = RoomStatus.WAITING,
+                        seats = realSeats,
+                        startAttemptId = null,
+                        walletReservations = emptyList(),
+                        ownedWaitingDeadlineAt = now.plusMillis(2_000),
+                        waitingDeadlineAt = null,
+                        updatedAt = now,
+                    ),
+                ).then()
             }
             .then()
     }
@@ -3261,35 +3301,9 @@ class LobbyService(
         roomId: String,
         reservations: List<WalletReservation>,
     ): Mono<Void> {
-        val refundedTransactionIds = reservations.map { it.transactionId }.toSet()
-        if (refundedTransactionIds.isEmpty()) return Mono.empty()
-
-        return roomRepository.findById(roomId)
-            .flatMap { room ->
-                if ((room.status != RoomStatus.WAITING && room.status != RoomStatus.STARTING) || room.matchId != null) {
-                    return@flatMap Mono.empty<Void>()
-                }
-
-                val retainedReservations = room.walletReservations
-                    .filterNot { reservation -> reservation.transactionId in refundedTransactionIds }
-
-                if (retainedReservations.size == room.walletReservations.size && room.status == RoomStatus.WAITING) {
-                    Mono.empty()
-                } else {
-                    val now = Instant.now(clock)
-                    roomRepository.save(
-                        room.copy(
-                            status = RoomStatus.WAITING,
-                            walletReservations = retainedReservations,
-                            startAttemptId = null,
-                            waitingDeadlineAt = null,
-                            ownedWaitingDeadlineAt = now,
-                            updatedAt = now,
-                        ),
-                    ).then()
-                }
-            }
-            .then()
+        if (reservations.isEmpty()) return Mono.empty()
+        // Full reset: clear reservations and strip bots so the next start can succeed.
+        return resetRoomToWaitingAfterFailedStart(roomId)
     }
 
     private fun logWaitingRoomStartFailure(room: RoomDocument, error: Throwable) {
@@ -3419,18 +3433,26 @@ class LobbyService(
         realSeats: List<RoomSeat>,
         roomId: String,
         amount: Long,
+        startAttemptId: String? = null,
     ): Mono<List<WalletReservation>> {
         val reservations = mutableListOf<WalletReservation>()
         log.info(
-            "Ludo entry fee reservation batch requested roomId={} realSeats={} amount={}",
+            "Ludo entry fee reservation batch requested roomId={} realSeats={} amount={} startAttemptId={}",
             roomId,
             realSeats.size,
             amount,
+            startAttemptId,
         )
 
         return Flux.fromIterable(realSeats)
             .concatMap { seat ->
-                walletService.reserveEntryFee(seat.userId, roomId, amount, seat.ipAddress)
+                walletService.reserveEntryFee(
+                    seat.userId,
+                    roomId,
+                    amount,
+                    seat.ipAddress,
+                    startAttemptId,
+                )
                     .doOnNext { reservation -> reservations.add(reservation) }
             }
             .collectList()

@@ -406,18 +406,27 @@ class WalletService(
         roomId: String,
         amount: Long,
         ipAddress: String?,
+        startAttemptId: String? = null,
     ): Mono<WalletReservation> {
         require(amount > 0) { "Entry fee amount must be positive." }
 
         val transactionId = newId("roomfee")
         log.info(
-            "Ludo entry fee reservation requested userId={} roomId={} amount={} transactionId={}",
+            "Ludo entry fee reservation requested userId={} roomId={} amount={} transactionId={} startAttemptId={}",
             userId,
             roomId,
             amount,
             transactionId,
+            startAttemptId,
         )
-        return createEntryFeeReservation(userId, roomId, amount, ipAddress, transactionId)
+        return createEntryFeeReservation(
+            userId = userId,
+            roomId = roomId,
+            amount = amount,
+            ipAddress = ipAddress,
+            transactionId = transactionId,
+            startAttemptId = startAttemptId,
+        )
     }
 
     private fun createEntryFeeReservation(
@@ -426,8 +435,11 @@ class WalletService(
         amount: Long,
         ipAddress: String?,
         transactionId: String,
+        startAttemptId: String? = null,
     ): Mono<WalletReservation> {
-        val idempotencyScope = "wallet:room-reservation:$roomId:$userId"
+        // Include startAttemptId so a failed start can retry without getting stuck on a stale idempotency key.
+        val attemptKey = startAttemptId?.takeIf { it.isNotBlank() } ?: transactionId
+        val idempotencyScope = "wallet:room-reservation:$roomId:$userId:$attemptKey"
         val reservationKey = "amount:$amount"
 
         return claimIdempotency(idempotencyScope, reservationKey)
