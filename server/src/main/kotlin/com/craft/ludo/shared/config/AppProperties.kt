@@ -19,6 +19,7 @@ data class SessionProperties(
 
 data class GameplayProperties(
     val turnTimeoutSeconds: Long = 30,
+    val maxConsecutiveMissedTurns: Int = 3,
     val roomMaxPlayers: Int = 4,
     val onlineEntryFee: Long = 100,
     val lobbyWaitMillis: Long = 60_000,

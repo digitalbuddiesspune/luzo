@@ -53,6 +53,7 @@ app:
 
   gameplay:
     turn-timeout-seconds: ${APP_GAMEPLAY_TURN_TIMEOUT_SECONDS:30}
+    max-consecutive-missed-turns: ${APP_GAMEPLAY_MAX_CONSECUTIVE_MISSED_TURNS:3}
     room-max-players: ${APP_GAMEPLAY_ROOM_MAX_PLAYERS:4}
     online-entry-fee: ${APP_GAMEPLAY_ONLINE_ENTRY_FEE:100}
     lobby-wait-millis: ${APP_GAMEPLAY_LOBBY_WAIT_MILLIS:60000}

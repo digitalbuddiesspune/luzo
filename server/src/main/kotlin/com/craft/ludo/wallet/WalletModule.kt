@@ -45,6 +45,7 @@ enum class WalletTransactionType {
     ROOM_REFUND,
     MATCH_PAYOUT,
     HOUSE_RAKE,
+    HOUSE_WIN,
 }
 
 @Document("wallet_accounts")
@@ -164,6 +165,12 @@ internal fun calculateWinnerLedgerPayoutAmount(
     } else {
         winnerPayoutAmount
     }
+}
+
+internal fun calculateHouseWinAmount(reservations: List<WalletReservation>): Long {
+    return reservations
+        .filter { reservation -> reservation.amount > 0 && !reservation.synthetic }
+        .sumOf { it.amount }
 }
 
 internal fun calculateRakeAmount(
@@ -609,8 +616,8 @@ class WalletService(
         val potAmount = paidReservations.sumOf { it.amount }
         val confirmedExternalPotAmount = externallyDebitedReservations.sumOf { it.amount }
         if (potAmount <= 0) return Mono.empty()
-        val rakeAmount = calculateRakeAmount(potAmount)
-        val winnerPayoutAmount = potAmount - rakeAmount
+        val isHouseWinner = winnerUserId == houseUserId
+        val rakeAmount = if (isHouseWinner) 0L else calculateRakeAmount(potAmount)
         val winnerReservation = paidReservations.lastOrNull { it.userId == winnerUserId }
         val winnerIsSynthetic = winnerReservation?.synthetic == true
         val winnerUsesOperatorWallet = winnerReservation?.operatorUserId != null ||
@@ -618,15 +625,20 @@ class WalletService(
             winnerReservation?.operatorId != null
         val winnerHasConfirmedExternalDebit = winnerReservation?.externalDebitTransactionId != null &&
             winnerReservation.externalDebitConfirmed
-        val winnerLedgerPayoutAmount = calculateWinnerLedgerPayoutAmount(
-            winnerUserId = winnerUserId,
-            paidReservations = paidReservations,
-            payoutRakeBasisPoints = payoutRakeBasisPoints,
-        )
+        val winnerLedgerPayoutAmount = if (isHouseWinner) {
+            calculateHouseWinAmount(paidReservations)
+        } else {
+            calculateWinnerLedgerPayoutAmount(
+                winnerUserId = winnerUserId,
+                paidReservations = paidReservations,
+                payoutRakeBasisPoints = payoutRakeBasisPoints,
+            )
+        }
         log.info(
-            "Ludo wallet settlement requested matchId={} winnerUserId={} reservations={} realReservations={} confirmedExternalReservations={} potAmount={} confirmedExternalPotAmount={} winnerUsesOperatorWallet={} winnerHasConfirmedExternalDebit={} payoutAmount={}",
+            "Ludo wallet settlement requested matchId={} winnerUserId={} houseWinner={} reservations={} realReservations={} confirmedExternalReservations={} potAmount={} confirmedExternalPotAmount={} winnerUsesOperatorWallet={} winnerHasConfirmedExternalDebit={} payoutAmount={}",
             matchId,
             winnerUserId,
+            isHouseWinner,
             paidReservations.size,
             realPaidReservations.size,
             externallyDebitedReservations.size,
@@ -652,18 +664,19 @@ class WalletService(
                 },
             )
             .then(
-                if (winnerIsSynthetic) {
-                    Mono.empty()
-                } else if (winnerLedgerPayoutAmount <= 0) {
-                    Mono.empty()
-                } else {
-                    enqueueWinnerExternalCreditIfNeeded(
-                        matchId,
-                        winnerUserId,
-                        winnerLedgerPayoutAmount,
-                        externallyDebitedReservations,
-                    )
-                        .then(persistWinnerPayout(matchId, winnerUserId, winnerLedgerPayoutAmount))
+                when {
+                    isHouseWinner -> persistHouseWin(matchId, winnerLedgerPayoutAmount)
+                    winnerIsSynthetic -> Mono.empty()
+                    winnerLedgerPayoutAmount <= 0 -> Mono.empty()
+                    else -> {
+                        enqueueWinnerExternalCreditIfNeeded(
+                            matchId,
+                            winnerUserId,
+                            winnerLedgerPayoutAmount,
+                            externallyDebitedReservations,
+                        )
+                            .then(persistWinnerPayout(matchId, winnerUserId, winnerLedgerPayoutAmount))
+                    }
                 },
             )
             .then(persistHouseRake(matchId, rakeAmount))
@@ -745,7 +758,8 @@ class WalletService(
                 accountSide = if (
                     type == WalletTransactionType.MATCH_PAYOUT ||
                     type == WalletTransactionType.ADMIN_CREDIT ||
-                    type == WalletTransactionType.HOUSE_RAKE
+                    type == WalletTransactionType.HOUSE_RAKE ||
+                    type == WalletTransactionType.HOUSE_WIN
                 ) {
                     "AVAILABLE_CREDIT"
                 } else {
@@ -830,6 +844,25 @@ class WalletService(
                     referenceId = matchId,
                     description = "House rake for match $matchId",
                     idempotencyKey = "rake:$matchId",
+                )
+            }
+    }
+
+    private fun persistHouseWin(
+        matchId: String,
+        houseWinAmount: Long,
+    ): Mono<Void> {
+        if (houseWinAmount <= 0) return Mono.empty()
+
+        return adjustBalances(houseUserId, houseWinAmount, 0)
+            .flatMap {
+                persistLedger(
+                    userId = houseUserId,
+                    amount = houseWinAmount,
+                    type = WalletTransactionType.HOUSE_WIN,
+                    referenceId = matchId,
+                    description = "House win for match $matchId after all real players left",
+                    idempotencyKey = "house-win:$matchId",
                 )
             }
     }

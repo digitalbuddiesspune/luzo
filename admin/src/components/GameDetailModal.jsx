@@ -54,7 +54,17 @@ export function GameDetailModal({ game, onClose }) {
           <Metric label="Winner Payout" value={formatAmount(game.winnerPayout, game.currency)} />
           <Metric
             label="Winner"
-            value={game.winner ? `${game.winner.displayName}${game.winner.isReal ? "" : " (Bot)"}` : "—"}
+            value={
+              game.winner
+                ? `${game.winner.displayName}${
+                    game.winner.isHouse
+                      ? " (Platform)"
+                      : game.winner.isReal
+                        ? ""
+                        : " (Bot)"
+                  }`
+                : "—"
+            }
           />
           <Metric label="Mode" value={game.mode || "—"} />
         </div>
@@ -115,10 +125,12 @@ export function GameDetailModal({ game, onClose }) {
                           className={`inline-flex rounded-md px-2 py-0.5 text-xs font-semibold ${
                             player.isBot
                               ? "bg-[#f0f4f1] text-[var(--color-muted)]"
-                              : "bg-[var(--accent-soft)] text-[var(--accent)]"
+                              : player.isAbandoned
+                                ? "bg-[#fff1f0] text-[#c0392b]"
+                                : "bg-[var(--accent-soft)] text-[var(--accent)]"
                           }`}
                         >
-                          {player.isBot ? "Bot" : "Real"}
+                          {player.isBot ? "Bot" : player.isAbandoned ? "Left" : "Real"}
                         </span>
                       </td>
                       <td className="px-3 py-2.5 tabular-nums">
@@ -152,7 +164,9 @@ export function GameDetailModal({ game, onClose }) {
               <span className="font-semibold text-[var(--color-ink)]">
                 {formatAmount(game.platformProfit, game.currency)}
               </span>
-              .
+              {game.winner?.isHouse
+                ? ". When only bots remain after all real players leave, the platform keeps the full real pot."
+                : "."}
             </p>
           </div>
         </div>

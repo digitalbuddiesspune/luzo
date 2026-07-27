@@ -91,4 +91,39 @@ class WalletPayoutCalculationTests {
         assertThat(payoutAmount).isEqualTo(400)
         assertThat(botWinnerUserId).isNotEqualTo(humanUserId)
     }
+
+    @Test
+    fun `house win captures only real player entry fees`() {
+        val reservations = listOf(
+            WalletReservation(
+                userId = "human-1",
+                transactionId = "roomfee_human_1",
+                amount = 100,
+            ),
+            WalletReservation(
+                userId = "human-2",
+                transactionId = "roomfee_human_2",
+                amount = 100,
+                externalDebitTransactionId = "roomfee_human_2",
+                externalDebitConfirmed = true,
+                operatorToken = "operator-token",
+                operatorUserId = "operator-user",
+                operatorId = "operator",
+            ),
+            WalletReservation(
+                userId = "bot_red",
+                transactionId = "botfee_red",
+                amount = 100,
+                synthetic = true,
+            ),
+            WalletReservation(
+                userId = "bot_yellow",
+                transactionId = "botfee_yellow",
+                amount = 100,
+                synthetic = true,
+            ),
+        )
+
+        assertThat(calculateHouseWinAmount(reservations)).isEqualTo(200)
+    }
 }

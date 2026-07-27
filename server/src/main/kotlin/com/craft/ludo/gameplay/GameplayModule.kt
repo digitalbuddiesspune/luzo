@@ -131,6 +131,7 @@ data class MatchPlayerState(
     @get:JsonProperty("isAbandoned")
     val isAbandoned: Boolean = false,
     val tokens: List<Int>,
+    val consecutiveMissedTurns: Int = 0,
     val operatorUserId: String? = null,
     val operatorId: String? = null,
 )
@@ -768,6 +769,87 @@ internal fun resolveTwoPlayerForfeitWinner(
     }
 }
 
+internal fun countActiveRealHumans(players: List<MatchPlayerState>): Int {
+    return players.count { player -> !player.isBot && !player.isEffectivelyAbandoned() }
+}
+
+internal fun shouldAwardHouseWin(playersAfterLeave: List<MatchPlayerState>): Boolean {
+    return countActiveRealHumans(playersAfterLeave) == 0
+}
+
+internal data class AbandonOutcome(
+    val forfeitWinner: MatchPlayerState? = null,
+    val houseWin: Boolean = false,
+)
+
+internal fun resolveAbandonOutcome(
+    playersBeforeLeave: List<MatchPlayerState>,
+    playersAfterLeave: List<MatchPlayerState>,
+): AbandonOutcome {
+    val forfeitWinner = resolveTwoPlayerForfeitWinner(playersBeforeLeave, playersAfterLeave)
+    if (forfeitWinner != null) {
+        return AbandonOutcome(forfeitWinner = forfeitWinner)
+    }
+
+    return AbandonOutcome(houseWin = shouldAwardHouseWin(playersAfterLeave))
+}
+
+internal data class MissedTurnRegistration(
+    val players: List<MatchPlayerState>,
+    val autoLeft: Boolean,
+    val abandonOutcome: AbandonOutcome = AbandonOutcome(),
+)
+
+internal fun resetMissedTurns(
+    players: List<MatchPlayerState>,
+    playerIndex: Int,
+): List<MatchPlayerState> {
+    val player = players.getOrNull(playerIndex) ?: return players
+    if (player.consecutiveMissedTurns == 0) {
+        return players
+    }
+
+    return players.toMutableList().apply {
+        this[playerIndex] = player.copy(consecutiveMissedTurns = 0)
+    }
+}
+
+internal fun registerMissedTurn(
+    players: List<MatchPlayerState>,
+    playerIndex: Int,
+    maxConsecutiveMissedTurns: Int,
+    abandonedUserId: String,
+): MissedTurnRegistration {
+    require(maxConsecutiveMissedTurns > 0) { "maxConsecutiveMissedTurns must be positive." }
+
+    val player = players[playerIndex]
+    val nextMissedTurns = player.consecutiveMissedTurns + 1
+    val playersWithMiss = players.toMutableList().apply {
+        this[playerIndex] = player.copy(consecutiveMissedTurns = nextMissedTurns)
+    }
+
+    if (nextMissedTurns < maxConsecutiveMissedTurns) {
+        return MissedTurnRegistration(
+            players = playersWithMiss,
+            autoLeft = false,
+        )
+    }
+
+    val abandonedPlayers = playersWithMiss.toMutableList().apply {
+        this[playerIndex] = this[playerIndex].copy(
+            userId = abandonedUserId,
+            isAbandoned = true,
+            tokens = emptyList(),
+        )
+    }
+
+    return MissedTurnRegistration(
+        players = abandonedPlayers,
+        autoLeft = true,
+        abandonOutcome = resolveAbandonOutcome(players, abandonedPlayers),
+    )
+}
+
 internal fun chooseBotToken(
     players: List<MatchPlayerState>,
     playerIndex: Int,
@@ -1048,6 +1130,8 @@ class MatchService(
 ) {
     private val log = LoggerFactory.getLogger(MatchService::class.java)
     private val turnTimeoutSeconds = appProperties.gameplay.turnTimeoutSeconds
+    private val maxConsecutiveMissedTurns = appProperties.gameplay.maxConsecutiveMissedTurns
+    private val houseUserId = appProperties.wallet.houseUserId.trim()
     private val rollDelayMillis = appProperties.gameplay.rollDelayMillis
     private val botMoveDelayMillis = appProperties.gameplay.botMoveDelayMillis
     private val advanceDelayMillis = appProperties.gameplay.advanceDelayMillis
@@ -1055,6 +1139,10 @@ class MatchService(
 
     init {
         require(turnTimeoutSeconds > 0) { "app.gameplay.turn-timeout-seconds must be positive." }
+        require(maxConsecutiveMissedTurns > 0) {
+            "app.gameplay.max-consecutive-missed-turns must be positive."
+        }
+        require(houseUserId.isNotBlank()) { "app.wallet.house-user-id must not be blank." }
     }
 
     fun createStartedMatch(room: RoomDocument): Mono<MatchDocument> {
@@ -1297,29 +1385,35 @@ class MatchService(
                     ),
                 )
 
-                val forfeitWinner = resolveTwoPlayerForfeitWinner(match.players, updatedPlayers)
-                val updatedMatch = if (forfeitWinner != null) {
-                    val winner = forfeitWinner
-                    abandonedMatch.copy(
-                        status = MatchStatus.FINISHED,
-                        phase = MatchPhase.FINISHED,
-                        winnerUserId = winner.userId,
-                        winnerDisplayName = winner.displayName,
-                        selectableTokenIndexes = emptyList(),
-                        pendingNextPlayerIndex = null,
-                        phaseDeadlineAt = null,
-                        turnDeadlineAt = null,
-                        events = prependEvent(
-                            abandonedMatch.events,
-                            "System",
-                            "${winner.displayName} won because the opponent left the 2-player match.",
-                            now,
-                        ),
-                    )
-                } else if (shouldSkipCurrentTurn(abandonedMatch)) {
-                    skipAbandonedCurrentPlayer(abandonedMatch, now)
-                } else {
-                    abandonedMatch
+                val abandonOutcome = resolveAbandonOutcome(match.players, updatedPlayers)
+                val updatedMatch = when {
+                    abandonOutcome.forfeitWinner != null -> {
+                        val winner = abandonOutcome.forfeitWinner
+                        abandonedMatch.copy(
+                            status = MatchStatus.FINISHED,
+                            phase = MatchPhase.FINISHED,
+                            winnerUserId = winner.userId,
+                            winnerDisplayName = winner.displayName,
+                            selectableTokenIndexes = emptyList(),
+                            pendingNextPlayerIndex = null,
+                            phaseDeadlineAt = null,
+                            turnDeadlineAt = null,
+                            events = prependEvent(
+                                abandonedMatch.events,
+                                "System",
+                                "${winner.displayName} won because the opponent left the 2-player match.",
+                                now,
+                            ),
+                        )
+                    }
+
+                    abandonOutcome.houseWin -> finishMatchAsHouseWin(abandonedMatch, now)
+
+                    shouldSkipCurrentTurn(abandonedMatch) -> {
+                        skipAbandonedCurrentPlayer(abandonedMatch, now)
+                    }
+
+                    else -> abandonedMatch
                 }
 
                 roomRepository.save(
@@ -1362,21 +1456,7 @@ class MatchService(
                 !match.players[match.currentPlayerIndex].isBot &&
                 match.turnDeadlineAt != null &&
                 !now.isBefore(match.turnDeadlineAt) -> {
-                val activePlayer = match.players[match.currentPlayerIndex]
-                persistMatchTransition(
-                    beginTurn(
-                        match.copy(
-                            events = prependEvent(
-                                match.events,
-                                activePlayer.displayName,
-                                "ran out of time.",
-                                now,
-                            ),
-                        ),
-                        (match.currentPlayerIndex + 1) % match.players.size,
-                        now,
-                    ),
-                )
+                persistHumanMissedTurn(match, now)
             }
 
             match.phase == MatchPhase.BOT_MOVING &&
@@ -1400,7 +1480,7 @@ class MatchService(
             match.phase == MatchPhase.AWAITING_MOVE &&
                 match.turnDeadlineAt != null &&
                 !now.isBefore(match.turnDeadlineAt) -> {
-                persistMatchTransition(handleHumanTimeout(match, now))
+                handleHumanTimeout(match, now)
             }
 
             else -> Mono.empty()
@@ -1447,11 +1527,18 @@ class MatchService(
     }
 
     private fun resolveRoll(match: MatchDocument, now: Instant): MatchDocument {
-        val activePlayer = match.players[match.currentPlayerIndex]
-        val dice = randomDice(match.consecutiveSixCount)
-        val selectableTokenIndexes = movableTokenIndexes(activePlayer, dice)
+        val playerIndex = match.currentPlayerIndex
+        val activePlayer = match.players[playerIndex]
+        val matchForRoll = if (!activePlayer.isBot) {
+            match.copy(players = resetMissedTurns(match.players, playerIndex))
+        } else {
+            match
+        }
+        val rollingPlayer = matchForRoll.players[playerIndex]
+        val dice = randomDice(matchForRoll.consecutiveSixCount)
+        val selectableTokenIndexes = movableTokenIndexes(rollingPlayer, dice)
         val nextConsecutiveSixCount = if (dice == 6) {
-            match.consecutiveSixCount + 1
+            matchForRoll.consecutiveSixCount + 1
         } else {
             0
         }
@@ -1461,42 +1548,42 @@ class MatchService(
             "rolled a $dice."
         }
 
-        val rolledMatch = match.copy(
+        val rolledMatch = matchForRoll.copy(
             dice = dice,
-            lastRollUserId = activePlayer.userId,
-            lastRollDisplayName = activePlayer.displayName,
+            lastRollUserId = rollingPlayer.userId,
+            lastRollDisplayName = rollingPlayer.displayName,
             lastRollDice = dice,
             consecutiveSixCount = nextConsecutiveSixCount,
             phase = when {
                 selectableTokenIndexes.isEmpty() -> MatchPhase.ADVANCING
-                activePlayer.isBot -> MatchPhase.BOT_MOVING
+                rollingPlayer.isBot -> MatchPhase.BOT_MOVING
                 else -> MatchPhase.AWAITING_MOVE
             },
             selectableTokenIndexes = selectableTokenIndexes,
             pendingNextPlayerIndex = if (selectableTokenIndexes.isEmpty()) {
-                nextPlayerIndex(match, dice)
+                nextPlayerIndex(matchForRoll, dice)
             } else {
                 null
             },
             phaseDeadlineAt = when {
                 selectableTokenIndexes.isEmpty() -> now.plusMillis(noMoveRollHoldMillis)
-                activePlayer.isBot -> now.plusMillis(botMoveDelayMillis)
+                rollingPlayer.isBot -> now.plusMillis(botMoveDelayMillis)
                 else -> null
             },
             turnDeadlineAt = if (
-                !activePlayer.isBot &&
+                !rollingPlayer.isBot &&
                 selectableTokenIndexes.isNotEmpty()
             ) {
-                now.plusSeconds(match.turnTimeoutSeconds)
+                now.plusSeconds(matchForRoll.turnTimeoutSeconds)
             } else {
-                match.turnDeadlineAt
+                matchForRoll.turnDeadlineAt
             },
             updatedAt = now,
-            sequence = match.sequence + 1,
-            events = prependEvent(match.events, activePlayer.displayName, detail, now),
+            sequence = matchForRoll.sequence + 1,
+            events = prependEvent(matchForRoll.events, rollingPlayer.displayName, detail, now),
         )
 
-        if (activePlayer.isBot || selectableTokenIndexes.isEmpty()) {
+        if (rollingPlayer.isBot || selectableTokenIndexes.isEmpty()) {
             return rolledMatch
         }
 
@@ -1509,7 +1596,12 @@ class MatchService(
     private fun applyTokenMove(match: MatchDocument, tokenIndex: Int, now: Instant): MatchDocument {
         val activePlayer = match.players[match.currentPlayerIndex]
         val diceValue = match.dice ?: 1
-        val mutablePlayers = match.players.map { player ->
+        val playersWithResetMisses = if (!activePlayer.isBot) {
+            resetMissedTurns(match.players, match.currentPlayerIndex)
+        } else {
+            match.players
+        }
+        val mutablePlayers = playersWithResetMisses.map { player ->
             player.copy(tokens = player.tokens.toMutableList())
         }.toMutableList()
         val activeTokens = mutablePlayers[match.currentPlayerIndex].tokens.toMutableList()
@@ -1585,41 +1677,177 @@ class MatchService(
         )
     }
 
-    private fun handleHumanTimeout(match: MatchDocument, now: Instant): MatchDocument {
-        val activePlayer = match.players[match.currentPlayerIndex]
+    private fun handleHumanTimeout(match: MatchDocument, now: Instant): Mono<MatchDocument> {
         val forcedTokenIndex = resolveForcedAutoMoveToken(match.selectableTokenIndexes)
 
         // Only auto-move when there is exactly one legal choice.
-        // If the player had multiple options and timed out, skip the turn.
+        // If the player had multiple options and timed out, count a missed turn.
         if (forcedTokenIndex != null) {
-            val timedOutMove = applyTokenMove(match, forcedTokenIndex, now)
+            val activePlayer = match.players[match.currentPlayerIndex]
+            val resetMatch = match.copy(
+                players = resetMissedTurns(match.players, match.currentPlayerIndex),
+            )
+            val timedOutMove = applyTokenMove(resetMatch, forcedTokenIndex, now)
 
-            return timedOutMove.copy(
-                events = prependEvent(
-                    timedOutMove.events,
-                    activePlayer.displayName,
-                    "timed out, so token ${forcedTokenIndex + 1} was auto-played.",
-                    now,
+            return persistMatchTransition(
+                timedOutMove.copy(
+                    events = prependEvent(
+                        timedOutMove.events,
+                        activePlayer.displayName,
+                        "timed out, so token ${forcedTokenIndex + 1} was auto-played.",
+                        now,
+                    ),
                 ),
             )
         }
 
-        return beginTurn(
-            match.copy(
-                dice = null,
-                selectableTokenIndexes = emptyList(),
-                pendingNextPlayerIndex = null,
-                phaseDeadlineAt = null,
-                events = prependEvent(
-                    match.events,
-                    activePlayer.displayName,
-                    "ran out of time.",
-                    now,
-                ),
-            ),
-            (match.currentPlayerIndex + 1) % match.players.size,
-            now,
+        return persistHumanMissedTurn(match, now)
+    }
+
+    private fun persistHumanMissedTurn(match: MatchDocument, now: Instant): Mono<MatchDocument> {
+        val playerIndex = match.currentPlayerIndex
+        val activePlayer = match.players[playerIndex]
+        val abandonedId = newId("abandoned")
+        val registration = registerMissedTurn(
+            players = match.players,
+            playerIndex = playerIndex,
+            maxConsecutiveMissedTurns = maxConsecutiveMissedTurns,
+            abandonedUserId = abandonedId,
         )
+        val nextMatch = applyMissedTurnRegistration(
+            match = match,
+            registration = registration,
+            playerIndex = playerIndex,
+            now = now,
+        )
+
+        return if (registration.autoLeft) {
+            persistMatchWithSeatAbandon(
+                nextMatch = nextMatch,
+                leavingUserId = activePlayer.userId,
+                abandonedId = abandonedId,
+            )
+        } else {
+            persistMatchTransition(nextMatch)
+        }
+    }
+
+    private fun applyMissedTurnRegistration(
+        match: MatchDocument,
+        registration: MissedTurnRegistration,
+        playerIndex: Int,
+        now: Instant,
+    ): MatchDocument {
+        val activePlayer = match.players[playerIndex]
+
+        if (!registration.autoLeft) {
+            return beginTurn(
+                match.copy(
+                    players = registration.players,
+                    dice = null,
+                    selectableTokenIndexes = emptyList(),
+                    pendingNextPlayerIndex = null,
+                    phaseDeadlineAt = null,
+                    events = prependEvent(
+                        match.events,
+                        activePlayer.displayName,
+                        "ran out of time.",
+                        now,
+                    ),
+                ),
+                (playerIndex + 1) % match.players.size,
+                now,
+            )
+        }
+
+        val abandonedMatch = match.copy(
+            players = registration.players,
+            dice = null,
+            selectableTokenIndexes = emptyList(),
+            pendingNextPlayerIndex = null,
+            phaseDeadlineAt = null,
+            updatedAt = now,
+            sequence = match.sequence + 1,
+            events = prependEvent(
+                match.events,
+                "System",
+                "${activePlayer.displayName} was removed after missing $maxConsecutiveMissedTurns turns.",
+                now,
+            ),
+        )
+
+        val abandonOutcome = registration.abandonOutcome
+        return when {
+            abandonOutcome.forfeitWinner != null -> {
+                val forfeitWinner = abandonOutcome.forfeitWinner
+                abandonedMatch.copy(
+                    status = MatchStatus.FINISHED,
+                    phase = MatchPhase.FINISHED,
+                    winnerUserId = forfeitWinner.userId,
+                    winnerDisplayName = forfeitWinner.displayName,
+                    turnDeadlineAt = null,
+                    events = prependEvent(
+                        abandonedMatch.events,
+                        "System",
+                        "${forfeitWinner.displayName} won because the opponent left the 2-player match.",
+                        now,
+                    ),
+                )
+            }
+
+            abandonOutcome.houseWin -> finishMatchAsHouseWin(abandonedMatch, now)
+
+            shouldSkipCurrentTurn(abandonedMatch) -> skipAbandonedCurrentPlayer(abandonedMatch, now)
+
+            else -> abandonedMatch
+        }
+    }
+
+    private fun finishMatchAsHouseWin(match: MatchDocument, now: Instant): MatchDocument {
+        return match.copy(
+            status = MatchStatus.FINISHED,
+            phase = MatchPhase.FINISHED,
+            winnerUserId = houseUserId,
+            winnerDisplayName = "Platform",
+            selectableTokenIndexes = emptyList(),
+            pendingNextPlayerIndex = null,
+            phaseDeadlineAt = null,
+            turnDeadlineAt = null,
+            updatedAt = now,
+            events = prependEvent(
+                match.events,
+                "System",
+                "Bots won because no real players remained. Entry fees went to the platform.",
+                now,
+            ),
+        )
+    }
+
+    private fun persistMatchWithSeatAbandon(
+        nextMatch: MatchDocument,
+        leavingUserId: String,
+        abandonedId: String,
+    ): Mono<MatchDocument> {
+        return roomRepository.findById(nextMatch.roomId)
+            .flatMap { room ->
+                roomRepository.save(
+                    room.copy(
+                        seats = room.seats.map { seat ->
+                            if (seat.userId == leavingUserId && !seat.isBot && !seat.isAbandoned) {
+                                seat.copy(
+                                    userId = abandonedId,
+                                    isAbandoned = true,
+                                    joinedAt = nextMatch.updatedAt,
+                                )
+                            } else {
+                                seat
+                            }
+                        },
+                        updatedAt = nextMatch.updatedAt,
+                    ),
+                )
+            }
+            .then(persistMatchTransition(nextMatch))
     }
 
     private fun advanceTurn(match: MatchDocument, now: Instant): MatchDocument {

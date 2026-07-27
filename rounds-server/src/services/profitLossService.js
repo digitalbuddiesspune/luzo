@@ -78,7 +78,8 @@ function buildGameProfitLoss(round) {
   );
   const displayPotRake = calculateRakeOnPot(round.totalPotAmount);
   const realPotRake = calculateRakeOnPot(totalRealIncome);
-  const winnerIsReal = round.winner && !round.winner.isBot;
+  const winnerIsHouse = Boolean(round.winner?.isHouse);
+  const winnerIsReal = Boolean(round.winner) && !round.winner.isBot && !winnerIsHouse;
   const winnerPayout = winnerIsReal ? round.winner.winAmount : 0;
   const platformProfit = totalRealIncome - winnerPayout;
 
@@ -128,7 +129,8 @@ function buildGameProfitLoss(round) {
     winner: round.winner
       ? {
           ...round.winner,
-          isReal: !round.winner.isBot,
+          isReal: winnerIsReal,
+          isHouse: winnerIsHouse,
         }
       : null,
     players,

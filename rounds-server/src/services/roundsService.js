@@ -121,7 +121,9 @@ function buildCreditStatement(player, round) {
 
 function renderSingleRoundHtml(round) {
   const winnerText = round.winner
-    ? `${round.winner.displayName || round.winner.userId} (${formatAmount(round.winner.winAmount, round.currency)})`
+    ? round.winner.isHouse
+      ? `${round.winner.displayName || "Platform"} (platform kept real pot)`
+      : `${round.winner.displayName || round.winner.userId} (${formatAmount(round.winner.winAmount, round.currency)})`
     : "Not available";
   const playerRows = round.players.map((player) => {
     const creditStatement = player.winAmount > 0
@@ -261,7 +263,10 @@ function buildRound(match, room) {
   const totalPotAmount = reservations.length > 0
     ? reservationTotal
     : storedPotAmount;
-  const winnerAmount = match.winnerUserId
+  const isHouseWinner = Boolean(
+    match.winnerUserId && match.winnerUserId === config.houseUserId,
+  );
+  const winnerAmount = match.winnerUserId && !isHouseWinner
     ? calculateWinnerAmount(totalPotAmount)
     : 0;
 
@@ -308,8 +313,11 @@ function buildRound(match, room) {
     winner: match.winnerUserId
       ? {
           userId: winnerPlayer?.userId || match.winnerUserId,
-          displayName: match.winnerDisplayName || winnerPlayer?.displayName || null,
-          isBot: winnerPlayer?.isBot || false,
+          displayName: match.winnerDisplayName
+            || winnerPlayer?.displayName
+            || (isHouseWinner ? "Platform" : null),
+          isBot: Boolean(winnerPlayer?.isBot),
+          isHouse: isHouseWinner,
           betAmount: winnerPlayer?.betAmount
             ?? betsByUserId.get(match.winnerUserId)
             ?? 0,
