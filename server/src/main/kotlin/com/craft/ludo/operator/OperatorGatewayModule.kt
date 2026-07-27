@@ -240,6 +240,7 @@ class OperatorGatewayClient(
             )
             .retrieve()
             .bodyToMono(JsonNode::class.java)
+            .timeout(Duration.ofSeconds(8))
             .doOnError { error ->
                 log.error(
                     "Operator debit api failed gameUserId={} userId={} operatorId={} txnId={} amount={} txnType={} gameId={} description={} reason={}",

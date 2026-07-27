@@ -348,7 +348,8 @@ internal fun allowsPublicPvpMatchmaking(
     threshold: Int = 0,
 ): Boolean = waitingRealPlayerCount + joiningRealPlayerCount > threshold
 
-internal const val ONLINE_ROOM_STARTING_RECOVERY_MILLIS = 4_000L
+internal const val ONLINE_ROOM_STARTING_RECOVERY_MILLIS = 2_000L
+internal const val ONLINE_ROOM_STARTING_HUNG_CLAIM_MILLIS = 1_500L
 
 internal fun isOnlineRoomStartingCorrupt(room: RoomDocument): Boolean {
     return room.status == RoomStatus.STARTING &&
@@ -356,8 +357,19 @@ internal fun isOnlineRoomStartingCorrupt(room: RoomDocument): Boolean {
         room.startAttemptId == null
 }
 
+internal fun isOnlineRoomStartingHungClaim(room: RoomDocument, now: Instant): Boolean {
+    if (room.status != RoomStatus.STARTING || room.matchId != null) {
+        return false
+    }
+    // Claimed but never reserved entry fees — typically a hung/failed wallet debit.
+    val hasRealReservation = room.walletReservations.any { reservation -> !reservation.synthetic }
+    return !hasRealReservation &&
+        room.updatedAt.plusMillis(ONLINE_ROOM_STARTING_HUNG_CLAIM_MILLIS).isBefore(now)
+}
+
 internal fun isOnlineRoomStartingStale(room: RoomDocument, now: Instant): Boolean {
     return isOnlineRoomStartingCorrupt(room) ||
+        isOnlineRoomStartingHungClaim(room, now) ||
         (
             room.status == RoomStatus.STARTING &&
                 room.matchId == null &&
@@ -1156,6 +1168,14 @@ class MatchService(
     fun createStartedMatch(room: RoomDocument): Mono<MatchDocument> {
         require(room.seats.isNotEmpty()) { "Cannot start a match with no room seats." }
 
+        // Concurrent start continuations: if another poller already activated the room, reuse it.
+        if (room.matchId != null && room.status == RoomStatus.ACTIVE) {
+            return matchRepository.findById(room.matchId)
+                .switchIfEmpty(
+                    Mono.error(IllegalStateException("Active room ${room.id} is missing match ${room.matchId}")),
+                )
+        }
+
         val now = Instant.now(clock)
         val matchId = newId("match")
         log.info(
@@ -1211,42 +1231,61 @@ class MatchService(
             updatedAt = now,
         )
 
-        return roomRepository.save(
-            room.copy(
-                status = RoomStatus.ACTIVE,
-                matchId = matchId,
-                startAttemptId = null,
-                updatedAt = now,
-            ),
-        )
-            .flatMap { activeRoom ->
-                matchRepository.save(match)
-                    .onErrorResume { error ->
-                        log.error(
-                            "Match save failed after room went ACTIVE; reverting room roomId={} matchId={} reason={}",
-                            activeRoom.id,
-                            matchId,
-                            error.message ?: error.javaClass.simpleName,
-                            error,
-                        )
-                        val rollback = roomRepository.save(
-                            activeRoom.copy(
-                                status = RoomStatus.WAITING,
-                                matchId = null,
-                                startAttemptId = null,
-                                seats = normalizeSeatColors(activeRoom.seats.filter { !it.isBot && !it.isAbandoned }),
-                                walletReservations = emptyList(),
-                                ownedWaitingDeadlineAt = Instant.now(clock).plusMillis(2_000),
-                                waitingDeadlineAt = null,
-                                updatedAt = Instant.now(clock),
+        return roomRepository.findById(room.id)
+            .flatMap { latestRoom ->
+                if (latestRoom.matchId != null && latestRoom.status == RoomStatus.ACTIVE) {
+                    return@flatMap matchRepository.findById(latestRoom.matchId)
+                        .switchIfEmpty(
+                            Mono.error(
+                                IllegalStateException(
+                                    "Active room ${latestRoom.id} is missing match ${latestRoom.matchId}",
+                                ),
                             ),
-                        ).then(
-                            matchRepository.findById(matchId)
-                                .flatMap { matchRepository.delete(it) }
-                                .onErrorResume { Mono.empty() },
                         )
+                }
 
-                        rollback.then(Mono.error(error))
+                roomRepository.save(
+                    latestRoom.copy(
+                        status = RoomStatus.ACTIVE,
+                        matchId = matchId,
+                        seats = room.seats,
+                        walletReservations = room.walletReservations,
+                        startAttemptId = null,
+                        updatedAt = now,
+                    ),
+                )
+                    .flatMap { activeRoom ->
+                        matchRepository.save(match)
+                            .onErrorResume { error ->
+                                log.error(
+                                    "Match save failed after room went ACTIVE; reverting room roomId={} matchId={} reason={}",
+                                    activeRoom.id,
+                                    matchId,
+                                    error.message ?: error.javaClass.simpleName,
+                                    error,
+                                )
+                                val rollback = roomRepository.save(
+                                    activeRoom.copy(
+                                        status = RoomStatus.WAITING,
+                                        matchId = null,
+                                        startAttemptId = null,
+                                        seats = normalizeSeatColors(
+                                            activeRoom.seats.filter { !it.isBot && !it.isAbandoned },
+                                        ),
+                                        walletReservations = emptyList(),
+                                        ownerInstanceId = instanceCoordinator.instanceId,
+                                        ownedWaitingDeadlineAt = Instant.now(clock).plusMillis(2_000),
+                                        waitingDeadlineAt = null,
+                                        updatedAt = Instant.now(clock),
+                                    ),
+                                ).then(
+                                    matchRepository.findById(matchId)
+                                        .flatMap { matchRepository.delete(it) }
+                                        .onErrorResume { Mono.empty() },
+                                )
+
+                                rollback.then(Mono.error(error))
+                            }
                     }
             }
             .flatMap { saved ->
@@ -2968,9 +3007,17 @@ class LobbyService(
             return Mono.just(room)
         }
 
-        // Corrupt leftover from a failed start: WAITING with bot seats. Strip before retrying.
+        // Corrupt leftover from a failed start: WAITING with bot seats. Strip, take ownership,
+        // and retry immediately so a foreign/old instance cannot keep re-injecting bots.
         if (room.seats.any { it.isBot }) {
-            return resetRoomToWaitingAfterFailedStart(room.id)
+            log.warn(
+                "Ludo online waiting room stripping leftover bots before start roomId={} roomCode={} ownerInstanceId={} botSeats={}",
+                room.id,
+                room.code,
+                room.ownerInstanceId,
+                room.seats.count { it.isBot },
+            )
+            return resetRoomToWaitingAfterFailedStart(room.id, retryBackoffMillis = 0L)
                 .then(roomRepository.findById(room.id))
                 .flatMap { cleaned ->
                     if (cleaned == null) {
@@ -2991,6 +3038,16 @@ class LobbyService(
                 instanceCoordinator.instanceId,
             )
             return Mono.just(room)
+        }
+
+        if (!ownedByCurrentInstance) {
+            log.warn(
+                "Ludo online waiting room taking over due room from another instance roomId={} roomCode={} ownerInstanceId={} currentInstanceId={}",
+                room.id,
+                room.code,
+                room.ownerInstanceId,
+                instanceCoordinator.instanceId,
+            )
         }
 
         val roomToStart = if (ownedByCurrentInstance) {
@@ -3087,22 +3144,44 @@ class LobbyService(
                 if (claimedRoom.startAttemptId != preparedRoom.startAttemptId) {
                     if (
                         claimedRoom.status == RoomStatus.STARTING &&
-                        claimedRoom.startAttemptId != null
+                        claimedRoom.startAttemptId != null &&
+                        !isOnlineRoomStartingStale(claimedRoom, now)
                     ) {
+                        // Another poller claimed the start. Continue the same attempt so a cancelled
+                        // requester cannot leave the room forever in STARTING without a match.
                         log.info(
-                            "Ludo online waiting room start reused existing claim roomId={} roomCode={} startAttemptId={}",
+                            "Ludo online waiting room start continuing existing claim roomId={} roomCode={} startAttemptId={}",
                             claimedRoom.id,
                             claimedRoom.code,
                             claimedRoom.startAttemptId,
                         )
-                        return@flatMap Mono.just(claimedRoom)
+                        val claimedRealSeats = claimedRoom.seats.filter { !it.isBot && !it.isAbandoned }
+                        return@flatMap continueRoomStartAfterClaim(
+                            claimedRoom,
+                            claimedRealSeats,
+                            claimedRoom.seats,
+                        )
                     }
 
                     if (
                         claimedRoom.status == RoomStatus.STARTING &&
-                        (isOnlineRoomStartingCorrupt(claimedRoom) || isOnlineRoomStartingStale(claimedRoom, now))
+                        isOnlineRoomStartingStale(claimedRoom, now)
                     ) {
-                        return@flatMap startWaitingRoom(claimedRoom, now)
+                        log.warn(
+                            "Ludo online waiting room start taking over stale/hung claim roomId={} roomCode={} startAttemptId={}",
+                            claimedRoom.id,
+                            claimedRoom.code,
+                            claimedRoom.startAttemptId,
+                        )
+                        return@flatMap resetRoomToWaitingAfterFailedStart(claimedRoom.id)
+                            .then(roomRepository.findById(claimedRoom.id))
+                            .flatMap { recovered ->
+                                if (recovered == null || recovered.matchId != null) {
+                                    Mono.justOrEmpty(recovered)
+                                } else {
+                                    startWaitingRoom(recovered, Instant.now(clock))
+                                }
+                            }
                     }
 
                     if (claimedRoom.status == RoomStatus.WAITING && claimedRoom.matchId == null) {
@@ -3158,6 +3237,10 @@ class LobbyService(
         normalizedRealSeats: List<RoomSeat>,
         seatsToStart: List<RoomSeat>,
     ): Mono<RoomDocument> {
+        if (claimedRoom.matchId != null || claimedRoom.status == RoomStatus.ACTIVE) {
+            return Mono.just(claimedRoom)
+        }
+
         log.info(
             "Ludo online waiting room start claimed roomId={} roomCode={} startAttemptId={} seats={} botSeats={}",
             claimedRoom.id,
@@ -3265,7 +3348,10 @@ class LobbyService(
         return resetRoomToWaitingAfterFailedStart(roomId)
     }
 
-    private fun resetRoomToWaitingAfterFailedStart(roomId: String): Mono<Void> {
+    private fun resetRoomToWaitingAfterFailedStart(
+        roomId: String,
+        retryBackoffMillis: Long = 2_000L,
+    ): Mono<Void> {
         return roomRepository.findById(roomId)
             .flatMap { room ->
                 if (room.matchId != null) {
@@ -3282,13 +3368,16 @@ class LobbyService(
                     return@flatMap roomRepository.delete(room).then()
                 }
 
+                val backoffMillis = retryBackoffMillis.coerceAtLeast(0L)
                 roomRepository.save(
                     room.copy(
                         status = RoomStatus.WAITING,
                         seats = realSeats,
                         startAttemptId = null,
                         walletReservations = emptyList(),
-                        ownedWaitingDeadlineAt = now.plusMillis(2_000),
+                        // Take ownership so a foreign/old instance cannot keep fighting this room.
+                        ownerInstanceId = instanceCoordinator.instanceId,
+                        ownedWaitingDeadlineAt = now.plusMillis(backoffMillis),
                         waitingDeadlineAt = null,
                         updatedAt = now,
                     ),

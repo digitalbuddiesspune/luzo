@@ -44,11 +44,25 @@ class OnlineRoomStartDueTests {
         val room = onlineWaitingRoom(
             status = RoomStatus.STARTING,
             startAttemptId = "roomstart_fresh",
-            updatedAt = now.minusSeconds(1),
+            updatedAt = now.minusMillis(500),
         )
 
         assertThat(isOnlineRoomStartingStale(room, now)).isFalse()
         assertThat(shouldStartOnlineWaitingRoom(room, now)).isFalse()
+    }
+
+    @Test
+    fun `recovers hung starting claim with no reservations`() {
+        val now = Instant.parse("2026-01-01T12:00:00Z")
+        val room = onlineWaitingRoom(
+            status = RoomStatus.STARTING,
+            startAttemptId = "roomstart_hung",
+            updatedAt = now.minusMillis(ONLINE_ROOM_STARTING_HUNG_CLAIM_MILLIS + 1),
+        )
+
+        assertThat(isOnlineRoomStartingHungClaim(room, now)).isTrue()
+        assertThat(isOnlineRoomStartingStale(room, now)).isTrue()
+        assertThat(shouldStartOnlineWaitingRoom(room, now)).isTrue()
     }
 
     @Test
