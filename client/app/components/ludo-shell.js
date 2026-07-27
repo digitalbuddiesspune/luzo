@@ -2,7 +2,7 @@
 
 /* eslint-disable @next/next/no-img-element */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
   PLAY_ROUTES,
@@ -161,12 +161,104 @@ const SAFE_STAR_ASSETS = {
   blue: "/assets/star.png",
 };
 
-const TOKEN_ASSETS = {
-  red: "/assets/ludo_pin_red.svg",
-  green: "/assets/ludo_pin_green.svg",
-  yellow: "/assets/ludo_pin_yellow.svg",
-  blue: "/assets/ludo_pin_blue.svg",
+const TOKEN_GEM = {
+  red: { light: "#ff5a5a", mid: "#e51414", dark: "#8f0000", glow: "#ff3b3b" },
+  green: { light: "#3dff8a", mid: "#00c853", dark: "#006b22", glow: "#00e676" },
+  yellow: { light: "#ffe566", mid: "#ffc107", dark: "#a87a00", glow: "#ffd54f" },
+  blue: { light: "#5cbcff", mid: "#1e88e5", dark: "#004a9f", glow: "#42a5f5" },
 };
+
+function TokenPin({
+  color = "blue",
+  className = "",
+  style,
+  width = 100,
+  height = 125,
+  ...props
+}) {
+  const uid = useId().replace(/:/g, "");
+  const gem = TOKEN_GEM[color] || TOKEN_GEM.blue;
+  const bodyId = `token-body-${uid}`;
+  const gemId = `token-gem-${uid}`;
+  const glossId = `token-gloss-${uid}`;
+  const shadowId = `token-shadow-${uid}`;
+
+  return (
+    <svg
+      className={className}
+      style={style}
+      width={width}
+      height={height}
+      viewBox="0 0 100 125"
+      fill="none"
+      xmlns="http://www.w3.org/2000/svg"
+      aria-hidden="true"
+      focusable="false"
+      {...props}
+    >
+      <defs>
+        <linearGradient id={bodyId} x1="18" y1="8" x2="88" y2="118" gradientUnits="userSpaceOnUse">
+          <stop offset="0" stopColor="#9a9d9f" />
+          <stop offset="0.18" stopColor="#f7f9fa" />
+          <stop offset="0.45" stopColor="#e6e9ea" />
+          <stop offset="0.72" stopColor="#b8bcbe" />
+          <stop offset="1" stopColor="#6f7375" />
+        </linearGradient>
+        <radialGradient id={gemId} cx="38%" cy="30%" r="72%">
+          <stop offset="0" stopColor={gem.light} />
+          <stop offset="0.55" stopColor={gem.mid} />
+          <stop offset="1" stopColor={gem.dark} />
+        </radialGradient>
+        <linearGradient id={glossId} x1="34" y1="18" x2="62" y2="52" gradientUnits="userSpaceOnUse">
+          <stop offset="0" stopColor="#ffffff" stopOpacity="0.85" />
+          <stop offset="0.55" stopColor="#ffffff" stopOpacity="0.18" />
+          <stop offset="1" stopColor="#ffffff" stopOpacity="0" />
+        </linearGradient>
+        <filter
+          id={shadowId}
+          x="-35%"
+          y="-20%"
+          width="170%"
+          height="170%"
+          colorInterpolationFilters="sRGB"
+        >
+          <feDropShadow dx="0" dy="3" stdDeviation="2.4" floodColor="#000" floodOpacity="0.42" />
+        </filter>
+      </defs>
+      <path
+        d="M50 4C25 4 8 20 8 43C8 68 29 96 47 119C48.7 121.2 51.3 121.2 53 119C71 96 92 68 92 43C92 20 75 4 50 4Z"
+        fill={`url(#${bodyId})`}
+        stroke="#1a1a1a"
+        strokeWidth="2.1"
+        filter={`url(#${shadowId})`}
+      />
+      <path
+        d="M50 10C30 10 15 23 15 42C15 58 28 80 42 100C46 106 54 106 58 100C72 80 85 58 85 42C85 23 70 10 50 10Z"
+        fill="#ffffff"
+        fillOpacity="0.14"
+      />
+      <circle
+        cx="50"
+        cy="42"
+        r="24.5"
+        fill={`url(#${gemId})`}
+        stroke="#121212"
+        strokeWidth="2"
+      />
+      <circle
+        cx="50"
+        cy="42"
+        r="18.5"
+        fill="none"
+        stroke="#ffffff"
+        strokeOpacity="0.22"
+        strokeWidth="1.4"
+      />
+      <ellipse cx="41" cy="33" rx="9.5" ry="6.5" fill={`url(#${glossId})`} />
+      <circle cx="58" cy="48" r="3.2" fill="#ffffff" fillOpacity="0.18" />
+    </svg>
+  );
+}
 
 const HOME_ASSETS = {
   red: "/assets/BoardRedHouse.png",
@@ -3100,13 +3192,11 @@ function BoardToken({
 }) {
   const pressHandlers = useImmediatePress(onSelect, !isSelectable);
   const tokenImage = (
-    <img
-      className={`board-token ${isSelectable ? "is-selectable" : ""} ${isUserTurnToken ? "is-user-turn-token" : ""}`}
-      src={TOKEN_ASSETS[color]}
-      alt=""
+    <TokenPin
+      color={color}
+      className={`board-token token-${color} ${isSelectable ? "is-selectable" : ""} ${isUserTurnToken ? "is-user-turn-token" : ""}`}
       width={100}
       height={125}
-      draggable={false}
     />
   );
   const markerContent = (
@@ -3144,13 +3234,11 @@ function BoardToken({
 function HouseToken({ color, isSelectable, showChoiceRing = false, onSelect }) {
   const pressHandlers = useImmediatePress(onSelect, !isSelectable);
   const tokenImage = (
-    <img
-      className={`house-token ${isSelectable ? "is-selectable" : ""}`}
-      src={TOKEN_ASSETS[color]}
-      alt=""
+    <TokenPin
+      color={color}
+      className={`house-token token-${color} ${isSelectable ? "is-selectable" : ""}`}
       width={100}
       height={125}
-      draggable={false}
     />
   );
   const markerContent = (
@@ -3682,14 +3770,12 @@ function LudoBoard({
         </div>
 
         {capturedTokenAnimations.map((animation) => (
-          <img
+          <TokenPin
             key={animation.id}
-            className="captured-token-overlay"
-            src={TOKEN_ASSETS[animation.color]}
-            alt=""
+            color={animation.color}
+            className={`captured-token-overlay token-${animation.color}`}
             width={100}
             height={125}
-            draggable={false}
             style={{
               left: `${animation.position.left}%`,
               top: `${animation.position.top}%`,
@@ -4730,11 +4816,11 @@ function MatchResultDialog({
 
         <div className="match-result-winner-card">
           <div className="match-result-goti-wrap">
-            <img
-              className="match-result-goti"
-              src={TOKEN_ASSETS[winnerColor] || TOKEN_ASSETS.blue}
-              alt=""
-              draggable={false}
+            <TokenPin
+              color={winnerColor || "blue"}
+              className={`match-result-goti token-${winnerColor || "blue"}`}
+              width={100}
+              height={125}
             />
             <span className="match-result-winner-badge">Winner</span>
           </div>
