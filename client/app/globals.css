@@ -3147,7 +3147,7 @@ img {
   --board-center-span: calc(var(--board-cell-size) * 3);
   --board-line: clamp(1px, 0.055rem, 2px);
   --goti-size: calc(100% / 15 * 0.72);
-  --board-path-goti-size: calc(100cqw / 15 * 0.58);
+  --board-path-goti-size: calc(100cqw / 15 * 0.74);
   --board-path-goti-ring-size: calc(100cqw / 15 * 0.62);
   --board-path-goti-choice-size: calc(100cqw / 15 * 0.70);
   position: relative;
