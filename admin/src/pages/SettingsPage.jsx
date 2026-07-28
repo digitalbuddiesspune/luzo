@@ -1,8 +1,8 @@
-import { useEffect, useState } from "react";
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useState } from "react";
 import { fetchPlatformSettings, updatePlatformSettings } from "../api/client";
 import { formatAmount } from "../utils/format";
 
-export function SettingsPage({ currency = "INR" }) {
+export const SettingsPage = forwardRef(function SettingsPage({ currency = "INR" }, ref) {
   const [fee, setFee] = useState("10");
   const [savedFee, setSavedFee] = useState(10);
   const [updatedAt, setUpdatedAt] = useState(null);
@@ -11,34 +11,33 @@ export function SettingsPage({ currency = "INR" }) {
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
 
-  useEffect(() => {
-    let cancelled = false;
-
-    async function loadSettings() {
+  const loadSettings = useCallback(async ({ silent = false } = {}) => {
+    if (!silent) {
       setLoading(true);
-      setError("");
-      try {
-        const settings = await fetchPlatformSettings();
-        if (cancelled) return;
-        setFee(String(settings.platformFeePerPlayer ?? 10));
-        setSavedFee(settings.platformFeePerPlayer ?? 10);
-        setUpdatedAt(settings.updatedAt || null);
-      } catch (loadError) {
-        if (!cancelled) {
-          setError(loadError.message || "Failed to load settings.");
-        }
-      } finally {
-        if (!cancelled) {
-          setLoading(false);
-        }
+    }
+    setError("");
+    try {
+      const settings = await fetchPlatformSettings();
+      setFee(String(settings.platformFeePerPlayer ?? 10));
+      setSavedFee(settings.platformFeePerPlayer ?? 10);
+      setUpdatedAt(settings.updatedAt || null);
+    } catch (loadError) {
+      setError(loadError.message || "Failed to load settings.");
+      throw loadError;
+    } finally {
+      if (!silent) {
+        setLoading(false);
       }
     }
-
-    loadSettings();
-    return () => {
-      cancelled = true;
-    };
   }, []);
+
+  useImperativeHandle(ref, () => ({
+    refresh: () => loadSettings({ silent: true }),
+  }), [loadSettings]);
+
+  useEffect(() => {
+    loadSettings().catch(() => {});
+  }, [loadSettings]);
 
   const parsedFee = Number(fee);
   const isValid = Number.isInteger(parsedFee) && parsedFee >= 0 && parsedFee <= 1_000_000;
@@ -139,4 +138,4 @@ export function SettingsPage({ currency = "INR" }) {
       </section>
     </div>
   );
-}
+});

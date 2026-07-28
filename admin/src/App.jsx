@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   fetchAdminSession,
   fetchGames,
@@ -34,7 +34,9 @@ function App() {
   const [usersPagination, setUsersPagination] = useState(null);
   const [selectedGame, setSelectedGame] = useState(null);
   const [loading, setLoading] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState("");
+  const settingsPageRef = useRef(null);
 
   const loadDashboard = useCallback(async () => {
     const [summaryData, gamesData] = await Promise.all([
@@ -189,6 +191,44 @@ function App() {
     setError("");
   };
 
+  const handleRefreshActivePage = async () => {
+    if (refreshing) return;
+
+    setRefreshing(true);
+    setError("");
+
+    try {
+      switch (activePage) {
+        case "dashboard":
+        case "platforms":
+          await loadDashboard();
+          break;
+        case "profit-loss":
+          await loadProfitLossData(
+            gamesPagination?.page ?? 1,
+            playerFilter,
+            operatorFilter,
+            dateFrom,
+            dateTo,
+          );
+          break;
+        case "settings":
+          await settingsPageRef.current?.refresh();
+          break;
+        default:
+          break;
+      }
+    } catch (loadError) {
+      if (loadError.status === 401) {
+        setAdmin(null);
+        return;
+      }
+      setError(loadError.message || "Failed to refresh page data.");
+    } finally {
+      setRefreshing(false);
+    }
+  };
+
   const handleLogout = async () => {
     await logoutAdmin();
     setAdmin(null);
@@ -256,8 +296,32 @@ function App() {
               {pageMeta.title}
             </h1>
           </div>
-          <div className="hidden items-center gap-2 sm:flex">
-            <span className="inline-flex items-center gap-1.5 rounded-full bg-[var(--accent-soft)] px-3 py-1 text-xs font-semibold text-[var(--accent)]">
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={handleRefreshActivePage}
+              disabled={refreshing}
+              className="inline-flex items-center gap-1.5 rounded-xl border border-[var(--color-line)] bg-white px-3 py-1.5 text-xs font-semibold text-[var(--color-ink)] shadow-sm transition-colors hover:bg-[#f4f7f5] disabled:cursor-not-allowed disabled:opacity-50"
+              aria-label={`Refresh ${pageMeta.title}`}
+            >
+              <svg
+                className={`h-3.5 w-3.5 ${refreshing ? "animate-spin" : ""}`}
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                aria-hidden
+              >
+                <path
+                  d="M21 12a9 9 0 1 1-2.64-6.36"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+                <path d="M21 3v6h-6" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+              {refreshing ? "Refreshing…" : "Refresh"}
+            </button>
+            <span className="hidden items-center gap-1.5 rounded-full bg-[var(--accent-soft)] px-3 py-1 text-xs font-semibold text-[var(--accent)] sm:inline-flex">
               <span className="h-1.5 w-1.5 rounded-full bg-[var(--accent)]" aria-hidden />
               Live
             </span>
@@ -325,7 +389,10 @@ function App() {
           ) : null}
 
           {activePage === "settings" ? (
-            <SettingsPage currency={summary?.currency || dashboardSummary?.currency || "INR"} />
+            <SettingsPage
+              ref={settingsPageRef}
+              currency={summary?.currency || dashboardSummary?.currency || "INR"}
+            />
           ) : null}
         </main>
       </div>
