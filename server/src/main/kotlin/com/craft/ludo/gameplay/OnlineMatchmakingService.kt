@@ -25,7 +25,8 @@ import java.time.Instant
  *
  * Invariants:
  * - Bots never persist in WAITING rooms.
- * - Failed starts mark the room FINISHED (never WAITING + bots).
+ * - Failed STARTING claims roll back to WAITING (humans only) — do not finish+recreate
+ *   on every client poll (that caused the lobby room-code loop).
  * - Lobby join never debits; players need sufficient balance to enter WAITING.
  * - Fees are reserved only after an atomic WAITING -> STARTING claim, then
  *   persisted on the room before the match becomes ACTIVE so hung starts can refund.
@@ -168,7 +169,8 @@ class OnlineMatchmakingService(
                 room.status,
                 room.ownerInstanceId,
             )
-            return finishLobbyRoom(room).then(createWaitingRoom(principal, maxPlayers, startImmediately = true))
+            // Normal wait — never startImmediately here or a failing start will recreate rooms every poll.
+            return finishLobbyRoom(room).then(createWaitingRoom(principal, maxPlayers, startImmediately = false))
         }
 
         if (room.status == RoomStatus.STARTING && room.matchId == null) {
@@ -183,14 +185,14 @@ class OnlineMatchmakingService(
                         .flatMap { started -> toJoinResponse(started, principal, maxPlayers) }
                         .switchIfEmpty(
                             Mono.defer {
-                                // Start path finished/deleted the room without emitting —
-                                // seat the player in a room that starts immediately with bots.
-                                createWaitingRoom(principal, maxPlayers, startImmediately = true)
+                                // Peer may hold the claim, or start rolled back to WAITING.
+                                // Never spawn a replacement room on empty — that is the lobby loop.
+                                respondWithCurrentLobby(principal, maxPlayers)
                             },
                         )
                         .onErrorResume { error ->
                             logStartFailure(waitingRoom, error)
-                            createWaitingRoom(principal, maxPlayers, startImmediately = true)
+                            respondWithCurrentLobby(principal, maxPlayers)
                         }
                 } else {
                     Mono.just(JoinOnlineMatchResponse(room = waitingRoom.toSummary()))
@@ -198,7 +200,20 @@ class OnlineMatchmakingService(
             }
         }
 
-        return finishLobbyRoom(room).then(createWaitingRoom(principal, maxPlayers, startImmediately = true))
+        return finishLobbyRoom(room).then(createWaitingRoom(principal, maxPlayers, startImmediately = false))
+    }
+
+    /**
+     * After a failed/empty start, keep the player on their existing lobby seat when possible.
+     * Creating a brand-new room on every poll is what causes the "new room every 2s" loop.
+     */
+    private fun respondWithCurrentLobby(
+        principal: SessionPrincipal,
+        maxPlayers: Int,
+    ): Mono<JoinOnlineMatchResponse> {
+        return findExistingPublicRoomForUser(principal.id)
+            .map { current -> JoinOnlineMatchResponse(room = current.toSummary()) }
+            .switchIfEmpty(createWaitingRoom(principal, maxPlayers, startImmediately = false))
     }
 
     private fun hydrateDeadlineIfNeeded(room: RoomDocument, now: Instant): Mono<RoomDocument> {
@@ -270,7 +285,7 @@ class OnlineMatchmakingService(
                         .flatMap { started -> toJoinResponse(started, principal, maxPlayers) }
                         .onErrorResume { error ->
                             logStartFailure(saved, error)
-                            Mono.just(JoinOnlineMatchResponse(room = saved.toSummary()))
+                            respondWithCurrentLobby(principal, maxPlayers)
                         }
                 } else {
                     Mono.just(JoinOnlineMatchResponse(room = saved.toSummary()))
@@ -331,17 +346,19 @@ class OnlineMatchmakingService(
                 }
                 startPublicRoom(saved.id)
                     .flatMap { started -> toJoinResponse(started, principal, maxPlayers) }
-                    .switchIfEmpty(Mono.just(JoinOnlineMatchResponse(room = saved.toSummary())))
+                    .switchIfEmpty(respondWithCurrentLobby(principal, maxPlayers))
                     .onErrorResume { error ->
                         logStartFailure(saved, error)
-                        Mono.just(JoinOnlineMatchResponse(room = saved.toSummary()))
+                        // Prefer the rolled-back WAITING seat over a stale pre-start summary.
+                        respondWithCurrentLobby(principal, maxPlayers)
                     }
             }
     }
 
     /**
      * Atomic WAITING -> STARTING claim with bots, then fees, then match.
-     * Failures finish the room (never return WAITING with bots).
+     * Fee/match failures roll back to WAITING (no bots) so the same lobby can retry
+     * instead of finishing and spawning a new room on every client poll.
      */
     fun startPublicRoom(roomId: String): Mono<RoomDocument> {
         return roomRepository.findById(roomId)
@@ -451,7 +468,7 @@ class OnlineMatchmakingService(
             )
             .onErrorResume { error ->
                 logStartFailure(claimed, error)
-                finishLobbyRoom(claimed).then(Mono.error(error))
+                rollbackStartingRoomToWaiting(claimed).then(Mono.error(error))
             }
             .flatMap { humanReservations ->
                 val botReservations = syntheticBotFees(
@@ -471,12 +488,55 @@ class OnlineMatchmakingService(
                     matchService.createStartedMatch(roomWithFees)
                         .then(roomRepository.findById(roomWithFees.id))
                         .onErrorResume { error ->
-                            // finishLobbyRoom refunds any persisted real reservations.
-                            finishLobbyRoom(roomWithFees)
+                            rollbackStartingRoomToWaiting(roomWithFees)
                                 .then(Mono.error(error))
                         }
                 }
             }
+    }
+
+    /**
+     * Undo a failed STARTING claim: refund any real fees, strip bots, restore WAITING.
+     * Uses a short retry delay so a hard debit failure cannot recreate rooms every poll.
+     */
+    private fun rollbackStartingRoomToWaiting(
+        room: RoomDocument,
+        retryDelayMillis: Long = 3_000L,
+    ): Mono<RoomDocument> {
+        val now = Instant.now(clock)
+        val humans = normalizeSeatColors(room.seats.filter { seat -> !seat.isBot && !seat.isAbandoned })
+        if (humans.isEmpty()) {
+            return finishLobbyRoom(room)
+        }
+
+        val realReservations = room.walletReservations.filter { reservation -> !reservation.synthetic }
+        val retryAt = now.plusMillis(retryDelayMillis.coerceAtLeast(1_000L))
+
+        log.warn(
+            "Rolling STARTING lobby back to WAITING roomId={} roomCode={} startAttemptId={} humans={} reservations={}",
+            room.id,
+            room.code,
+            room.startAttemptId,
+            humans.size,
+            realReservations.size,
+        )
+
+        return refundReservations(realReservations, room.id)
+            .then(
+                roomRepository.save(
+                    room.copy(
+                        seats = humans,
+                        status = RoomStatus.WAITING,
+                        startAttemptId = null,
+                        matchId = null,
+                        walletReservations = emptyList(),
+                        waitingDeadlineAt = retryAt,
+                        ownedWaitingDeadlineAt = retryAt,
+                        ownerInstanceId = instanceCoordinator.instanceId,
+                        updatedAt = now,
+                    ),
+                ),
+            )
     }
 
     private fun claimWaitingToStarting(prepared: RoomDocument): Mono<RoomDocument> {

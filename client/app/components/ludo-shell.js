@@ -6480,22 +6480,17 @@ function OnlineBoardPageShell({ appState, configuredMaxPlayers }) {
           }
           const stuckForMs = Date.now() - lobbyStartingSinceRef.current;
           if (stuckForMs >= ONLINE_LOBBY_STUCK_STARTING_MS) {
-            console.warn("[Ludo online lobby] Starting state stuck; leaving and rejoining", {
+            // Do not leave/recreate rooms here — that caused a lobby room-code loop.
+            // Keep polling the same seat and let the server hung-start recovery finish.
+            console.warn("[Ludo online lobby] Starting state still pending; keeping seat", {
               roomId: response.room?.id,
+              roomCode: response.room?.roomCode,
               stuckForMs,
             });
-            lobbyStartingSinceRef.current = null;
-            try {
-              await leaveOnlineRoom(sessionToken);
-            } catch {}
-            if (!cancelled) {
-              setLobbyRoom(null);
-              setStatusMessage("Lobby stuck — finding a new table...");
-              setOnlineRestartKey((value) => value + 1);
-            }
-            return;
+            setStatusMessage("Still starting match — please wait...");
+          } else {
+            setStatusMessage("Starting match...");
           }
-          setStatusMessage("Starting match...");
         } else {
           lobbyStartingSinceRef.current = null;
           const waitingDeadlineMs = response.room?.waitingDeadlineAt
