@@ -807,19 +807,8 @@ internal fun resolveTwoPlayerForfeitWinner(
     playersBeforeLeave: List<MatchPlayerState>,
     playersAfterLeave: List<MatchPlayerState>,
 ): MatchPlayerState? {
-    val activeRealHumansBeforeLeave = playersBeforeLeave.count { player ->
-        !player.isBot && !player.isEffectivelyAbandoned()
-    }
-    val remainingRealHumans = playersAfterLeave.filter { player ->
-        !player.isBot && !player.isEffectivelyAbandoned()
-    }
-
-    // Classic PvP: exactly two real humans were playing, one left → other human wins.
-    if (activeRealHumansBeforeLeave == 2 && remainingRealHumans.size == 1) {
-        return remainingRealHumans.first()
-    }
-
-    // True 2-seat match (human vs human, or human vs bot): remaining seat wins and match ends.
+    // Only true 2-seat matches forfeit immediately. Mixed human+bot 4-seat matches continue
+    // while at least one human remains.
     val activeSeatsBeforeLeave = playersBeforeLeave.count { player -> !player.isEffectivelyAbandoned() }
     val remainingActiveSeats = playersAfterLeave.filter { player -> !player.isEffectivelyAbandoned() }
     if (playersBeforeLeave.size == 2 && activeSeatsBeforeLeave == 2 && remainingActiveSeats.size == 1) {
@@ -833,12 +822,33 @@ internal fun countActiveRealHumans(players: List<MatchPlayerState>): Int {
     return players.count { player -> !player.isBot && !player.isEffectivelyAbandoned() }
 }
 
-internal fun shouldAwardHouseWin(playersAfterLeave: List<MatchPlayerState>): Boolean {
+internal fun shouldEndMatchWithNoHumans(playersAfterLeave: List<MatchPlayerState>): Boolean {
     return countActiveRealHumans(playersAfterLeave) == 0
+}
+
+internal fun shouldAwardHouseWin(playersAfterLeave: List<MatchPlayerState>): Boolean {
+    return shouldEndMatchWithNoHumans(playersAfterLeave)
+}
+
+internal fun botProgressScore(player: MatchPlayerState): Int {
+    return player.tokens.sumOf { progress -> progress.coerceAtLeast(0) }
+}
+
+/**
+ * Picks the active bot with the highest board progress. Ties break by userId for stability.
+ */
+internal fun selectWinningBot(players: List<MatchPlayerState>): MatchPlayerState? {
+    return players
+        .filter { player -> player.isBot && !player.isEffectivelyAbandoned() }
+        .maxWithOrNull(
+            compareBy<MatchPlayerState> { botProgressScore(it) }
+                .thenBy { it.userId },
+        )
 }
 
 internal data class AbandonOutcome(
     val forfeitWinner: MatchPlayerState? = null,
+    val botWinner: MatchPlayerState? = null,
     val houseWin: Boolean = false,
 )
 
@@ -851,7 +861,17 @@ internal fun resolveAbandonOutcome(
         return AbandonOutcome(forfeitWinner = forfeitWinner)
     }
 
-    return AbandonOutcome(houseWin = shouldAwardHouseWin(playersAfterLeave))
+    if (!shouldEndMatchWithNoHumans(playersAfterLeave)) {
+        return AbandonOutcome()
+    }
+
+    val botWinner = selectWinningBot(playersAfterLeave)
+    if (botWinner != null) {
+        return AbandonOutcome(botWinner = botWinner)
+    }
+
+    // No humans and no bots left (e.g. last human in an all-human match).
+    return AbandonOutcome(houseWin = true)
 }
 
 internal data class MissedTurnRegistration(
@@ -1514,6 +1534,10 @@ class MatchService(
                         )
                     }
 
+                    abandonOutcome.botWinner != null -> {
+                        finishMatchAsBotWin(abandonedMatch, abandonOutcome.botWinner, now)
+                    }
+
                     abandonOutcome.houseWin -> finishMatchAsHouseWin(abandonedMatch, now)
 
                     shouldSkipCurrentTurn(abandonedMatch) -> {
@@ -1909,12 +1933,42 @@ class MatchService(
                 )
             }
 
+            abandonOutcome.botWinner != null -> {
+                finishMatchAsBotWin(abandonedMatch, abandonOutcome.botWinner, now)
+            }
+
             abandonOutcome.houseWin -> finishMatchAsHouseWin(abandonedMatch, now)
 
             shouldSkipCurrentTurn(abandonedMatch) -> skipAbandonedCurrentPlayer(abandonedMatch, now)
 
             else -> abandonedMatch
         }
+    }
+
+    private fun finishMatchAsBotWin(
+        match: MatchDocument,
+        winningBot: MatchPlayerState,
+        now: Instant,
+    ): MatchDocument {
+        return match.copy(
+            status = MatchStatus.FINISHED,
+            phase = MatchPhase.FINISHED,
+            // Bot is shown as the match winner; wallet settlement treats synthetic bot
+            // winners as a house win so entry fees go to the platform.
+            winnerUserId = winningBot.userId,
+            winnerDisplayName = winningBot.displayName,
+            selectableTokenIndexes = emptyList(),
+            pendingNextPlayerIndex = null,
+            phaseDeadlineAt = null,
+            turnDeadlineAt = null,
+            updatedAt = now,
+            events = prependEvent(
+                match.events,
+                "System",
+                "${winningBot.displayName} won because no real players remained.",
+                now,
+            ),
+        )
     }
 
     private fun finishMatchAsHouseWin(match: MatchDocument, now: Instant): MatchDocument {
@@ -1931,7 +1985,7 @@ class MatchService(
             events = prependEvent(
                 match.events,
                 "System",
-                "Bots won because no real players remained. Entry fees went to the platform.",
+                "Match ended because no real players remained. Entry fees went to the platform.",
                 now,
             ),
         )

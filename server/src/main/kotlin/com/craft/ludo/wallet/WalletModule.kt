@@ -676,14 +676,15 @@ class WalletService(
         val potAmount = paidReservations.sumOf { it.amount }
         val confirmedExternalPotAmount = externallyDebitedReservations.sumOf { it.amount }
         if (potAmount <= 0) return Mono.empty()
-        val isHouseWinner = winnerUserId == houseUserId
+        val winnerReservation = paidReservations.lastOrNull { it.userId == winnerUserId }
+        val winnerIsSynthetic = winnerReservation?.synthetic == true
+        // Bot/synthetic winners cannot receive payouts; the platform keeps the pot.
+        val isHouseWinner = winnerUserId == houseUserId || winnerIsSynthetic
         val rakeAmount = if (isHouseWinner) {
             0L
         } else {
             calculateFlatPlatformFeeAmount(paidReservations, platformFeePerPlayer)
         }
-        val winnerReservation = paidReservations.lastOrNull { it.userId == winnerUserId }
-        val winnerIsSynthetic = winnerReservation?.synthetic == true
         val winnerUsesOperatorWallet = winnerReservation?.operatorUserId != null ||
             winnerReservation?.operatorToken != null ||
             winnerReservation?.operatorId != null
@@ -732,7 +733,6 @@ class WalletService(
             .then(
                 when {
                     isHouseWinner -> persistHouseWin(matchId, winnerLedgerPayoutAmount)
-                    winnerIsSynthetic -> Mono.empty()
                     winnerLedgerPayoutAmount <= 0 -> Mono.empty()
                     else -> {
                         enqueueWinnerExternalCreditIfNeeded(

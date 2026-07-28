@@ -1052,8 +1052,16 @@ function countActiveHumanPlayers(players = []) {
   return players.filter((player) => !player.isBot && !player.isAbandoned).length;
 }
 
+function countActivePlayers(players = []) {
+  return players.filter((player) => !player.isAbandoned).length;
+}
+
+function hasTwoPlayerMatch(match) {
+  return (match?.players ?? []).length === 2;
+}
+
 function hasTwoPlayerHumanMatch(match) {
-  return (match?.players ?? []).filter((player) => !player.isBot).length === 2;
+  return hasTwoPlayerMatch(match);
 }
 
 function didOpponentAbandonMatch(match, userPlayerId) {
@@ -1067,9 +1075,13 @@ function didOpponentAbandonMatch(match, userPlayerId) {
   );
 }
 
-function getLeaveActiveMatchMessage({ isPrivate, activeHumanCount }) {
-  if (activeHumanCount === 2) {
+function getLeaveActiveMatchMessage({ isPrivate, activeHumanCount, activePlayerCount }) {
+  if (activePlayerCount === 2) {
     return "If you leave now, your opponent wins the match.";
+  }
+
+  if (activeHumanCount === 1) {
+    return "If you leave now, the match will end and a bot will be declared the winner.";
   }
 
   return isPrivate
@@ -6286,6 +6298,7 @@ function PrivateRoomPageShell({ appState }) {
             ? getLeaveActiveMatchMessage({
                 isPrivate: true,
                 activeHumanCount: countActiveHumanPlayers(match.players),
+                activePlayerCount: countActivePlayers(match.players),
               })
             : "If you leave now, you will exit the private room and no entry fee will be deducted."
         }
@@ -7033,6 +7046,7 @@ function OnlineBoardPageShell({ appState, configuredMaxPlayers }) {
             : getLeaveActiveMatchMessage({
                 isPrivate: false,
                 activeHumanCount: countActiveHumanPlayers(match?.players),
+                activePlayerCount: countActivePlayers(match?.players),
               })
         }
         onConfirm={handleConfirmLeaveOnlineRoom}

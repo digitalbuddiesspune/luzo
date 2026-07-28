@@ -38,7 +38,7 @@ class TwoPlayerForfeitTests {
     }
 
     @Test
-    fun `awards forfeit win when only two humans play in a four seat match`() {
+    fun `does not forfeit when one of two humans leaves a four seat match with bots`() {
         val playersBeforeLeave = listOf(
             humanPlayer("player-a", "Alice"),
             humanPlayer("player-b", "Bob"),
@@ -52,9 +52,11 @@ class TwoPlayerForfeitTests {
             botPlayer("bot-yellow", "Yellow Bot"),
         )
 
-        val winner = resolveTwoPlayerForfeitWinner(playersBeforeLeave, playersAfterLeave)
-
-        assertThat(winner?.userId).isEqualTo("player-a")
+        assertThat(resolveTwoPlayerForfeitWinner(playersBeforeLeave, playersAfterLeave)).isNull()
+        val outcome = resolveAbandonOutcome(playersBeforeLeave, playersAfterLeave)
+        assertThat(outcome.forfeitWinner).isNull()
+        assertThat(outcome.botWinner).isNull()
+        assertThat(outcome.houseWin).isFalse()
     }
 
     @Test

@@ -71,7 +71,7 @@ class MissedTurnAutoLeaveTests {
     }
 
     @Test
-    fun `awards house win when last real player is removed for missed turns`() {
+    fun `awards bot win when last real player is removed for missed turns`() {
         val players = listOf(
             humanPlayer("player-a", "Alice", consecutiveMissedTurns = 2),
             botPlayer("bot-red", "Red Bot"),
@@ -87,7 +87,8 @@ class MissedTurnAutoLeaveTests {
 
         assertThat(result.autoLeft).isTrue()
         assertThat(result.abandonOutcome.forfeitWinner).isNull()
-        assertThat(result.abandonOutcome.houseWin).isTrue()
+        assertThat(result.abandonOutcome.houseWin).isFalse()
+        assertThat(result.abandonOutcome.botWinner?.userId).isIn("bot-red", "bot-yellow")
     }
 
     @Test
