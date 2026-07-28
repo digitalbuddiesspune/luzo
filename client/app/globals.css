@@ -3147,9 +3147,9 @@ img {
   --board-center-span: calc(var(--board-cell-size) * 3);
   --board-line: clamp(1px, 0.055rem, 2px);
   --goti-size: calc(100% / 15 * 0.72);
-  --board-path-goti-size: calc(100cqw / 15 * 0.52);
-  --board-path-goti-ring-size: calc(100cqw / 15 * 0.52);
-  --board-path-goti-choice-size: calc(100cqw / 15 * 0.63);
+  --board-path-goti-size: calc(100cqw / 15 * 0.58);
+  --board-path-goti-ring-size: calc(100cqw / 15 * 0.62);
+  --board-path-goti-choice-size: calc(100cqw / 15 * 0.70);
   position: relative;
   width: 100%;
   height: 100%;
@@ -3301,6 +3301,7 @@ img {
   box-shadow:
     inset 0 0 0 0.05rem rgba(255, 255, 255, 0.22),
     0 0.04rem 0.08rem rgba(0, 0, 0, 0.08);
+  background: rgba(255, 255, 255, 0.78);
   pointer-events: auto;
   z-index: 1;
 }
@@ -3336,18 +3337,38 @@ img {
 }
 
 .board-house-overlay.house-red .house-slot {
-  background: #ff1a1a;
+  border-color: #8b1810;
 }
 
 .board-house-overlay.house-green .house-slot {
-  background: #0aa54a;
+  border-color: #0b6a34;
 }
 
 .board-house-overlay.house-yellow .house-slot {
-  background: #ffca24;
+  border-color: #8a6400;
 }
 
 .board-house-overlay.house-blue .house-slot {
+  border-color: #0c4f8b;
+}
+
+.board-house-overlay.house-red .house-slot:has(.house-token-marker),
+.board-house-overlay.house-red .house-slot:has(.house-token-button) {
+  background: #ff1a1a;
+}
+
+.board-house-overlay.house-green .house-slot:has(.house-token-marker),
+.board-house-overlay.house-green .house-slot:has(.house-token-button) {
+  background: #0aa54a;
+}
+
+.board-house-overlay.house-yellow .house-slot:has(.house-token-marker),
+.board-house-overlay.house-yellow .house-slot:has(.house-token-button) {
+  background: #ffca24;
+}
+
+.board-house-overlay.house-blue .house-slot:has(.house-token-marker),
+.board-house-overlay.house-blue .house-slot:has(.house-token-button) {
   background: #188fe2;
 }
 
@@ -3441,12 +3462,13 @@ img {
 .board-token-button .token-base-ring,
 .board-token-marker .token-choice-ring,
 .board-token-button .token-choice-ring {
-  top: 92%;
+  top: 50%;
 }
 
 .board-token-marker .token-base-ring,
 .board-token-button .token-base-ring {
   width: var(--board-path-goti-ring-size);
+  height: var(--board-path-goti-ring-size);
 }
 
 .board-token-marker .token-choice-ring,
@@ -3674,17 +3696,18 @@ img {
   position: absolute;
   left: 50%;
   top: 50%;
-  width: var(--board-path-goti-size);
-  height: auto;
-  aspect-ratio: 100 / 125;
+  width: 220%;
+  height: 220%;
+  display: grid;
+  place-items: center;
   padding: 0;
   border: 0;
   background: transparent;
-  transform: translate(-50%, -92%);
-  transform-origin: 50% 92%;
-  z-index: 22;
+  transform: translate(-50%, -50%);
   touch-action: manipulation;
   overflow: visible;
+  z-index: 22;
+  pointer-events: auto;
 }
 
 .board-token-button {
@@ -3695,12 +3718,16 @@ img {
 
 .board-token-marker .board-token,
 .board-token-button .board-token {
-  position: static;
-  width: 100%;
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: var(--board-path-goti-size);
   height: auto;
-  transform: rotate(var(--token-upright-rotation, 0deg))
+  aspect-ratio: 100 / 125;
+  transform: translate(-50%, -92%)
+    rotate(var(--token-upright-rotation, 0deg))
     scale(var(--board-token-scale));
-  transform-origin: 50% 92%;
+  transform-origin: 50% var(--token-tip-y);
 }
 
 .house-token-marker .house-token,
