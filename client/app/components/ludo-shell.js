@@ -3628,6 +3628,11 @@ function LudoBoard({
     }, totalAnimationDuration);
   }, [match.players, onAnimationChange, onTokenCapture, onTokenStep]);
 
+  const animatingCapturedTokenIds = useMemo(
+    () => new Set(capturedTokenAnimations.map((animation) => animation.id)),
+    [capturedTokenAnimations],
+  );
+
   const { tokenMap, yardTokenMap } = useMemo(() => {
     const boardEntries = new Map();
     const yardEntries = {
@@ -3646,6 +3651,10 @@ function LudoBoard({
           tokenIndex,
         };
 
+        if (animatingCapturedTokenIds.has(token.id)) {
+          return;
+        }
+
         if (progress === -1) {
           yardEntries[player.color][tokenIndex] = token;
           return;
@@ -3663,7 +3672,7 @@ function LudoBoard({
       tokenMap: boardEntries,
       yardTokenMap: yardEntries,
     };
-  }, [displayPlayers]);
+  }, [displayPlayers, animatingCapturedTokenIds]);
   const shouldHighlightUserBoardTokens =
     match.currentTurnUserId === userPlayerId &&
     (match.phase === "rolling" || match.phase === "awaiting-move");
@@ -3770,17 +3779,22 @@ function LudoBoard({
         </div>
 
         {capturedTokenAnimations.map((animation) => (
-          <TokenPin
+          <span
             key={animation.id}
-            color={animation.color}
-            className={`captured-token-overlay token-${animation.color}`}
-            width={100}
-            height={125}
+            className="captured-token-marker"
             style={{
               left: `${animation.position.left}%`,
               top: `${animation.position.top}%`,
             }}
-          />
+          >
+            <span className="token-base-ring" aria-hidden="true" />
+            <TokenPin
+              color={animation.color}
+              className={`captured-token-overlay token-${animation.color}`}
+              width={100}
+              height={125}
+            />
+          </span>
         ))}
       </div>
     </div>

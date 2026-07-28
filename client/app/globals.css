@@ -3735,8 +3735,31 @@ img {
   z-index: 2;
 }
 
+.captured-token-marker {
+  position: absolute;
+  width: calc(100cqw / 15 * 2.2);
+  height: calc(100cqw / 15 * 2.2);
+  display: grid;
+  place-items: center;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+  z-index: 25;
+  overflow: visible;
+  transition:
+    left 70ms linear,
+    top 70ms linear;
+}
+
+.captured-token-marker .token-base-ring {
+  top: 50%;
+  width: var(--board-path-goti-ring-size);
+  height: var(--board-path-goti-ring-size);
+}
+
 .captured-token-overlay {
   position: absolute;
+  left: 50%;
+  top: 50%;
   display: block;
   width: var(--board-path-goti-size);
   height: auto;
@@ -3745,13 +3768,8 @@ img {
   transform: translate(-50%, -92%)
     rotate(var(--token-upright-rotation, 0deg));
   transform-origin: 50% 92%;
-  z-index: 25;
-  pointer-events: none;
   filter: drop-shadow(0 0.08rem 0.12rem rgba(0, 0, 0, 0.38))
     drop-shadow(0 0.02rem 0.04rem rgba(0, 0, 0, 0.22));
-  transition:
-    left 70ms linear,
-    top 70ms linear;
 }
 
 .stack-1 {
