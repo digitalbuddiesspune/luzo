@@ -26,7 +26,9 @@ import java.time.Instant
  * Invariants:
  * - Bots never persist in WAITING rooms.
  * - Failed starts mark the room FINISHED (never WAITING + bots).
- * - Fees are reserved only after an atomic WAITING -> STARTING claim.
+ * - Lobby join never debits; players need sufficient balance to enter WAITING.
+ * - Fees are reserved only after an atomic WAITING -> STARTING claim, then
+ *   persisted on the room before the match becomes ACTIVE so hung starts can refund.
  */
 @Service
 class OnlineMatchmakingService(
@@ -61,12 +63,15 @@ class OnlineMatchmakingService(
             requestedMaxPlayers,
             maxPlayers,
         )
-        return instanceCoordinator.withLock("online-join", principal.id) {
-            joinUnlocked(principal, maxPlayers)
-        }
-            .switchIfEmpty(
-                Mono.delay(Duration.ofMillis(250))
-                    .then(joinUnlocked(principal, maxPlayers)),
+        return walletService.requireSufficientBalance(principal.id, onlineEntryFee)
+            .then(
+                instanceCoordinator.withLock("online-join", principal.id) {
+                    joinUnlocked(principal, maxPlayers)
+                }
+                    .switchIfEmpty(
+                        Mono.delay(Duration.ofMillis(250))
+                            .then(joinUnlocked(principal, maxPlayers)),
+                    ),
             )
     }
 
@@ -437,7 +442,13 @@ class OnlineMatchmakingService(
             claimed.seats.count { it.isBot },
         )
 
-        return reserveEntryFeesForSeats(humans, claimed.id, claimed.entryFee, claimed.startAttemptId)
+        // Soft re-check before debit so a player who emptied their wallet while waiting
+        // is not charged mid-start and left stuck in STARTING.
+        return Flux.fromIterable(humans)
+            .concatMap { seat -> walletService.requireSufficientBalance(seat.userId, claimed.entryFee) }
+            .then(
+                reserveEntryFeesForSeats(humans, claimed.id, claimed.entryFee, claimed.startAttemptId),
+            )
             .onErrorResume { error ->
                 logStartFailure(claimed, error)
                 finishLobbyRoom(claimed).then(Mono.error(error))
@@ -447,17 +458,24 @@ class OnlineMatchmakingService(
                     claimed.seats.filter { it.isBot },
                     claimed.entryFee,
                 )
-                matchService.createStartedMatch(
+                val allReservations = humanReservations + botReservations
+                val now = Instant.now(clock)
+                // Persist fees on the STARTING room before match creation so hung-start
+                // recovery can refund if createStartedMatch never completes.
+                roomRepository.save(
                     claimed.copy(
-                        walletReservations = humanReservations + botReservations,
+                        walletReservations = allReservations,
+                        updatedAt = now,
                     ),
-                )
-                    .then(roomRepository.findById(claimed.id))
-                    .onErrorResume { error ->
-                        refundReservations(humanReservations, claimed.id)
-                            .then(finishLobbyRoom(claimed))
-                            .then(Mono.error(error))
-                    }
+                ).flatMap { roomWithFees ->
+                    matchService.createStartedMatch(roomWithFees)
+                        .then(roomRepository.findById(roomWithFees.id))
+                        .onErrorResume { error ->
+                            // finishLobbyRoom refunds any persisted real reservations.
+                            finishLobbyRoom(roomWithFees)
+                                .then(Mono.error(error))
+                        }
+                }
             }
     }
 
@@ -619,36 +637,48 @@ class OnlineMatchmakingService(
     private fun leaveLobby(room: RoomDocument, userId: String): Mono<Void> {
         val now = Instant.now(clock)
         val remaining = room.seats.filter { it.userId != userId && !it.isBot }
-        return if (remaining.isEmpty()) {
-            roomRepository.delete(room).then()
-        } else {
-            val wasStarting = room.status == RoomStatus.STARTING
-            val existingDeadline = room.effectiveWaitingDeadlineAt()
-            // STARTING claims clear the deadline; restore an immediate due so remaining
-            // players still get a bot-filled match instead of waiting another full lobby.
-            val nextDeadline = when {
-                wasStarting || existingDeadline == null -> now
-                else -> existingDeadline
+        val wasStarting = room.status == RoomStatus.STARTING
+        val realReservations = room.walletReservations.filter { reservation -> !reservation.synthetic }
+        // If fees were already taken during STARTING but the match never went ACTIVE, refund.
+        val refundBeforeLeave =
+            if (wasStarting && realReservations.isNotEmpty() && room.matchId == null) {
+                refundReservations(realReservations, room.id)
+            } else {
+                Mono.empty()
             }
-            roomRepository.save(
-                room.copy(
-                    seats = normalizeSeatColors(remaining),
-                    status = RoomStatus.WAITING,
-                    startAttemptId = null,
-                    // Strip any accidental bots when leaving a STARTING claim.
-                    walletReservations = emptyList(),
-                    waitingDeadlineAt = nextDeadline,
-                    ownedWaitingDeadlineAt = nextDeadline,
-                    updatedAt = now,
-                ),
-            ).then()
-        }
+
+        return refundBeforeLeave.then(
+            if (remaining.isEmpty()) {
+                roomRepository.delete(room).then()
+            } else {
+                val existingDeadline = room.effectiveWaitingDeadlineAt()
+                // STARTING claims clear the deadline; restore an immediate due so remaining
+                // players still get a bot-filled match instead of waiting another full lobby.
+                val nextDeadline = when {
+                    wasStarting || existingDeadline == null -> now
+                    else -> existingDeadline
+                }
+                roomRepository.save(
+                    room.copy(
+                        seats = normalizeSeatColors(remaining),
+                        status = RoomStatus.WAITING,
+                        startAttemptId = null,
+                        // Strip any accidental bots when leaving a STARTING claim.
+                        walletReservations = emptyList(),
+                        waitingDeadlineAt = nextDeadline,
+                        ownedWaitingDeadlineAt = nextDeadline,
+                        updatedAt = now,
+                    ),
+                ).then()
+            },
+        )
     }
 
     /**
      * Recover a hung STARTING room so the match can still start with bots.
-     * Rooms with real wallet debits already in flight are finished (safer than double-charge).
-     * Hung claims with no real reservations roll back to WAITING and retry start immediately.
+     * Rooms with real wallet debits are refunded then finished (never leave players charged
+     * without an ACTIVE match). Hung claims with no real reservations roll back to WAITING
+     * and retry start immediately.
      */
     private fun recoverHungStartingRoom(room: RoomDocument): Mono<Void> {
         val now = Instant.now(clock)
@@ -657,15 +687,18 @@ class OnlineMatchmakingService(
             return roomRepository.delete(room).then()
         }
 
-        val hasRealReservation = room.walletReservations.any { reservation -> !reservation.synthetic }
-        if (hasRealReservation) {
+        val realReservations = room.walletReservations.filter { reservation -> !reservation.synthetic }
+        if (realReservations.isNotEmpty()) {
             log.warn(
-                "Finishing hung online STARTING room with reservations roomId={} roomCode={} startAttemptId={}",
+                "Refunding and finishing hung online STARTING room with reservations roomId={} roomCode={} startAttemptId={} reservations={}",
                 room.id,
                 room.code,
                 room.startAttemptId,
+                realReservations.size,
             )
-            return finishLobbyRoom(room).then()
+            return refundReservations(realReservations, room.id)
+                .then(finishLobbyRoom(room.copy(walletReservations = emptyList())))
+                .then()
         }
 
         log.warn(
@@ -701,15 +734,19 @@ class OnlineMatchmakingService(
         if (room.matchId != null && room.status == RoomStatus.ACTIVE) {
             return Mono.just(room)
         }
-        return roomRepository.save(
-            room.copy(
-                status = RoomStatus.FINISHED,
-                startAttemptId = null,
-                seats = normalizeSeatColors(room.seats.filter { !it.isBot && !it.isAbandoned }),
-                walletReservations = emptyList(),
-                updatedAt = Instant.now(clock),
-            ),
-        )
+        val realReservations = room.walletReservations.filter { reservation -> !reservation.synthetic }
+        return refundReservations(realReservations, room.id)
+            .then(
+                roomRepository.save(
+                    room.copy(
+                        status = RoomStatus.FINISHED,
+                        startAttemptId = null,
+                        seats = normalizeSeatColors(room.seats.filter { !it.isBot && !it.isAbandoned }),
+                        walletReservations = emptyList(),
+                        updatedAt = Instant.now(clock),
+                    ),
+                ),
+            )
     }
 
     private fun settleAndMarkRoomFinished(room: RoomDocument, match: MatchDocument): Mono<RoomDocument> {

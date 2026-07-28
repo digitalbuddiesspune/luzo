@@ -109,6 +109,19 @@ class ApiRequestError extends Error {
   }
 }
 
+export function isInsufficientBalanceError(error) {
+  const status = error?.details?.status;
+  const message = String(error?.message || "").toLowerCase();
+  return (
+    status === 402 ||
+    message.includes("insufficient wallet balance") ||
+    message.includes("insufficient balance")
+  );
+}
+
+/** Default online entry fee used for client-side pre-join checks. */
+export const DEFAULT_ONLINE_ENTRY_FEE = 100;
+
 async function request(path, { method = "GET", sessionToken, body } = {}) {
   logCorsRequest(path, method);
 

@@ -28,6 +28,8 @@ import {
   normalizeWalletResponse,
   rollMatchDice,
   startPrivateRoom as startPrivateRoomRequest,
+  isInsufficientBalanceError,
+  DEFAULT_ONLINE_ENTRY_FEE,
   subscribeOperatorGatewayLogs,
   submitMatchMove,
   toWebSocketUrl,
@@ -4519,6 +4521,10 @@ function WaitingLobbyScreen({
           </strong>
         </div>
       </section>
+      <p className="online-lobby-fee-note">
+        Entry fee is charged only when the match starts. Waiting in lobby does not
+        deduct coins.
+      </p>
 
       <section className="waiting-lobby-panel online-waiting-panel">
         <div className="waiting-lobby-kicker-row">
@@ -4691,71 +4697,19 @@ function ConfirmDialog({
   );
 }
 
-function formatMatchDuration(totalSeconds) {
-  const safeSeconds = Math.max(0, Math.floor(totalSeconds || 0));
-  const minutes = Math.floor(safeSeconds / 60);
-  const seconds = safeSeconds % 60;
-  return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
-}
-
-function computeMatchResultStats(match, winnerId) {
+function computeMatchResultSummary(match, winnerId) {
   const winner = match.players.find((player) => player.id === winnerId);
-  const winnerName = winner?.name || match.winnerDisplayName || "";
-  const winnerEvents = (match.events || []).filter(
-    (event) => event.actor === winnerName,
-  );
-  const totalMoves = winnerEvents.filter((event) =>
-    /opened token|moved token/i.test(event.detail || ""),
-  ).length;
-  const productiveMoves = winnerEvents.filter((event) =>
-    /opened token|moved token|Captured|reached home/i.test(event.detail || ""),
-  ).length;
-  const finishedTokens =
-    winner?.tokens?.filter((progress) => progress >= FINISHED_PROGRESS).length ??
-    0;
   const isForfeitWin = (match.events || []).some((event) =>
     /opponent left the 2-player match|won because the opponent left/i.test(
       event.detail || "",
     ),
   );
-  const accuracy =
-    isForfeitWin && totalMoves <= 0
-      ? 100
-      : totalMoves <= 0
-        ? Math.min(100, Math.round((finishedTokens / 4) * 100) || 100)
-        : Math.min(
-            100,
-            Math.max(
-              40,
-              Math.round(
-                ((productiveMoves + finishedTokens * 2) /
-                  Math.max(totalMoves + finishedTokens, 1)) *
-                  50,
-              ),
-            ),
-          );
-  const startedAt = match.createdAt
-    ? new Date(match.createdAt).getTime()
-    : null;
-  const endedAt = match.updatedAt
-    ? new Date(match.updatedAt).getTime()
-    : Date.now();
-  const durationSeconds =
-    startedAt && Number.isFinite(startedAt)
-      ? Math.max(1, Math.round((endedAt - startedAt) / 1000))
-      : Math.max(1, (match.events?.length || 1) * 8);
-  const playerPosition =
-    Math.max(
-      1,
-      match.players.findIndex((player) => player.id === winnerId) + 1,
-    ) || 1;
 
   return {
     winner,
-    playerPosition,
-    totalMoves,
-    accuracy,
-    durationLabel: formatMatchDuration(durationSeconds),
+    winnerName:
+      winner?.name || match.winnerDisplayName || "Winner",
+    winnerColor: winner?.color || "blue",
     potAmount: match.pot ?? 0,
     isForfeitWin,
   };
@@ -4792,10 +4746,7 @@ function MatchResultDialog({
   }
 
   const didWin = match.winnerId === userPlayerId;
-  const stats = computeMatchResultStats(match, match.winnerId);
-  const winnerColor = stats.winner?.color || "blue";
-  const winnerName =
-    stats.winner?.name || match.winnerDisplayName || `Player ${stats.playerPosition}`;
+  const summary = computeMatchResultSummary(match, match.winnerId);
 
   return (
     <div
@@ -4808,22 +4759,20 @@ function MatchResultDialog({
         aria-modal="true"
         aria-label={didWin ? "You won the match" : "Match finished"}
       >
-        <img
-          className="match-result-empty-art"
-          src="/assets/empty.png"
-          alt=""
-          draggable={false}
-        />
-
-        <div className="match-result-confetti" aria-hidden="true">
-          {Array.from({ length: 18 }, (_, index) => (
-            <span key={index} className={`match-result-confetti-bit bit-${index % 6}`} />
-          ))}
-        </div>
+        {didWin ? (
+          <div className="match-result-confetti" aria-hidden="true">
+            {Array.from({ length: 18 }, (_, index) => (
+              <span
+                key={index}
+                className={`match-result-confetti-bit bit-${index % 6}`}
+              />
+            ))}
+          </div>
+        ) : null}
 
         <div className="match-result-hero">
           <div className="match-result-crown" aria-hidden="true">
-            ♛
+            {didWin ? "♛" : "✦"}
           </div>
           <div className="match-result-ribbon">
             <strong>{didWin ? "YOU WON!" : "GAME OVER"}</strong>
@@ -4833,62 +4782,32 @@ function MatchResultDialog({
           </p>
           <p className="match-result-subtitle">
             {didWin
-              ? stats.isForfeitWin
+              ? summary.isForfeitWin
                 ? "Opponent left — you are the winner!"
-                : "You are the Ludo King!"
-              : `${winnerName} won the match`}
+                : "You claimed the pot."
+              : `${summary.winnerName} won the match`}
           </p>
         </div>
 
         <div className="match-result-winner-card">
           <div className="match-result-goti-wrap">
             <TokenPin
-              color={winnerColor || "blue"}
-              className={`match-result-goti token-${winnerColor || "blue"}`}
+              color={summary.winnerColor}
+              className={`match-result-goti token-${summary.winnerColor}`}
               width={100}
               height={125}
             />
             <span className="match-result-winner-badge">Winner</span>
           </div>
           <div className="match-result-winner-copy">
-            <span className="match-result-player-label">Player Position</span>
-            <strong>Player {stats.playerPosition}</strong>
-            <span className="match-result-player-name">{winnerName}</span>
+            <span className="match-result-player-label">Winner</span>
+            <strong className="match-result-player-name">
+              {summary.winnerName}
+            </strong>
             <div className="match-result-pot-chip">
               <img src="/assets/MainCoinIcon.png" alt="" draggable={false} />
-              <span>Pot {formatCurrency(stats.potAmount)}</span>
+              <span>Pot {formatCurrency(summary.potAmount)}</span>
             </div>
-          </div>
-        </div>
-
-        <div className="match-result-stats-grid">
-          <div className="match-result-stat">
-            <span className="match-result-stat-icon" aria-hidden="true">
-              🏆
-            </span>
-            <span className="match-result-stat-label">Rank</span>
-            <strong>{didWin ? "#1" : "#2"}</strong>
-          </div>
-          <div className="match-result-stat">
-            <span className="match-result-stat-icon" aria-hidden="true">
-              🎲
-            </span>
-            <span className="match-result-stat-label">Total Moves</span>
-            <strong>{stats.totalMoves}</strong>
-          </div>
-          <div className="match-result-stat">
-            <span className="match-result-stat-icon" aria-hidden="true">
-              ◎
-            </span>
-            <span className="match-result-stat-label">Accuracy</span>
-            <strong>{stats.accuracy}%</strong>
-          </div>
-          <div className="match-result-stat">
-            <span className="match-result-stat-icon" aria-hidden="true">
-              ⏱
-            </span>
-            <span className="match-result-stat-label">Game Time</span>
-            <strong>{stats.durationLabel}</strong>
           </div>
         </div>
 
@@ -5270,7 +5189,13 @@ function navigateToHref(router, href, { replace = false } = {}) {
 
 function navigateToMenu(router) {
   // Always replace so browser Back does not re-enter /play/* and auto-start a match.
-  navigateToHref(router, PANEL_ROUTES.menu, { replace: true });
+  // Prefer a hard navigation so leave/lobby exits never leave the player stuck on /play/*.
+  const homeHref = withOperatorLaunchParams(PANEL_ROUTES.menu);
+  if (typeof window !== "undefined") {
+    window.location.replace(homeHref);
+    return;
+  }
+  router?.replace?.(homeHref);
 }
 
 function resolveLudoExitUrl() {
@@ -5935,6 +5860,15 @@ function PrivateRoomPageShell({ appState }) {
 
       setStatusMessage("Creating private room...");
       const activeSession = await ensureActiveSession(displayName);
+      const walletOverview = await fetchWalletOverview(activeSession.sessionToken);
+      const nextWallet = normalizeWalletResponse(walletOverview);
+      setWallet(nextWallet);
+      if ((nextWallet.availableBalance ?? 0) < parsedEntryFee) {
+        setStatusMessage(
+          `Insufficient wallet balance. You need ${parsedEntryFee} coins to create this room. Current balance: ${nextWallet.availableBalance ?? 0}.`,
+        );
+        return;
+      }
       const createdRoom = await createPrivateRoomRequest(
         activeSession.sessionToken,
         {
@@ -6028,6 +5962,7 @@ function PrivateRoomPageShell({ appState }) {
 
   async function handleConfirmLeaveRoom() {
     if (!session?.sessionToken) {
+      navigateToMenu(router);
       return;
     }
 
@@ -6037,13 +5972,12 @@ function PrivateRoomPageShell({ appState }) {
       isLeavingRoomRef.current = true;
       setStatusMessage("Leaving room...");
       await leavePrivateRoom(session.sessionToken);
+    } catch (error) {
+      // Room may already be gone; still send the player home.
+      setStatusMessage(error.message || "Leaving room...");
+    } finally {
       setIsLeaveConfirmOpen(false);
       navigateToMenu(router);
-    } catch (error) {
-      setIsLeavingRoom(false);
-      isLeavingRoomRef.current = false;
-      setStatusMessage(error.message || "Unable to leave the room.");
-      setIsLeaveConfirmOpen(false);
     }
   }
 
@@ -6587,6 +6521,13 @@ function OnlineBoardPageShell({ appState, configuredMaxPlayers }) {
           setStatusMessage(
             error.message || "Unable to connect to the game server.",
           );
+          // Do not keep retrying when the player cannot afford the entry fee.
+          if (isInsufficientBalanceError(error)) {
+            setLobbyRoom(null);
+            setMatch(null);
+            navigateToMenu(router);
+            return;
+          }
           lobbyPollTimeoutRef.current = window.setTimeout(() => {
             pollLobby(sessionToken);
           }, ONLINE_LOBBY_POLL_MS);
@@ -6605,7 +6546,28 @@ function OnlineBoardPageShell({ appState, configuredMaxPlayers }) {
         }
 
         setSession(activeSession);
-        await refreshWallet(activeSession.sessionToken);
+        const walletOverview = await fetchWalletOverview(
+          activeSession.sessionToken,
+        );
+        const nextWallet = normalizeWalletResponse(walletOverview);
+        if (!cancelled) {
+          setWallet(nextWallet);
+        }
+
+        const entryFee = DEFAULT_ONLINE_ENTRY_FEE;
+        if ((nextWallet.availableBalance ?? 0) < entryFee) {
+          if (!cancelled) {
+            setIsOnlineBootstrapping(false);
+            setLobbyRoom(null);
+            setMatch(null);
+            setStatusMessage(
+              `Insufficient wallet balance. You need ${entryFee} coins to join. Current balance: ${nextWallet.availableBalance ?? 0}.`,
+            );
+            navigateToMenu(router);
+          }
+          return;
+        }
+
         await pollLobby(activeSession.sessionToken);
         await refreshWallet(activeSession.sessionToken);
       } catch (error) {
@@ -6951,6 +6913,7 @@ function OnlineBoardPageShell({ appState, configuredMaxPlayers }) {
 
   async function handleConfirmLeaveOnlineRoom() {
     if (!session?.sessionToken) {
+      navigateToMenu(router);
       return;
     }
 
@@ -6960,24 +6923,14 @@ function OnlineBoardPageShell({ appState, configuredMaxPlayers }) {
       isLeavingOnlineRoomRef.current = true;
       setStatusMessage(lobbyRoom ? "Leaving lobby..." : "Leaving room...");
       await leaveOnlineRoom(session.sessionToken);
-      setIsLeaveConfirmOpen(false);
-      navigateToMenu(router);
     } catch (error) {
-      if (error.message?.toLowerCase().includes("not found for user")) {
-        setIsLeaveConfirmOpen(false);
-        navigateToMenu(router);
-        return;
-      }
-
-      setIsLeavingOnlineRoom(false);
-      isLeavingOnlineRoomRef.current = false;
-      setStatusMessage(
-        error.message ||
-          (lobbyRoom
-            ? "Unable to leave the lobby."
-            : "Unable to leave the room."),
-      );
+      // Room/lobby may already be gone; still send the player home.
+      setStatusMessage(error.message || "Leaving...");
+    } finally {
       setIsLeaveConfirmOpen(false);
+      setLobbyRoom(null);
+      setMatch(null);
+      navigateToMenu(router);
     }
   }
 

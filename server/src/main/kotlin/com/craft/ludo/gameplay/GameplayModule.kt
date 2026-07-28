@@ -2265,44 +2265,49 @@ class LobbyService(
                     val displayName = normalizeRequestedDisplayName(request.displayName, principal.displayName)
                     val roomName = normalizeRequestedRoomName(request.roomName)
                     val entryFee = normalizeRequestedEntryFee(request.entryFee, onlineEntryFee)
-                    val room = RoomDocument(
-                        mode = RoomMode.PRIVATE_FRIENDS,
-                        status = RoomStatus.WAITING,
-                        maxPlayers = privateRoomMaxPlayers,
-                        entryFee = entryFee,
-                        roomName = roomName,
-                        hostUserId = principal.id,
-                        ownerInstanceId = instanceCoordinator.instanceId,
-                        createdAt = now,
-                        updatedAt = now,
-                        seats = normalizeSeatColors(
-                            listOf(
-                                RoomSeat(
-                                    userId = principal.id,
-                                    displayName = displayName,
-                                    color = "",
-                                    isBot = false,
-                                    joinedAt = now,
-                                    ipAddress = principal.ipAddress,
-                                    operatorUserId = principal.operatorUserId,
-                                    operatorId = principal.operatorId,
-                                ),
-                            ),
-                        ),
-                    )
+                    walletService.requireSufficientBalance(principal.id, entryFee)
+                        .then(
+                            Mono.defer {
+                                val room = RoomDocument(
+                                    mode = RoomMode.PRIVATE_FRIENDS,
+                                    status = RoomStatus.WAITING,
+                                    maxPlayers = privateRoomMaxPlayers,
+                                    entryFee = entryFee,
+                                    roomName = roomName,
+                                    hostUserId = principal.id,
+                                    ownerInstanceId = instanceCoordinator.instanceId,
+                                    createdAt = now,
+                                    updatedAt = now,
+                                    seats = normalizeSeatColors(
+                                        listOf(
+                                            RoomSeat(
+                                                userId = principal.id,
+                                                displayName = displayName,
+                                                color = "",
+                                                isBot = false,
+                                                joinedAt = now,
+                                                ipAddress = principal.ipAddress,
+                                                operatorUserId = principal.operatorUserId,
+                                                operatorId = principal.operatorId,
+                                            ),
+                                        ),
+                                    ),
+                                )
 
-                    roomRepository.save(room)
-                        .doOnNext { savedRoom ->
-                            log.info(
-                                "Ludo private lobby created roomId={} roomCode={} hostUserId={} entryFee={} maxPlayers={}",
-                                savedRoom.id,
-                                savedRoom.code,
-                                savedRoom.hostUserId,
-                                savedRoom.entryFee,
-                                savedRoom.maxPlayers,
-                            )
-                        }
-                        .flatMap { savedRoom -> buildPrivateRoomState(savedRoom, principal.sessionToken) }
+                                roomRepository.save(room)
+                                    .doOnNext { savedRoom ->
+                                        log.info(
+                                            "Ludo private lobby created roomId={} roomCode={} hostUserId={} entryFee={} maxPlayers={}",
+                                            savedRoom.id,
+                                            savedRoom.code,
+                                            savedRoom.hostUserId,
+                                            savedRoom.entryFee,
+                                            savedRoom.maxPlayers,
+                                        )
+                                    }
+                                    .flatMap { savedRoom -> buildPrivateRoomState(savedRoom, principal.sessionToken) }
+                            },
+                        )
                 }
             )
     }
@@ -2343,41 +2348,46 @@ class LobbyService(
                             )
                         }
 
-                        val now = Instant.now(clock)
-                        val updatedSeats = room.seats.toMutableList().apply {
-                            add(
-                                RoomSeat(
-                                    userId = principal.id,
-                                    displayName = normalizeRequestedDisplayName(request.displayName, principal.displayName),
-                                    color = "",
-                                    isBot = false,
-                                    joinedAt = now,
-                                    ipAddress = principal.ipAddress,
-                                    operatorUserId = principal.operatorUserId,
-                                    operatorId = principal.operatorId,
-                                ),
-                            )
-                        }
-
                         rejectSameSourceRealPlayer(room.seats, principal, room.id, room.code)
 
-                        roomRepository.save(
-                            room.copy(
-                                seats = normalizeSeatColors(updatedSeats),
-                                updatedAt = now,
-                            ),
-                        ).doOnNext { savedRoom ->
-                            log.info(
-                                "Ludo private lobby joined roomId={} roomCode={} userId={} occupiedSeats={} maxPlayers={}",
-                                savedRoom.id,
-                                savedRoom.code,
-                                principal.id,
-                                savedRoom.seats.size,
-                                savedRoom.maxPlayers,
+                        walletService.requireSufficientBalance(principal.id, room.entryFee)
+                            .then(
+                                Mono.defer {
+                                    val now = Instant.now(clock)
+                                    val updatedSeats = room.seats.toMutableList().apply {
+                                        add(
+                                            RoomSeat(
+                                                userId = principal.id,
+                                                displayName = normalizeRequestedDisplayName(request.displayName, principal.displayName),
+                                                color = "",
+                                                isBot = false,
+                                                joinedAt = now,
+                                                ipAddress = principal.ipAddress,
+                                                operatorUserId = principal.operatorUserId,
+                                                operatorId = principal.operatorId,
+                                            ),
+                                        )
+                                    }
+
+                                    roomRepository.save(
+                                        room.copy(
+                                            seats = normalizeSeatColors(updatedSeats),
+                                            updatedAt = now,
+                                        ),
+                                    ).doOnNext { savedRoom ->
+                                        log.info(
+                                            "Ludo private lobby joined roomId={} roomCode={} userId={} occupiedSeats={} maxPlayers={}",
+                                            savedRoom.id,
+                                            savedRoom.code,
+                                            principal.id,
+                                            savedRoom.seats.size,
+                                            savedRoom.maxPlayers,
+                                        )
+                                    }.flatMap { savedRoom ->
+                                        buildPrivateRoomState(savedRoom, principal.sessionToken)
+                                    }
+                                },
                             )
-                        }.flatMap { savedRoom ->
-                            buildPrivateRoomState(savedRoom, principal.sessionToken)
-                        }
                     },
             )
     }
@@ -2473,7 +2483,17 @@ class LobbyService(
                             }
                         }
 
-                        reserveEntryFeesForSeats(seatsNeedingReservation, savedPreparedRoom.id, savedPreparedRoom.entryFee)
+                        Flux.fromIterable(seatsNeedingReservation)
+                            .concatMap { seat ->
+                                walletService.requireSufficientBalance(seat.userId, savedPreparedRoom.entryFee)
+                            }
+                            .then(
+                                reserveEntryFeesForSeats(
+                                    seatsNeedingReservation,
+                                    savedPreparedRoom.id,
+                                    savedPreparedRoom.entryFee,
+                                ),
+                            )
                             .flatMap { newReservations ->
                                 val startWorkflow = roomRepository.save(
                                     savedPreparedRoom.copy(walletReservations = existingReservations + newReservations),

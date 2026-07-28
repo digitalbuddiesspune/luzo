@@ -338,6 +338,30 @@ class WalletService(
         }
     }
 
+    /**
+     * Soft balance gate used before seating a player in a lobby.
+     * Refreshes operator balance when available; never debits.
+     */
+    fun requireSufficientBalance(userId: String, amount: Long): Mono<WalletAccountDocument> {
+        require(amount > 0) { "Required balance amount must be positive." }
+
+        return refreshOperatorWalletBalance(userId)
+            .onErrorResume { ensureGuestWalletBalance(userId) }
+            .switchIfEmpty(ensureGuestWalletBalance(userId))
+            .flatMap { account ->
+                if (account.availableBalance < amount) {
+                    Mono.error(
+                        DomainException(
+                            HttpStatus.PAYMENT_REQUIRED,
+                            "Insufficient wallet balance. You need $amount coins to join. Current balance: ${account.availableBalance}.",
+                        ),
+                    )
+                } else {
+                    Mono.just(account)
+                }
+            }
+    }
+
     private fun ensureGuestWalletBalance(userId: String): Mono<WalletAccountDocument> {
         return initializeGuestWallet(userId)
             .flatMap { account ->
