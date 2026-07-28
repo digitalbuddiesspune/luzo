@@ -22,6 +22,8 @@ function App() {
   const [profitLossSection, setProfitLossSection] = useState("overview");
   const [playerFilter, setPlayerFilter] = useState("all");
   const [operatorFilter, setOperatorFilter] = useState("all");
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
   const [mobileOpen, setMobileOpen] = useState(false);
   const [summary, setSummary] = useState(null);
   const [dashboardSummary, setDashboardSummary] = useState(null);
@@ -43,11 +45,17 @@ function App() {
     setDashboardGames(gamesData.data);
   }, []);
 
-  const loadProfitLossData = useCallback(async (page = 1, filter = "all", operatorId = "all") => {
+  const loadProfitLossData = useCallback(async (
+    page = 1,
+    filter = "all",
+    operatorId = "all",
+    from = "",
+    to = "",
+  ) => {
     const [summaryData, gamesData, usersData] = await Promise.all([
-      fetchSummary(filter, operatorId),
-      fetchGames(page, 20, filter, operatorId),
-      fetchUsers(1, 20, filter, operatorId),
+      fetchSummary(filter, operatorId, from, to),
+      fetchGames(page, 20, filter, operatorId, from, to),
+      fetchUsers(1, 20, filter, operatorId, from, to),
     ]);
     setSummary(summaryData);
     setGames(gamesData.data);
@@ -57,16 +65,16 @@ function App() {
   }, []);
 
   const loadGames = useCallback(async (page = 1) => {
-    const result = await fetchGames(page, 20, playerFilter, operatorFilter);
+    const result = await fetchGames(page, 20, playerFilter, operatorFilter, dateFrom, dateTo);
     setGames(result.data);
     setGamesPagination(result.pagination);
-  }, [playerFilter, operatorFilter]);
+  }, [playerFilter, operatorFilter, dateFrom, dateTo]);
 
   const loadUsers = useCallback(async (page = 1) => {
-    const result = await fetchUsers(page, 20, playerFilter, operatorFilter);
+    const result = await fetchUsers(page, 20, playerFilter, operatorFilter, dateFrom, dateTo);
     setUsers(result.data);
     setUsersPagination(result.pagination);
-  }, [playerFilter, operatorFilter]);
+  }, [playerFilter, operatorFilter, dateFrom, dateTo]);
 
   useEffect(() => {
     let cancelled = false;
@@ -129,12 +137,17 @@ function App() {
     };
   }, [admin, loadDashboard, loadProfitLossData]);
 
-  const reloadFilteredProfitLoss = async (nextPlayerFilter, nextOperatorFilter) => {
+  const reloadFilteredProfitLoss = async (
+    nextPlayerFilter,
+    nextOperatorFilter,
+    nextDateFrom = dateFrom,
+    nextDateTo = dateTo,
+  ) => {
     setLoading(true);
     setError("");
 
     try {
-      await loadProfitLossData(1, nextPlayerFilter, nextOperatorFilter);
+      await loadProfitLossData(1, nextPlayerFilter, nextOperatorFilter, nextDateFrom, nextDateTo);
     } catch (loadError) {
       if (loadError.status === 401) {
         setAdmin(null);
@@ -148,12 +161,18 @@ function App() {
 
   const handlePlayerFilterChange = async (nextFilter) => {
     setPlayerFilter(nextFilter);
-    await reloadFilteredProfitLoss(nextFilter, operatorFilter);
+    await reloadFilteredProfitLoss(nextFilter, operatorFilter, dateFrom, dateTo);
   };
 
   const handleOperatorFilterChange = async (nextOperator) => {
     setOperatorFilter(nextOperator);
-    await reloadFilteredProfitLoss(playerFilter, nextOperator);
+    await reloadFilteredProfitLoss(playerFilter, nextOperator, dateFrom, dateTo);
+  };
+
+  const handleDateFilterChange = async (nextDateFrom, nextDateTo) => {
+    setDateFrom(nextDateFrom);
+    setDateTo(nextDateTo);
+    await reloadFilteredProfitLoss(playerFilter, operatorFilter, nextDateFrom, nextDateTo);
   };
 
   const openProfitLossForOperator = async (operatorId = "all") => {
@@ -290,6 +309,9 @@ function App() {
               onPlayerFilterChange={handlePlayerFilterChange}
               operatorFilter={operatorFilter}
               onOperatorFilterChange={handleOperatorFilterChange}
+              dateFrom={dateFrom}
+              dateTo={dateTo}
+              onDateFilterChange={handleDateFilterChange}
               operators={operators}
               summary={summary}
               games={games}

@@ -314,14 +314,43 @@ function buildSummary(games) {
   };
 }
 
-function buildMatchFilter(playerCount) {
+function buildMatchFilter(playerCount, dateFrom, dateTo) {
   const filter = { status: "FINISHED" };
 
   if (playerCount === 2 || playerCount === 4) {
     filter.$expr = { $eq: [{ $size: { $ifNull: ["$players", []] } }, playerCount] };
   }
 
+  if (dateFrom || dateTo) {
+    filter.updatedAt = {};
+
+    if (dateFrom) {
+      filter.updatedAt.$gte = dateFrom;
+    }
+
+    if (dateTo) {
+      filter.updatedAt.$lte = dateTo;
+    }
+  }
+
   return filter;
+}
+
+function formatDateFilter(date) {
+  if (!date) {
+    return null;
+  }
+
+  return date.toISOString().slice(0, 10);
+}
+
+function buildFilterMetadata({ playerCount, operatorId, dateFrom, dateTo }) {
+  return {
+    playerCount: playerCount || null,
+    operatorId: operatorId ? normalizeOperatorId(operatorId) : null,
+    dateFrom: formatDateFilter(dateFrom),
+    dateTo: formatDateFilter(dateTo),
+  };
 }
 
 function buildPagination({ page, limit, totalItems }) {
@@ -367,9 +396,9 @@ class ProfitLossService {
     ));
   }
 
-  async loadFinishedGames({ limit = 0, playerCount, operatorId } = {}) {
+  async loadFinishedGames({ limit = 0, playerCount, operatorId, dateFrom, dateTo } = {}) {
     const cursor = this.matches
-      .find(buildMatchFilter(playerCount), { projection: MATCH_PROJECTION })
+      .find(buildMatchFilter(playerCount, dateFrom, dateTo), { projection: MATCH_PROJECTION })
       .sort({ updatedAt: -1, _id: -1 });
 
     const matches = limit > 0 ? await cursor.limit(limit).toArray() : await cursor.toArray();
@@ -383,32 +412,31 @@ class ProfitLossService {
     return games.filter((game) => gameMatchesOperator(game, normalized));
   }
 
-  async listGames({ page, limit, playerCount, operatorId }) {
-    const games = await this.loadFinishedGames({ playerCount, operatorId });
+  async listGames({ page, limit, playerCount, operatorId, dateFrom, dateTo }) {
+    const games = await this.loadFinishedGames({
+      playerCount,
+      operatorId,
+      dateFrom,
+      dateTo,
+    });
     const totalItems = games.length;
     const skip = (page - 1) * limit;
 
     return {
       data: games.slice(skip, skip + limit),
       pagination: buildPagination({ page, limit, totalItems }),
-      filters: {
-        playerCount: playerCount || null,
-        operatorId: operatorId ? normalizeOperatorId(operatorId) : null,
-      },
+      filters: buildFilterMetadata({ playerCount, operatorId, dateFrom, dateTo }),
     };
   }
 
-  async getSummary({ playerCount, operatorId } = {}) {
-    const allGames = await this.loadFinishedGames({ playerCount });
+  async getSummary({ playerCount, operatorId, dateFrom, dateTo } = {}) {
+    const allGames = await this.loadFinishedGames({ playerCount, dateFrom, dateTo });
     const byOperator = buildOperatorBreakdown(allGames);
 
     if (!operatorId) {
       return {
         ...buildSummary(allGames),
-        filters: {
-          playerCount: playerCount || null,
-          operatorId: null,
-        },
+        filters: buildFilterMetadata({ playerCount, operatorId, dateFrom, dateTo }),
       };
     }
 
@@ -432,15 +460,22 @@ class ProfitLossService {
         ...safeStats,
         uniqueUsers: safeStats.uniqueUsers ?? (_userIds ? _userIds.size : 0),
       },
-      filters: {
-        playerCount: playerCount || null,
+      filters: buildFilterMetadata({
+        playerCount,
         operatorId: normalized,
-      },
+        dateFrom,
+        dateTo,
+      }),
     };
   }
 
-  async listUsers({ page, limit, playerCount, operatorId }) {
-    const games = await this.loadFinishedGames({ playerCount, operatorId });
+  async listUsers({ page, limit, playerCount, operatorId, dateFrom, dateTo }) {
+    const games = await this.loadFinishedGames({
+      playerCount,
+      operatorId,
+      dateFrom,
+      dateTo,
+    });
     const userStats = new Map();
 
     for (const game of games) {
@@ -461,10 +496,7 @@ class ProfitLossService {
     return {
       data: users.slice(skip, skip + limit),
       pagination: buildPagination({ page, limit, totalItems }),
-      filters: {
-        playerCount: playerCount || null,
-        operatorId: operatorId ? normalizeOperatorId(operatorId) : null,
-      },
+      filters: buildFilterMetadata({ playerCount, operatorId, dateFrom, dateTo }),
     };
   }
 }

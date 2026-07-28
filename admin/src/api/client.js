@@ -83,7 +83,7 @@ async function authRequest(path, options = {}) {
   return response.json();
 }
 
-function withFilters(params, playerCount, operatorId) {
+function withFilters(params, playerCount, operatorId, dateFrom, dateTo) {
   const next = { ...params };
 
   if (playerCount === 2 || playerCount === 4) {
@@ -94,19 +94,46 @@ function withFilters(params, playerCount, operatorId) {
     next.operatorId = operatorId;
   }
 
+  if (dateFrom) {
+    next.dateFrom = dateFrom;
+  }
+
+  if (dateTo) {
+    next.dateTo = dateTo;
+  }
+
   return next;
 }
 
-export function fetchSummary(playerCount = "all", operatorId = "all") {
-  return request("/summary", withFilters({}, playerCount, operatorId));
+export function fetchSummary(
+  playerCount = "all",
+  operatorId = "all",
+  dateFrom = "",
+  dateTo = "",
+) {
+  return request("/summary", withFilters({}, playerCount, operatorId, dateFrom, dateTo));
 }
 
-export function fetchGames(page = 1, limit = 20, playerCount = "all", operatorId = "all") {
-  return request("/games", withFilters({ page, limit }, playerCount, operatorId));
+export function fetchGames(
+  page = 1,
+  limit = 20,
+  playerCount = "all",
+  operatorId = "all",
+  dateFrom = "",
+  dateTo = "",
+) {
+  return request("/games", withFilters({ page, limit }, playerCount, operatorId, dateFrom, dateTo));
 }
 
-export function fetchUsers(page = 1, limit = 20, playerCount = "all", operatorId = "all") {
-  return request("/users", withFilters({ page, limit }, playerCount, operatorId));
+export function fetchUsers(
+  page = 1,
+  limit = 20,
+  playerCount = "all",
+  operatorId = "all",
+  dateFrom = "",
+  dateTo = "",
+) {
+  return request("/users", withFilters({ page, limit }, playerCount, operatorId, dateFrom, dateTo));
 }
 
 export function fetchPlatformSettings() {
