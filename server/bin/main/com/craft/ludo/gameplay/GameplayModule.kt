@@ -657,6 +657,64 @@ private fun chooseBotToken(player: MatchPlayerState, movableTokenIndexes: List<I
     } ?: movableTokenIndexes.first()
 }
 
+private fun resolveTwoPlayerForfeitWinner(
+    playersBeforeLeave: List<MatchPlayerState>,
+    playersAfterLeave: List<MatchPlayerState>,
+): MatchPlayerState? {
+    // Only true 2-seat matches forfeit immediately.
+    val activeSeatsBeforeLeave = playersBeforeLeave.count { player -> !player.isEffectivelyAbandoned() }
+    val remainingActiveSeats = playersAfterLeave.filter { player -> !player.isEffectivelyAbandoned() }
+    if (playersBeforeLeave.size == 2 && activeSeatsBeforeLeave == 2 && remainingActiveSeats.size == 1) {
+        return remainingActiveSeats.first()
+    }
+    return null
+}
+
+private fun countActiveRealHumans(players: List<MatchPlayerState>): Int {
+    return players.count { player -> !player.isBot && !player.isEffectivelyAbandoned() }
+}
+
+private fun shouldEndMatchWithNoHumans(playersAfterLeave: List<MatchPlayerState>): Boolean {
+    return countActiveRealHumans(playersAfterLeave) == 0
+}
+
+private fun botProgressScore(player: MatchPlayerState): Int {
+    return player.tokens.sumOf { progress -> progress.coerceAtLeast(0) }
+}
+
+private fun selectWinningBot(players: List<MatchPlayerState>): MatchPlayerState? {
+    return players
+        .filter { player -> player.isBot && !player.isEffectivelyAbandoned() }
+        .maxWithOrNull(
+            compareBy<MatchPlayerState> { botProgressScore(it) }
+                .thenBy { it.userId },
+        )
+}
+
+private data class AbandonOutcome(
+    val forfeitWinner: MatchPlayerState? = null,
+    val botWinner: MatchPlayerState? = null,
+    val houseWin: Boolean = false,
+)
+
+private fun resolveAbandonOutcome(
+    playersBeforeLeave: List<MatchPlayerState>,
+    playersAfterLeave: List<MatchPlayerState>,
+): AbandonOutcome {
+    val forfeitWinner = resolveTwoPlayerForfeitWinner(playersBeforeLeave, playersAfterLeave)
+    if (forfeitWinner != null) {
+        return AbandonOutcome(forfeitWinner = forfeitWinner)
+    }
+    if (!shouldEndMatchWithNoHumans(playersAfterLeave)) {
+        return AbandonOutcome()
+    }
+    val botWinner = selectWinningBot(playersAfterLeave)
+    if (botWinner != null) {
+        return AbandonOutcome(botWinner = botWinner)
+    }
+    return AbandonOutcome(houseWin = true)
+}
+
 private fun randomDice(consecutiveSixCount: Int = 0): Int {
     return if (consecutiveSixCount >= 2) {
         (1..5).random()
@@ -1179,15 +1237,47 @@ class MatchService(
                         now,
                     ),
                 )
-                val updatedMatch = if (shouldSkipCurrentTurn(abandonedMatch)) {
-                    skipAbandonedCurrentPlayer(abandonedMatch, now)
-                } else {
-                    abandonedMatch
+                val abandonOutcome = resolveAbandonOutcome(match.players, updatedPlayers)
+                val updatedMatch = when {
+                    abandonOutcome.forfeitWinner != null -> {
+                        val winner = abandonOutcome.forfeitWinner
+                        abandonedMatch.copy(
+                            status = MatchStatus.FINISHED,
+                            phase = MatchPhase.FINISHED,
+                            winnerUserId = winner.userId,
+                            winnerDisplayName = winner.displayName,
+                            selectableTokenIndexes = emptyList(),
+                            pendingNextPlayerIndex = null,
+                            phaseDeadlineAt = null,
+                            turnDeadlineAt = null,
+                            events = prependEvent(
+                                abandonedMatch.events,
+                                "System",
+                                "${winner.displayName} won because the opponent left the 2-player match.",
+                                now,
+                            ),
+                        )
+                    }
+                    abandonOutcome.botWinner != null -> {
+                        finishMatchAsBotWin(abandonedMatch, abandonOutcome.botWinner, now)
+                    }
+                    abandonOutcome.houseWin -> {
+                        finishMatchAsHouseWin(abandonedMatch, now)
+                    }
+                    shouldSkipCurrentTurn(abandonedMatch) -> {
+                        skipAbandonedCurrentPlayer(abandonedMatch, now)
+                    }
+                    else -> abandonedMatch
                 }
 
                 roomRepository.save(
                     room.copy(
                         seats = updatedRoomSeats,
+                        status = if (updatedMatch.status == MatchStatus.FINISHED) {
+                            RoomStatus.FINISHED
+                        } else {
+                            room.status
+                        },
                         updatedAt = now,
                     ),
                 ).then(persistMatchTransition(updatedMatch)).then()
@@ -1305,6 +1395,50 @@ class MatchService(
             ),
             match.currentPlayerIndex + 1,
             now,
+        )
+    }
+
+    private fun finishMatchAsBotWin(
+        match: MatchDocument,
+        winningBot: MatchPlayerState,
+        now: Instant,
+    ): MatchDocument {
+        return match.copy(
+            status = MatchStatus.FINISHED,
+            phase = MatchPhase.FINISHED,
+            winnerUserId = winningBot.userId,
+            winnerDisplayName = winningBot.displayName,
+            selectableTokenIndexes = emptyList(),
+            pendingNextPlayerIndex = null,
+            phaseDeadlineAt = null,
+            turnDeadlineAt = null,
+            updatedAt = now,
+            events = prependEvent(
+                match.events,
+                "System",
+                "${winningBot.displayName} won because no real players remained.",
+                now,
+            ),
+        )
+    }
+
+    private fun finishMatchAsHouseWin(match: MatchDocument, now: Instant): MatchDocument {
+        return match.copy(
+            status = MatchStatus.FINISHED,
+            phase = MatchPhase.FINISHED,
+            winnerUserId = "house",
+            winnerDisplayName = "Platform",
+            selectableTokenIndexes = emptyList(),
+            pendingNextPlayerIndex = null,
+            phaseDeadlineAt = null,
+            turnDeadlineAt = null,
+            updatedAt = now,
+            events = prependEvent(
+                match.events,
+                "System",
+                "Match ended because no real players remained.",
+                now,
+            ),
         )
     }
 
