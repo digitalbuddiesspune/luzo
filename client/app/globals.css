@@ -3458,6 +3458,18 @@ img {
   top: 50%;
 }
 
+.house-token-marker .token-base-ring,
+.house-token-button .token-base-ring {
+  width: calc(100cqw / 15 * 0.76);
+  height: calc(100cqw / 15 * 0.76);
+  border-width: calc(100cqw / 15 * 0.12);
+}
+
+.house-token-marker .token-choice-ring,
+.house-token-button .token-choice-ring {
+  width: calc(100cqw / 15 * 0.84);
+}
+
 .board-token-marker .token-base-ring,
 .board-token-button .token-base-ring,
 .board-token-marker .token-choice-ring,
