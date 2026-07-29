@@ -1,0 +1,309 @@
+/*
+  Classic Ludo board (ported from frontend) — CSS-hardcoded nests, lanes, stars.
+  Three layers on .ludo-board-surface: base backgrounds, ::before grid, ::after nests.
+*/
+.ludo-board-surface {
+  --size-tile: calc(100% / 15);
+  --size-board: 100%;
+  --game-red: #e53935;
+  --game-green: #43a047;
+  --game-yellow: #fbc02d;
+  --game-blue: #1e88e5;
+  /* Luzo corner layout: red TL, green TR, yellow BR, blue BL */
+  --nest-top-left-bg: var(--game-red);
+  --nest-top-right-bg: var(--game-green);
+  --nest-bottom-right-bg: var(--game-yellow);
+  --nest-bottom-left-bg: var(--game-blue);
+  --nest-grid-bg: #ffffff;
+  --nest-grid-color: #1a1a1a;
+  --nest-start-bg: #ffffff;
+  --nest-size: calc(var(--size-tile) * 6);
+  /* Home yard: white pad + color frame only. Circles live on .house-slot. */
+  --nest-size-circle: calc(var(--size-tile) * 1.1);
+  --nest-container-bg: #ffffff;
+  --nest-circle-bg: transparent;
+  --start-bg: #9e9e9e;
+  --nest-size-container: calc(var(--size-tile) * 4.2);
+  --nest-container-pos: calc(var(--size-tile) * 0.9);
+
+  --nest-size-elements: var(--nest-size-container) var(--nest-size-container),
+    var(--nest-size) var(--nest-size);
+
+  --nest-increase-position: calc(var(--size-tile) * 9);
+
+  --nest-top-left: linear-gradient(var(--nest-container-bg), var(--nest-container-bg)),
+    linear-gradient(var(--nest-top-left-bg), var(--nest-top-left-bg));
+  --nest-top-left-position: var(--nest-container-pos) var(--nest-container-pos), 0 0;
+
+  --nest-top-right: linear-gradient(var(--nest-container-bg), var(--nest-container-bg)),
+    linear-gradient(var(--nest-top-right-bg), var(--nest-top-right-bg));
+  --nest-top-right-position: calc(
+        var(--nest-container-pos) + var(--nest-increase-position)
+      )
+      var(--nest-container-pos),
+    var(--nest-increase-position) 0;
+
+  --nest-bottom-left: linear-gradient(var(--nest-container-bg), var(--nest-container-bg)),
+    linear-gradient(var(--nest-bottom-left-bg), var(--nest-bottom-left-bg));
+  --nest-bottom-left-position: var(--nest-container-pos)
+      calc(var(--nest-container-pos) + var(--nest-increase-position)),
+    0 var(--nest-increase-position);
+
+  --nest-bottom-right: linear-gradient(var(--nest-container-bg), var(--nest-container-bg)),
+    linear-gradient(var(--nest-bottom-right-bg), var(--nest-bottom-right-bg));
+  --nest-bottom-right-position: calc(
+        var(--nest-container-pos) + var(--nest-increase-position)
+      )
+      calc(var(--nest-container-pos) + var(--nest-increase-position)),
+    var(--nest-increase-position) var(--nest-increase-position);
+
+  /* Para los elementos de la meta */
+  /* Correponde a los triángulos a donde llegan los tokens al final */
+  --finish-elements-size-value: calc(var(--size-tile) * 3);
+  --finish-elements-size-value-half: calc(
+    var(--finish-elements-size-value) / 2
+  );
+
+  --finish-elements-position-value: calc(var(--size-tile) * 6);
+
+  --finish-elements-position-value-half: calc(
+    var(--finish-elements-position-value) +
+      var(--finish-elements-size-value-half)
+  );
+
+  /*
+    Center diamond — single conic-gradient (no half-seam / no bleed lines).
+    Unrotated: top=green, right=yellow, bottom=blue, left=red.
+  */
+  --finish-elements: conic-gradient(
+    from -45deg at 50% 50%,
+    var(--game-green) 0deg 90deg,
+    var(--game-yellow) 90deg 180deg,
+    var(--game-blue) 180deg 270deg,
+    var(--game-red) 270deg 360deg
+  );
+
+  --finish-elements-size: var(--finish-elements-size-value)
+    var(--finish-elements-size-value);
+
+  --finish-elements-position: var(--finish-elements-position-value)
+    var(--finish-elements-position-value);
+
+  /* Para los ítems finales superior */
+  /*
+    ítems reacionados a la celdas de salida la priumera celda,
+    tiene un color diferente en este caso determinado que es una zona segura,
+    los demás colores dependen del giro del tablero...
+  */
+  --finish-row-base: calc(var(--size-tile) * 7);
+  /* Top home: white arrow cell + 5 yellow */
+  --finish-row-top: linear-gradient(#ffffff, #ffffff),
+    linear-gradient(var(--nest-top-right-bg), var(--nest-top-right-bg)),
+    linear-gradient(var(--nest-top-right-bg), var(--nest-top-right-bg)),
+    linear-gradient(var(--nest-top-right-bg), var(--nest-top-right-bg)),
+    linear-gradient(var(--nest-top-right-bg), var(--nest-top-right-bg)),
+    linear-gradient(var(--nest-top-right-bg), var(--nest-top-right-bg));
+
+  --finish-row-top-position: var(--finish-row-base) 0,
+    var(--finish-row-base) var(--size-tile),
+    var(--finish-row-base) calc(var(--size-tile) * 2),
+    var(--finish-row-base) calc(var(--size-tile) * 3),
+    var(--finish-row-base) calc(var(--size-tile) * 4),
+    var(--finish-row-base) calc(var(--size-tile) * 5);
+
+  /* Left home: white arrow cell + 5 green */
+  --finish-row-left: linear-gradient(#ffffff, #ffffff),
+    linear-gradient(var(--nest-top-left-bg), var(--nest-top-left-bg)),
+    linear-gradient(var(--nest-top-left-bg), var(--nest-top-left-bg)),
+    linear-gradient(var(--nest-top-left-bg), var(--nest-top-left-bg)),
+    linear-gradient(var(--nest-top-left-bg), var(--nest-top-left-bg)),
+    linear-gradient(var(--nest-top-left-bg), var(--nest-top-left-bg));
+
+  --finish-row-left-position: 0 var(--finish-row-base),
+    var(--size-tile) var(--finish-row-base),
+    calc(var(--size-tile) * 2) var(--finish-row-base),
+    calc(var(--size-tile) * 3) var(--finish-row-base),
+    calc(var(--size-tile) * 4) var(--finish-row-base),
+    calc(var(--size-tile) * 5) var(--finish-row-base);
+
+  /* Right home: 5 blue + white arrow cell */
+  --finish-row-right: linear-gradient(
+      var(--nest-bottom-right-bg),
+      var(--nest-bottom-right-bg)
+    ),
+    linear-gradient(var(--nest-bottom-right-bg), var(--nest-bottom-right-bg)),
+    linear-gradient(var(--nest-bottom-right-bg), var(--nest-bottom-right-bg)),
+    linear-gradient(var(--nest-bottom-right-bg), var(--nest-bottom-right-bg)),
+    linear-gradient(var(--nest-bottom-right-bg), var(--nest-bottom-right-bg)),
+    linear-gradient(#ffffff, #ffffff);
+
+  --finish-row-right-position: calc(var(--size-tile) * 9) var(--finish-row-base),
+    calc(var(--size-tile) * 10) var(--finish-row-base),
+    calc(var(--size-tile) * 11) var(--finish-row-base),
+    calc(var(--size-tile) * 12) var(--finish-row-base),
+    calc(var(--size-tile) * 13) var(--finish-row-base),
+    calc(var(--size-tile) * 14) var(--finish-row-base);
+
+  /* Bottom home: 5 red + white arrow cell */
+  --finish-bottom-right: linear-gradient(
+      var(--nest-bottom-left-bg),
+      var(--nest-bottom-left-bg)
+    ),
+    linear-gradient(var(--nest-bottom-left-bg), var(--nest-bottom-left-bg)),
+    linear-gradient(var(--nest-bottom-left-bg), var(--nest-bottom-left-bg)),
+    linear-gradient(var(--nest-bottom-left-bg), var(--nest-bottom-left-bg)),
+    linear-gradient(var(--nest-bottom-left-bg), var(--nest-bottom-left-bg)),
+    linear-gradient(#ffffff, #ffffff);
+
+  --finish-bottom-right-position: var(--finish-row-base)
+      calc(var(--size-tile) * 9),
+    var(--finish-row-base) calc(var(--size-tile) * 10),
+    var(--finish-row-base) calc(var(--size-tile) * 11),
+    var(--finish-row-base) calc(var(--size-tile) * 12),
+    var(--finish-row-base) calc(var(--size-tile) * 13),
+    var(--finish-row-base) calc(var(--size-tile) * 14);
+
+  /*
+    Luzo start cells (col,row): R(1,6) G(8,1) Y(13,8) B(6,13)
+    Star cells stay white: (6,2)(12,6)(8,12)(2,8)
+  */
+  --safe-points: linear-gradient(transparent, transparent),
+    linear-gradient(var(--nest-top-right-bg), var(--nest-top-right-bg)),
+    linear-gradient(transparent, transparent),
+    linear-gradient(var(--nest-bottom-right-bg), var(--nest-bottom-right-bg)),
+    linear-gradient(transparent, transparent),
+    linear-gradient(var(--nest-bottom-left-bg), var(--nest-bottom-left-bg)),
+    linear-gradient(transparent, transparent),
+    linear-gradient(var(--nest-top-left-bg), var(--nest-top-left-bg));
+
+  --safe-points-position: calc(var(--size-tile) * 6) calc(var(--size-tile) * 2),
+    calc(var(--size-tile) * 8) calc(var(--size-tile) * 1),
+    calc(var(--size-tile) * 12) calc(var(--size-tile) * 6),
+    calc(var(--size-tile) * 13) calc(var(--size-tile) * 8),
+    calc(var(--size-tile) * 8) calc(var(--size-tile) * 12),
+    calc(var(--size-tile) * 6) calc(var(--size-tile) * 13),
+    calc(var(--size-tile) * 2) calc(var(--size-tile) * 8),
+    calc(var(--size-tile) * 1) calc(var(--size-tile) * 6);
+
+  --board-icon-size: calc(var(--size-tile) * 0.88);
+  --board-icon-pad: calc(var(--size-tile) * 0.06);
+  --star-icon-size: calc(var(--size-tile) * 1.15);
+  --star-icon-pad: calc(var(--size-tile) * -0.075);
+
+  /* Thin outline star — light build, larger size */
+  --star-svg: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='none' stroke='%23424242' stroke-width='1.1' stroke-linejoin='round' stroke-linecap='round' d='M12 3.2l2.05 5.15 5.55.4-4.25 3.7 1.3 5.35L12 15.2l-4.65 2.6 1.3-5.35-4.25-3.7 5.55-.4z'/%3E%3C/svg%3E");
+
+  --safe-starts: var(--star-svg), var(--star-svg), var(--star-svg), var(--star-svg);
+  --safe-stars-base-size: var(--star-icon-size) var(--star-icon-size);
+  --safe-stars-size: var(--safe-stars-base-size), var(--safe-stars-base-size),
+    var(--safe-stars-base-size), var(--safe-stars-base-size);
+
+  /* Stars on (6,2)(12,6)(8,12)(2,8) */
+  --safe-starts-position: calc(var(--size-tile) * 6 + var(--star-icon-pad))
+      calc(var(--size-tile) * 2 + var(--star-icon-pad)),
+    calc(var(--size-tile) * 12 + var(--star-icon-pad))
+      calc(var(--size-tile) * 6 + var(--star-icon-pad)),
+    calc(var(--size-tile) * 8 + var(--star-icon-pad))
+      calc(var(--size-tile) * 12 + var(--star-icon-pad)),
+    calc(var(--size-tile) * 2 + var(--star-icon-pad))
+      calc(var(--size-tile) * 8 + var(--star-icon-pad));
+
+  /* Home-entry arrows: top↓ green, right← yellow, bottom↑ blue, left→ red */
+  --arrow-down: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='%2343a047' d='M11.25 4h1.5v9.5h3.25L12 20 7.999 13.5H11.25z'/%3E%3C/svg%3E");
+  --arrow-left: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='%23fbc02d' d='M20 11.25v1.5H10.5v3.25L4 12l6.5-4.001V11.25z'/%3E%3C/svg%3E");
+  --arrow-up: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='%231e88e5' d='M12.75 20h-1.5v-9.5H8L12 4l4.001 6.5H12.75z'/%3E%3C/svg%3E");
+  --arrow-right: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='%23e53935' d='M4 12.75v-1.5h9.5V8L20 12l-6.5 4.001V12.75z'/%3E%3C/svg%3E");
+
+  --start-arrows: var(--arrow-down), var(--arrow-left), var(--arrow-up),
+    var(--arrow-right);
+  --start-arrows-size: var(--board-icon-size) var(--board-icon-size),
+    var(--board-icon-size) var(--board-icon-size),
+    var(--board-icon-size) var(--board-icon-size),
+    var(--board-icon-size) var(--board-icon-size);
+
+  /* Arrow cells: (7,0) (14,7) (7,14) (0,7) */
+  --start-arrows-position: calc(var(--size-tile) * 7 + var(--board-icon-pad))
+      var(--board-icon-pad),
+    calc(var(--size-tile) * 14 + var(--board-icon-pad))
+      calc(var(--size-tile) * 7 + var(--board-icon-pad)),
+    calc(var(--size-tile) * 7 + var(--board-icon-pad))
+      calc(var(--size-tile) * 14 + var(--board-icon-pad)),
+    var(--board-icon-pad)
+      calc(var(--size-tile) * 7 + var(--board-icon-pad));
+}
+
+.ludo-board-surface {
+  background-color: var(--nest-grid-bg);
+  border-radius: 8px;
+  border: 0;
+  box-shadow:
+    0 0 0 2px #424242,
+    0 6px 18px rgba(0, 0, 0, 0.35);
+  overflow: visible;
+  background-image: var(--finish-row-top), var(--finish-row-left),
+    var(--finish-row-right), var(--finish-bottom-right), var(--safe-points);
+  background-size: var(--size-tile) var(--size-tile);
+  background-position: var(--finish-row-top-position),
+    var(--finish-row-left-position), var(--finish-row-right-position),
+    var(--finish-bottom-right-position), var(--safe-points-position);
+  background-repeat: no-repeat;
+}
+
+.ludo-board-surface::before {
+  content: "";
+  width: 100%;
+  height: 100%;
+  left: 0;
+  top: 0;
+  position: absolute;
+  border-radius: 6px;
+  background: repeating-linear-gradient(
+      to right,
+      transparent,
+      transparent calc(var(--size-tile) - 1px),
+      rgba(0, 0, 0, 0.28) calc(var(--size-tile) - 1px),
+      rgba(0, 0, 0, 0.28) var(--size-tile)
+    ),
+    repeating-linear-gradient(
+      to bottom,
+      transparent,
+      transparent calc(var(--size-tile) - 1px),
+      rgba(0, 0, 0, 0.28) calc(var(--size-tile) - 1px),
+      rgba(0, 0, 0, 0.28) var(--size-tile)
+    );
+  pointer-events: none;
+  z-index: 1;
+}
+
+.ludo-board-surface::after {
+  content: "";
+  width: 100%;
+  height: 100%;
+  left: 0;
+  top: 0;
+  position: absolute;
+  border-radius: 6px;
+  pointer-events: none;
+
+  /*
+    * Muestra los 4 elementos de salida.
+    * Los 4 elementos de llegada (puntos finales).
+    * Las estrellas + start arrows.
+  */
+  background-image: var(--safe-starts), var(--start-arrows), var(--finish-elements),
+    var(--nest-top-left), var(--nest-top-right), var(--nest-bottom-left),
+    var(--nest-bottom-right);
+
+  background-size: var(--safe-stars-size), var(--start-arrows-size),
+    var(--finish-elements-size), var(--nest-size-elements),
+    var(--nest-size-elements), var(--nest-size-elements),
+    var(--nest-size-elements);
+
+  background-position: var(--safe-starts-position), var(--start-arrows-position),
+    var(--finish-elements-position), var(--nest-top-left-position),
+    var(--nest-top-right-position), var(--nest-bottom-left-position),
+    var(--nest-bottom-right-position);
+
+  background-repeat: no-repeat;
+  z-index: 2;
+}
