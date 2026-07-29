@@ -77,8 +77,9 @@ export function ProfitLossPage({
           Profit & Loss
         </h2>
         <p className="mt-1.5 max-w-2xl text-sm leading-relaxed text-[var(--color-muted)]">
-          Real user bets, platform fee, winner payout, and per-user profit/loss. Filter by partner
-          platform or date range to see that slice.
+          Real user bets, platform fee, winner payout, and per-user profit/loss. Bot matches,
+          real player wins, and bot wins are shown in the top boxes. Filter by partner platform
+          or date range.
         </p>
       </div>
 
@@ -194,9 +195,10 @@ export function ProfitLossPage({
         </div>
       </div>
 
+      {summary ? <SummaryCards summary={summary} /> : null}
+
       {section === "overview" ? (
         <>
-          <SummaryCards summary={summary} />
           <section className="space-y-3">
             <div className="flex items-end justify-between gap-3">
               <div>

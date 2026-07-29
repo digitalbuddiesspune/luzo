@@ -289,14 +289,23 @@ function buildOperatorBreakdown(games) {
 
 function buildSummary(games) {
   const totals = games.reduce(
-    (summary, game) => ({
-      totalGames: summary.totalGames + 1,
-      totalRealIncome: summary.totalRealIncome + game.totalRealIncome,
-      totalPlatformProfit: summary.totalPlatformProfit + game.platformProfit,
-      totalWinnerPayout: summary.totalWinnerPayout + game.winnerPayout,
-      totalRealPlayers: summary.totalRealPlayers + game.realPlayerCount,
-      totalBotPlayers: summary.totalBotPlayers + game.botPlayerCount,
-    }),
+    (summary, game) => {
+      const hasBots = game.botPlayerCount > 0;
+      const humanWonVsBots = hasBots && Boolean(game.winner?.isReal);
+      const botOrHouseWon = hasBots && !humanWonVsBots;
+
+      return {
+        totalGames: summary.totalGames + 1,
+        totalRealIncome: summary.totalRealIncome + game.totalRealIncome,
+        totalPlatformProfit: summary.totalPlatformProfit + game.platformProfit,
+        totalWinnerPayout: summary.totalWinnerPayout + game.winnerPayout,
+        totalRealPlayers: summary.totalRealPlayers + game.realPlayerCount,
+        totalBotPlayers: summary.totalBotPlayers + game.botPlayerCount,
+        botMatches: summary.botMatches + (hasBots ? 1 : 0),
+        botMatchWins: summary.botMatchWins + (humanWonVsBots ? 1 : 0),
+        botMatchLosses: summary.botMatchLosses + (botOrHouseWon ? 1 : 0),
+      };
+    },
     {
       totalGames: 0,
       totalRealIncome: 0,
@@ -304,6 +313,9 @@ function buildSummary(games) {
       totalWinnerPayout: 0,
       totalRealPlayers: 0,
       totalBotPlayers: 0,
+      botMatches: 0,
+      botMatchWins: 0,
+      botMatchLosses: 0,
     },
   );
 
@@ -446,6 +458,7 @@ class ProfitLossService {
       || emptyOperatorStats(normalized);
     const { _userIds, ...safeStats } = operatorStats;
     const filteredGames = allGames.filter((game) => gameMatchesOperator(game, normalized));
+    const filteredSummary = buildSummary(filteredGames);
 
     return {
       currency: config.walletCurrency,
@@ -455,7 +468,10 @@ class ProfitLossService {
       totalPlatformProfit: safeStats.totalPlatformProfit ?? 0,
       totalWinnerPayout: safeStats.totalWinnerPayout ?? 0,
       totalRealPlayers: safeStats.totalSeats ?? 0,
-      totalBotPlayers: filteredGames.reduce((sum, game) => sum + game.botPlayerCount, 0),
+      totalBotPlayers: filteredSummary.totalBotPlayers,
+      botMatches: filteredSummary.botMatches,
+      botMatchWins: filteredSummary.botMatchWins,
+      botMatchLosses: filteredSummary.botMatchLosses,
       byOperator,
       selectedOperator: {
         ...safeStats,
