@@ -136,7 +136,7 @@ export const mockBootState = {
       },
       {
         id: "guest_bot_7",
-        name: "Meera",
+        name: "Computer",
         color: "yellow",
         isBot: true,
         tokens: [-1, -1, -1, -1],
@@ -162,7 +162,7 @@ export const mockBootState = {
       {
         id: "evt_2",
         actor: "Milan Ace",
-        detail: "captured Meera on a non-safe lane",
+        detail: "captured an opponent token on a non-safe lane",
       },
       {
         id: "evt_3",

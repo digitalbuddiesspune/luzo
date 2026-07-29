@@ -759,20 +759,40 @@ class WalletService(
                 when {
                     isHouseWinner -> persistHouseWin(matchId, winnerLedgerPayoutAmount)
                     winnerLedgerPayoutAmount <= 0 -> Mono.empty()
-                    else -> {
-                        enqueueWinnerExternalCreditIfNeeded(
-                            matchId,
-                            winnerUserId,
-                            winnerLedgerPayoutAmount,
-                            externallyDebitedReservations,
-                        )
-                            .then(persistWinnerPayout(matchId, winnerUserId, winnerLedgerPayoutAmount, roomId))
-                    }
+                    else -> persistWinnerPayout(matchId, winnerUserId, winnerLedgerPayoutAmount, roomId)
                 },
             )
             .then(persistHouseRake(matchId, rakeAmount))
 
+        // The operator credit is published only once the ledger has committed. While the
+        // publish lived inside the transaction, an unreachable broker rolled the whole
+        // settlement back, so a genuine win never reached wallet history.
         return transactionalOperator.transactional(workflow.then())
+            .then(
+                Mono.defer {
+                    if (isHouseWinner || winnerLedgerPayoutAmount <= 0) {
+                        return@defer Mono.empty<Void>()
+                    }
+
+                    enqueueWinnerExternalCreditIfNeeded(
+                        matchId,
+                        winnerUserId,
+                        winnerLedgerPayoutAmount,
+                        externallyDebitedReservations,
+                    ).onErrorResume { error ->
+                        log.error(
+                            "Operator winner credit publish failed after the payout was recorded; " +
+                                "manual replay required matchId={} winnerUserId={} amount={} reason={}",
+                            matchId,
+                            winnerUserId,
+                            winnerLedgerPayoutAmount,
+                            error.message ?: error.javaClass.simpleName,
+                            error,
+                        )
+                        Mono.empty()
+                    }
+                },
+            )
     }
 
     private fun adjustBalances(

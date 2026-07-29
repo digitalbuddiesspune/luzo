@@ -4558,7 +4558,7 @@ function WaitingLobbyScreen({
             {isStarting
               ? "Starting match..."
               : hasTimedOut
-                ? "Starting with bots"
+                ? "Preparing players..."
                 : "Table starts when ready"}
           </span>
         </div>
@@ -6497,7 +6497,7 @@ function OnlineBoardPageShell({ appState, configuredMaxPlayers }) {
           const timerElapsed =
             waitingDeadlineMs == null || waitingDeadlineMs <= Date.now();
           setStatusMessage(
-            timerElapsed ? "No opponent found — starting with bots..." : "",
+            timerElapsed ? "Preparing players..." : "",
           );
         }
 

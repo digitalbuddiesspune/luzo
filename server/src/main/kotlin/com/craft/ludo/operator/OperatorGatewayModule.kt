@@ -23,6 +23,7 @@ import org.slf4j.LoggerFactory
 import reactor.core.publisher.Flux
 import reactor.core.publisher.Mono
 import reactor.core.publisher.Sinks
+import reactor.core.scheduler.Schedulers
 import java.math.BigDecimal
 import java.time.Duration
 import java.time.Instant
@@ -386,6 +387,9 @@ class OperatorGatewayClient(
                 error,
             )
         }
+            // convertAndSend blocks until the broker acknowledges, so it must never run
+            // on an event-loop thread.
+            .subscribeOn(Schedulers.boundedElastic())
     }
 
     fun publishExistingDebitReservation(

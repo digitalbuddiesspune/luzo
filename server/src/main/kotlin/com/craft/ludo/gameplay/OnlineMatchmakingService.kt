@@ -577,7 +577,7 @@ class OnlineMatchmakingService(
             seats.add(
                 RoomSeat(
                     userId = newId("bot"),
-                    displayName = botDisplayName(color, usedNames),
+                    displayName = botDisplayName(usedNames),
                     color = color,
                     isBot = true,
                     joinedAt = now,

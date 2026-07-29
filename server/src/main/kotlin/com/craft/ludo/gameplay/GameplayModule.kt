@@ -334,30 +334,17 @@ private val diagonalColorPairs = listOf(
     listOf("red", "yellow"),
     listOf("green", "blue"),
 )
-internal val botNamesByColor = mapOf(
-    "green" to "Aarav",
-    "yellow" to "Meera",
-    "blue" to "Kabir",
-)
-
 private val indianBotUsernames: List<String> by lazy {
-    val loaded = RoomDocument::class.java.classLoader
+    RoomDocument::class.java.classLoader
         ?.getResourceAsStream("bot-usernames.txt")
         ?.bufferedReader()
         ?.useLines { lines ->
             lines.map { it.trim() }.filter { it.isNotEmpty() }.toList()
         }
         .orEmpty()
-
-    if (loaded.isNotEmpty()) {
-        loaded
-    } else {
-        botNamesByColor.values.toList()
-    }
 }
 
 internal fun botDisplayName(
-    color: String,
     usedNames: Collection<String> = emptyList(),
 ): String {
     val excluded = usedNames
@@ -369,7 +356,7 @@ internal fun botDisplayName(
     }
     val source = if (pool.isNotEmpty()) pool else indianBotUsernames
     if (source.isEmpty()) {
-        return botNamesByColor[color] ?: "Guest Player"
+        return "Guest Player"
     }
     return source.random()
 }
