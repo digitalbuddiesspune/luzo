@@ -25,7 +25,7 @@ async function parseError(response) {
   return error;
 }
 
-async function request(path, params = {}) {
+async function request(path, params = {}, options = {}) {
   const url = new URL(`${API_BASE}${path}`, window.location.origin);
 
   for (const [key, value] of Object.entries(params)) {
@@ -35,11 +35,16 @@ async function request(path, params = {}) {
   }
 
   const response = await fetch(url, {
-    headers: authHeaders(),
+    ...options,
+    headers: authHeaders(options.headers),
   });
 
   if (!response.ok) {
     throw await parseError(response);
+  }
+
+  if (response.status === 204) {
+    return null;
   }
 
   return response.json();
@@ -123,6 +128,10 @@ export function fetchGames(
   dateTo = "",
 ) {
   return request("/games", withFilters({ page, limit }, playerCount, operatorId, dateFrom, dateTo));
+}
+
+export function deleteGame(roundId) {
+  return request(`/games/${encodeURIComponent(roundId)}`, {}, { method: "DELETE" });
 }
 
 export function fetchUsers(

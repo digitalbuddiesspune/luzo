@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
+  deleteGame as deleteGameApi,
   fetchAdminSession,
   fetchGames,
   fetchSummary,
@@ -33,6 +34,7 @@ function App() {
   const [users, setUsers] = useState([]);
   const [usersPagination, setUsersPagination] = useState(null);
   const [selectedGame, setSelectedGame] = useState(null);
+  const [deletingRoundId, setDeletingRoundId] = useState(null);
   const [loading, setLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState("");
@@ -191,14 +193,14 @@ function App() {
     setError("");
   };
 
-  const handleRefreshActivePage = async () => {
+  const refreshPage = useCallback(async (page) => {
     if (refreshing) return;
 
     setRefreshing(true);
     setError("");
 
     try {
-      switch (activePage) {
+      switch (page) {
         case "dashboard":
         case "platforms":
           await loadDashboard();
@@ -227,6 +229,22 @@ function App() {
     } finally {
       setRefreshing(false);
     }
+  }, [
+    refreshing,
+    loadDashboard,
+    loadProfitLossData,
+    gamesPagination?.page,
+    playerFilter,
+    operatorFilter,
+    dateFrom,
+    dateTo,
+  ]);
+
+  const handleRefreshActivePage = () => refreshPage(activePage);
+
+  const handleNavigate = (page) => {
+    setActivePage(page);
+    void refreshPage(page);
   };
 
   const handleLogout = async () => {
@@ -238,7 +256,45 @@ function App() {
     setDashboardGames([]);
     setUsers([]);
     setSelectedGame(null);
+    setDeletingRoundId(null);
     setError("");
+  };
+
+  const handleDeleteGame = async (game) => {
+    const label = game.roomCode || game.roundId.slice(-8);
+    if (!window.confirm(`Delete game ${label}? This cannot be undone.`)) {
+      return;
+    }
+
+    setDeletingRoundId(game.roundId);
+    setError("");
+
+    try {
+      await deleteGameApi(game.roundId);
+
+      if (selectedGame?.roundId === game.roundId) {
+        setSelectedGame(null);
+      }
+
+      await Promise.all([
+        loadDashboard(),
+        loadProfitLossData(
+          gamesPagination?.page ?? 1,
+          playerFilter,
+          operatorFilter,
+          dateFrom,
+          dateTo,
+        ),
+      ]);
+    } catch (deleteError) {
+      if (deleteError.status === 401) {
+        setAdmin(null);
+        return;
+      }
+      setError(deleteError.message || "Failed to delete game.");
+    } finally {
+      setDeletingRoundId(null);
+    }
   };
 
   const pageMeta = {
@@ -269,7 +325,7 @@ function App() {
     <div className="flex min-h-screen text-[var(--color-ink)]">
       <Sidebar
         activePage={activePage}
-        onNavigate={setActivePage}
+        onNavigate={handleNavigate}
         mobileOpen={mobileOpen}
         onClose={() => setMobileOpen(false)}
         admin={admin}
@@ -352,6 +408,8 @@ function App() {
               onOpenPlatforms={() => setActivePage("platforms")}
               onSelectOperator={(operatorId) => openProfitLossForOperator(operatorId)}
               onSelectGame={setSelectedGame}
+              onDeleteGame={handleDeleteGame}
+              deletingRoundId={deletingRoundId}
             />
           ) : null}
 
@@ -385,6 +443,8 @@ function App() {
               usersPagination={usersPagination}
               onUsersPageChange={loadUsers}
               onSelectGame={setSelectedGame}
+              onDeleteGame={handleDeleteGame}
+              deletingRoundId={deletingRoundId}
             />
           ) : null}
 
@@ -397,7 +457,12 @@ function App() {
         </main>
       </div>
 
-      <GameDetailModal game={selectedGame} onClose={() => setSelectedGame(null)} />
+      <GameDetailModal
+        game={selectedGame}
+        onClose={() => setSelectedGame(null)}
+        onDeleteGame={handleDeleteGame}
+        deletingRoundId={deletingRoundId}
+      />
     </div>
   );
 }

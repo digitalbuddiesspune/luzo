@@ -1,4 +1,5 @@
 const { config } = require("../config/env");
+const { HttpError } = require("../errors/httpError");
 const { buildRound } = require("./roundsService");
 
 const GUEST_OPERATOR_ID = "guest";
@@ -466,6 +467,36 @@ class ProfitLossService {
         dateFrom,
         dateTo,
       }),
+    };
+  }
+
+  async deleteGame(roundId) {
+    const normalizedRoundId = typeof roundId === "string" ? roundId.trim() : "";
+
+    if (!normalizedRoundId) {
+      throw new HttpError(
+        400,
+        "INVALID_ROUND_ID",
+        "roundId is required.",
+      );
+    }
+
+    const result = await this.matches.deleteOne({
+      _id: normalizedRoundId,
+      status: "FINISHED",
+    });
+
+    if (result.deletedCount === 0) {
+      throw new HttpError(
+        404,
+        "GAME_NOT_FOUND",
+        "Finished game was not found.",
+      );
+    }
+
+    return {
+      roundId: normalizedRoundId,
+      deleted: true,
     };
   }
 

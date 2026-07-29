@@ -38,6 +38,8 @@ export function ProfitLossPage({
   usersPagination,
   onUsersPageChange,
   onSelectGame,
+  onDeleteGame,
+  deletingRoundId,
 }) {
   const operatorOptions = [
     { id: "all", label: "All Platforms" },
@@ -209,6 +211,8 @@ export function ProfitLossPage({
               pagination={null}
               onPageChange={onGamesPageChange}
               onSelectGame={onSelectGame}
+              onDeleteGame={onDeleteGame}
+              deletingRoundId={deletingRoundId}
             />
           </section>
         </>
@@ -220,6 +224,8 @@ export function ProfitLossPage({
           pagination={gamesPagination}
           onPageChange={onGamesPageChange}
           onSelectGame={onSelectGame}
+          onDeleteGame={onDeleteGame}
+          deletingRoundId={deletingRoundId}
         />
       ) : null}
 

@@ -27,6 +27,8 @@ export function DashboardPage({
   onOpenPlatforms,
   onSelectOperator,
   onSelectGame,
+  onDeleteGame,
+  deletingRoundId,
 }) {
   return (
     <div className="space-y-6 animate-fade-up">
@@ -180,33 +182,47 @@ export function DashboardPage({
                 const hue = roomHue(code);
 
                 return (
-                  <button
+                  <div
                     key={game.roundId}
-                    type="button"
-                    onClick={() => onSelectGame(game)}
-                    className="flex w-full items-center gap-3.5 py-3.5 text-left transition-colors first:pt-2 last:pb-1 hover:bg-[#f7faf8] -mx-2 px-2 rounded-xl"
+                    className="flex w-full items-center gap-3.5 py-3.5 first:pt-2 last:pb-1 -mx-2 px-2 rounded-xl hover:bg-[#f7faf8]"
                   >
-                    <div
-                      className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-xs font-bold text-white"
-                      style={{
-                        background: `linear-gradient(145deg, hsl(${hue} 42% 42%), hsl(${hue} 38% 28%))`,
-                      }}
+                    <button
+                      type="button"
+                      onClick={() => onSelectGame(game)}
+                      className="flex min-w-0 flex-1 items-center gap-3.5 text-left transition-colors"
                     >
-                      {code.slice(0, 2).toUpperCase()}
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <p className="truncate font-semibold text-[var(--color-ink)]">{code}</p>
-                      <p className="mt-0.5 truncate text-xs text-[var(--color-muted)]">
-                        {game.realPlayerCount} real · {game.botPlayerCount} bot · {formatDate(game.completedAt)}
-                      </p>
-                    </div>
-                    <div className="text-right">
-                      <p className={`text-sm font-bold tabular-nums ${profitLossClassName(game.platformProfit)}`}>
-                        {formatAmount(game.platformProfit, game.currency)}
-                      </p>
-                      <p className="text-[11px] text-[var(--color-muted)]">platform</p>
-                    </div>
-                  </button>
+                      <div
+                        className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-xs font-bold text-white"
+                        style={{
+                          background: `linear-gradient(145deg, hsl(${hue} 42% 42%), hsl(${hue} 38% 28%))`,
+                        }}
+                      >
+                        {code.slice(0, 2).toUpperCase()}
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate font-semibold text-[var(--color-ink)]">{code}</p>
+                        <p className="mt-0.5 truncate text-xs text-[var(--color-muted)]">
+                          {game.realPlayerCount} real · {game.botPlayerCount} bot · {formatDate(game.completedAt)}
+                        </p>
+                      </div>
+                      <div className="text-right">
+                        <p className={`text-sm font-bold tabular-nums ${profitLossClassName(game.platformProfit)}`}>
+                          {formatAmount(game.platformProfit, game.currency)}
+                        </p>
+                        <p className="text-[11px] text-[var(--color-muted)]">platform</p>
+                      </div>
+                    </button>
+                    {onDeleteGame ? (
+                      <button
+                        type="button"
+                        disabled={deletingRoundId === game.roundId}
+                        onClick={() => onDeleteGame(game)}
+                        className="shrink-0 rounded-lg border border-rose-200 bg-rose-50 px-2.5 py-1.5 text-xs font-semibold text-rose-700 transition-colors hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        {deletingRoundId === game.roundId ? "…" : "Delete"}
+                      </button>
+                    ) : null}
+                  </div>
                 );
               })
             )}

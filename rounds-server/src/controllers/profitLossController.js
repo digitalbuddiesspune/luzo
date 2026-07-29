@@ -172,6 +172,12 @@ function createProfitLossController(profitLossService) {
       response.json(result);
     },
 
+    deleteGame: async (request, response) => {
+      const roundId = request.params.roundId;
+      const result = await profitLossService.deleteGame(roundId);
+      response.json(result);
+    },
+
     listUsers: async (request, response) => {
       const page = parsePositiveInteger(request.query.page, "page", 1);
       const limit = parsePositiveInteger(request.query.limit, "limit", 20, 100);

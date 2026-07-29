@@ -1,6 +1,6 @@
 import { formatAmount, formatDate, formatProfitLoss, profitLossClassName } from "../utils/format";
 
-export function GameDetailModal({ game, onClose }) {
+export function GameDetailModal({ game, onClose, onDeleteGame, deletingRoundId }) {
   if (!game) {
     return null;
   }
@@ -31,13 +31,25 @@ export function GameDetailModal({ game, onClose }) {
               {game.roomCode || game.roundId} · {formatDate(game.completedAt)}
             </p>
           </div>
-          <button
-            type="button"
-            onClick={onClose}
-            className="rounded-xl border border-[var(--color-line)] bg-white px-3 py-1.5 text-sm font-medium text-[var(--color-ink)] transition-colors hover:bg-[#f4f7f5]"
-          >
-            Close
-          </button>
+          <div className="flex items-center gap-2">
+            {onDeleteGame ? (
+              <button
+                type="button"
+                disabled={deletingRoundId === game.roundId}
+                onClick={() => onDeleteGame(game)}
+                className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-1.5 text-sm font-semibold text-rose-700 transition-colors hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {deletingRoundId === game.roundId ? "Deleting…" : "Delete game"}
+              </button>
+            ) : null}
+            <button
+              type="button"
+              onClick={onClose}
+              className="rounded-xl border border-[var(--color-line)] bg-white px-3 py-1.5 text-sm font-medium text-[var(--color-ink)] transition-colors hover:bg-[#f4f7f5]"
+            >
+              Close
+            </button>
+          </div>
         </div>
 
         <div className="grid gap-3 px-6 py-5 sm:grid-cols-2 xl:grid-cols-4">
