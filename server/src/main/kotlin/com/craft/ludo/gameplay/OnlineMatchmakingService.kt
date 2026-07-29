@@ -609,8 +609,7 @@ class OnlineMatchmakingService(
     ): Mono<JoinOnlineMatchResponse> {
         val matchId = room.matchId ?: return finishLobbyRoom(room).then(createWaitingRoom(principal, maxPlayers))
 
-        return matchService.processDueMatches()
-            .then(matchRepository.findById(matchId))
+        return matchRepository.findById(matchId)
             .flatMap { match ->
                 val userStillActive = match.players.any { player ->
                     player.userId == principal.id && !player.isBot && !player.isEffectivelyAbandoned()

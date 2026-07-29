@@ -2604,8 +2604,7 @@ class LobbyService(
             return Mono.just(room.toPrivateState())
         }
 
-        return matchService.processDueMatches()
-            .then(matchRepository.findById(matchId))
+        return matchRepository.findById(matchId)
             .switchIfEmpty(Mono.error(DomainException(HttpStatus.NOT_FOUND, "Match not found.")))
             .flatMap { match ->
                 if (match.status == MatchStatus.FINISHED || match.phase == MatchPhase.FINISHED) {
@@ -2976,10 +2975,7 @@ class MatchController(
         @PathVariable matchId: String,
     ): Mono<MatchSnapshotResponse> {
         return sessionPrincipalResolver.requireUser(sessionToken)
-            .flatMap { principal ->
-                matchService.processDueMatches()
-                    .then(matchService.getMatchForUser(matchId, principal.id))
-            }
+            .flatMap { principal -> matchService.getMatchForUser(matchId, principal.id) }
             .map(MatchDocument::toSnapshot)
     }
 
@@ -3078,7 +3074,10 @@ class MatchWebSocketHandler(
     private val realtimeService: MatchRealtimeService,
     private val objectMapper: ObjectMapper,
 ) : WebSocketHandler {
-    private val snapshotSyncInterval = Duration.ofMillis(500)
+    // Resync only — do NOT call processDueMatches here.
+    // MatchLifecycleScheduler is the sole owner of due-match ticks; running them
+    // per WebSocket connection scaled Mongo/Redis lock load with player count.
+    private val snapshotSyncInterval = Duration.ofMillis(2000)
 
     override fun handle(session: WebSocketSession): Mono<Void> {
         val uri = session.handshakeInfo.uri
@@ -3118,8 +3117,7 @@ class MatchWebSocketHandler(
     private fun periodicSnapshotStream(matchId: String, userId: String): Flux<String> {
         return Flux.interval(snapshotSyncInterval)
             .concatMap {
-                matchService.processDueMatches()
-                    .then(matchService.getMatchForUser(matchId, userId))
+                matchService.getMatchForUser(matchId, userId)
                     .map { match ->
                         objectMapper.writeValueAsString(
                             MatchRealtimeEnvelope(
