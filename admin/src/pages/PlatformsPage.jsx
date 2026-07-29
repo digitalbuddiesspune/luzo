@@ -1,4 +1,4 @@
-import { formatAmount } from "../utils/format";
+import { formatAmount, profitLossClassName } from "../utils/format";
 
 export function PlatformsPage({
   operators,
@@ -99,7 +99,7 @@ export function PlatformsPage({
                     <dt className="text-[11px] font-semibold uppercase tracking-wide text-[var(--accent)]">
                       Profit
                     </dt>
-                    <dd className="mt-1 text-sm font-bold tabular-nums text-[var(--accent)]">
+                    <dd className={`mt-1 text-sm font-bold tabular-nums ${profitLossClassName(item.totalPlatformProfit)}`}>
                       {formatAmount(item.totalPlatformProfit, currency)}
                     </dd>
                   </div>

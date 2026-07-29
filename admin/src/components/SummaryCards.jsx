@@ -1,4 +1,4 @@
-import { formatAmount } from "../utils/format";
+import { formatAmount, profitLossClassName } from "../utils/format";
 
 function StatIcon({ type }) {
   const className = "h-4 w-4";
@@ -35,7 +35,7 @@ function StatIcon({ type }) {
   );
 }
 
-function StatCard({ label, value, hint, icon, accent = false, delayClass = "" }) {
+function StatCard({ label, value, hint, icon, accent = false, valueClassName, delayClass = "" }) {
   return (
     <div
       className={`group relative overflow-hidden rounded-2xl border border-[var(--color-line)] bg-white p-5 shadow-[var(--shadow-card)] transition-all duration-200 hover:-translate-y-0.5 hover:shadow-[var(--shadow-card-hover)] animate-fade-up ${delayClass}`}
@@ -58,7 +58,7 @@ function StatCard({ label, value, hint, icon, accent = false, delayClass = "" })
       </div>
       <p
         className={`mt-3 text-[1.65rem] font-extrabold tracking-tight tabular-nums leading-none ${
-          accent ? "text-[var(--accent)]" : "text-[var(--color-ink)]"
+          valueClassName || (accent ? "text-[var(--accent)]" : "text-[var(--color-ink)]")
         }`}
       >
         {value}
@@ -99,6 +99,7 @@ export function SummaryCards({ summary }) {
         hint={`Income − payouts · Fee ${feeHint}`}
         icon="profit"
         accent
+        valueClassName={profitLossClassName(summary.totalPlatformProfit)}
         delayClass="stagger-3"
       />
       <StatCard

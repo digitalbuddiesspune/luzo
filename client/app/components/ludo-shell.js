@@ -371,6 +371,9 @@ const soundController = {
   diceRollAudio: null,
   matchStartAudio: null,
   tokenCaptureAudio: null,
+  homeArrivalAudio: null,
+  matchWinAudio: null,
+  matchLoseAudio: null,
   lobbyMusicAudio: null,
   lobbyMusicActive: false,
 
@@ -577,68 +580,51 @@ const soundController = {
   },
 
   homeArrival() {
-    const context = this.ensureContext();
-
-    if (!context) {
+    if (this.muted || typeof window === "undefined") {
       return;
     }
 
-    const start = context.currentTime;
-    [620, 780, 980].forEach((frequency, index) => {
-      this.pulse({
-        frequency,
-        duration: 0.12,
-        gain: 0.026,
-        type: "triangle",
-        startTime: start + index * 0.075,
-      });
-    });
+    if (!this.homeArrivalAudio) {
+      this.homeArrivalAudio = new window.Audio(
+        "/sounds/freesound_gamestudio-great-success-384935.mp3",
+      );
+      this.homeArrivalAudio.preload = "auto";
+    }
+
+    this.homeArrivalAudio.currentTime = 0;
+    this.homeArrivalAudio.play().catch(() => {});
   },
 
   matchWin() {
-    const context = this.ensureContext();
-
-    if (!context) {
+    if (this.muted || typeof window === "undefined") {
       return;
     }
 
-    const start = context.currentTime;
-    [523, 659, 784, 1046, 1318].forEach((frequency, index) => {
-      this.pulse({
-        frequency,
-        duration: 0.2,
-        gain: 0.045 - index * 0.004,
-        type: index % 2 === 0 ? "triangle" : "sine",
-        startTime: start + index * 0.12,
-      });
-    });
-    this.pulse({
-      frequency: 1568,
-      slideTo: 2093,
-      duration: 0.35,
-      gain: 0.03,
-      type: "sine",
-      startTime: start + 0.62,
-    });
+    if (!this.matchWinAudio) {
+      this.matchWinAudio = new window.Audio(
+        "/sounds/u_ss015dykrt-brass-fanfare-with-timpani-and-winchimes-reverberated-146260.mp3",
+      );
+      this.matchWinAudio.preload = "auto";
+    }
+
+    this.matchWinAudio.currentTime = 0;
+    this.matchWinAudio.play().catch(() => {});
   },
 
   matchLose() {
-    const context = this.ensureContext();
-
-    if (!context) {
+    if (this.muted || typeof window === "undefined") {
       return;
     }
 
-    const start = context.currentTime;
-    [440, 330, 250].forEach((frequency, index) => {
-      this.pulse({
-        frequency,
-        duration: 0.16,
-        gain: 0.028,
-        type: "sawtooth",
-        startTime: start + index * 0.11,
-      });
-    });
+    if (!this.matchLoseAudio) {
+      this.matchLoseAudio = new window.Audio(
+        "/sounds/freesound_community-8bit-lose-life-sound-wav-97245.mp3",
+      );
+      this.matchLoseAudio.preload = "auto";
+    }
+
+    this.matchLoseAudio.currentTime = 0;
+    this.matchLoseAudio.play().catch(() => {});
   },
 
   matchStart() {
@@ -661,7 +647,7 @@ const soundController = {
     }
 
     if (!this.tokenCaptureAudio) {
-      this.tokenCaptureAudio = new window.Audio("/sounds/skelly.mp3");
+      this.tokenCaptureAudio = new window.Audio("/sounds/fahhh_KcgAXfs.mp3");
       this.tokenCaptureAudio.preload = "auto";
     }
 

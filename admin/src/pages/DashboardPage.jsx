@@ -1,11 +1,11 @@
-import { formatAmount, formatDate } from "../utils/format";
+import { formatAmount, formatDate, profitLossClassName } from "../utils/format";
 import { SummaryCards } from "../components/SummaryCards";
 
-function QuickStat({ label, value }) {
+function QuickStat({ label, value, valueClassName = "text-[var(--color-ink)]" }) {
   return (
     <div className="rounded-xl bg-[#f4f7f5] px-3.5 py-3 ring-1 ring-[var(--color-line)]/80">
       <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[var(--color-muted)]">{label}</p>
-      <p className="mt-1.5 text-base font-bold tabular-nums text-[var(--color-ink)]">{value}</p>
+      <p className={`mt-1.5 text-base font-bold tabular-nums ${valueClassName}`}>{value}</p>
     </div>
   );
 }
@@ -91,7 +91,7 @@ export function DashboardPage({
                 <p className="mt-1 text-xs text-[var(--color-muted)]">
                   {item.uniqueUsers} users · {item.totalGames} games
                 </p>
-                <p className="mt-2 text-sm font-bold tabular-nums text-[var(--accent)]">
+                <p className={`mt-2 text-sm font-bold tabular-nums ${profitLossClassName(item.totalPlatformProfit)}`}>
                   {formatAmount(item.totalPlatformProfit, summary?.currency || "INR")}
                 </p>
               </button>
@@ -134,6 +134,11 @@ export function DashboardPage({
                       summary.currency,
                     )
                   : "—"
+              }
+              valueClassName={
+                summary && summary.totalGames > 0
+                  ? profitLossClassName(Math.round(summary.totalPlatformProfit / summary.totalGames))
+                  : "text-[var(--color-ink)]"
               }
             />
           </div>
@@ -196,7 +201,7 @@ export function DashboardPage({
                       </p>
                     </div>
                     <div className="text-right">
-                      <p className="text-sm font-bold tabular-nums text-[var(--accent)]">
+                      <p className={`text-sm font-bold tabular-nums ${profitLossClassName(game.platformProfit)}`}>
                         {formatAmount(game.platformProfit, game.currency)}
                       </p>
                       <p className="text-[11px] text-[var(--color-muted)]">platform</p>
