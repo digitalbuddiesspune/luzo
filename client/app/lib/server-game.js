@@ -229,12 +229,42 @@ function formatTransactionAge(createdAt) {
     return `${elapsedDays} day${elapsedDays === 1 ? "" : "s"} ago`;
   }
 
+  return formatTransactionDate(createdAt);
+}
+
+function formatTransactionDate(createdAt) {
+  const timestamp = createdAt ? new Date(createdAt).getTime() : Number.NaN;
+
+  if (!Number.isFinite(timestamp)) {
+    return "—";
+  }
+
   return new Intl.DateTimeFormat("en-IN", {
     day: "2-digit",
     month: "short",
+    year: "numeric",
     hour: "2-digit",
     minute: "2-digit",
+    hour12: true,
   }).format(new Date(timestamp));
+}
+
+/**
+ * Room/match identifiers are stored as `<prefix>_<hex>`; players only ever see
+ * the trailing 6 characters so the lobby and wallet history stay comparable.
+ */
+export function formatRoomIdLabel(rawRoomId) {
+  const value = typeof rawRoomId === "string" ? rawRoomId.trim() : "";
+
+  if (!value) {
+    return "";
+  }
+
+  const separatorIndex = value.indexOf("_");
+  const suffix =
+    separatorIndex >= 0 ? value.slice(separatorIndex + 1) : value;
+
+  return (suffix || value).slice(-6).toUpperCase();
 }
 
 function normalizeWalletTransaction(transaction) {
@@ -246,20 +276,37 @@ function normalizeWalletTransaction(transaction) {
     label: transaction.description,
     meta: transaction.referenceId,
     amount: signedAmount,
+    absoluteAmount: Math.abs(transaction.amount ?? 0),
     type: transaction.type,
     createdAt: transaction.createdAt,
   };
 }
 
+const HISTORY_VISIBLE_TYPES = new Set([
+  "ROOM_RESERVATION",
+  "MATCH_PAYOUT",
+  "ROOM_REFUND",
+]);
+
 function normalizeWalletHistoryItem(transaction) {
   const normalizedTransaction = normalizeWalletTransaction(transaction);
+  const outcome =
+    WALLET_HISTORY_OUTCOMES[normalizedTransaction.type] ?? "Wallet";
+  const roomId = normalizedTransaction.meta || null;
 
   return {
     id: normalizedTransaction.id,
-    room: normalizedTransaction.label,
-    outcome: WALLET_HISTORY_OUTCOMES[normalizedTransaction.type] ?? "Wallet",
+    room: roomId,
+    roomId,
+    roomLabel: formatRoomIdLabel(roomId),
+    title: outcome,
+    type: normalizedTransaction.type,
+    outcome,
     delta: normalizedTransaction.amount,
+    amount: normalizedTransaction.absoluteAmount,
     when: formatTransactionAge(normalizedTransaction.createdAt),
+    date: formatTransactionDate(normalizedTransaction.createdAt),
+    createdAt: normalizedTransaction.createdAt,
   };
 }
 
@@ -365,10 +412,12 @@ export function normalizeWalletResponse(walletResponse) {
     reservedBalance: walletResponse.reservedBalance,
     totalWinnings: transactions
       .filter((transaction) => transaction.type === "MATCH_PAYOUT")
-      .reduce((sum, transaction) => sum + transaction.amount, 0),
+      .reduce((sum, transaction) => sum + Math.abs(transaction.amount), 0),
     winRate: 0,
     transactions,
-    history: walletResponse.transactions.map(normalizeWalletHistoryItem),
+    history: walletResponse.transactions
+      .map(normalizeWalletHistoryItem)
+      .filter((item) => HISTORY_VISIBLE_TYPES.has(item.type)),
   };
 }
 

@@ -285,7 +285,6 @@ class WalletService(
                 userId,
                 Sort.by(Sort.Direction.DESC, "createdAt"),
             )
-                .take(8)
                 .collectList()
                 .map { transactions ->
                     WalletOverviewResponse(

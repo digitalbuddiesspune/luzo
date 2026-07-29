@@ -2125,6 +2125,7 @@ class MatchService(
                                     matchId = saved.id,
                                     winnerUserId = winnerUserId,
                                     reservations = room.walletReservations,
+                                    roomId = room.id,
                                 )
                                     .doOnSubscribe {
                                         log.info(
@@ -2655,6 +2656,7 @@ class LobbyService(
                     matchId = match.id,
                     winnerUserId = winnerUserId,
                     reservations = room.walletReservations,
+                    roomId = room.id,
                 )
             }
             ?: Mono.empty()

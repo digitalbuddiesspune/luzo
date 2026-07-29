@@ -820,6 +820,7 @@ class OnlineMatchmakingService(
                     matchId = match.id,
                     winnerUserId = winnerUserId,
                     reservations = room.walletReservations,
+                    roomId = room.id,
                 )
             }
             ?: Mono.empty()

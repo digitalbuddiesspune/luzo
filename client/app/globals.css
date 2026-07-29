@@ -707,18 +707,44 @@ img {
 }
 
 .history-menu-drawer {
+  display: flex;
+  flex-direction: column;
   width: min(88vw, 21rem);
+  overflow: hidden;
+}
+
+.history-menu-drawer .game-menu-topbar {
+  flex: 0 0 auto;
 }
 
 .history-drawer-list {
   display: flex;
+  flex: 1 1 auto;
   flex-direction: column;
   gap: 0.58rem;
+  min-height: 0;
   margin-top: 0.8rem;
+  padding-right: 0.18rem;
+  padding-bottom: 0.4rem;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 241, 198, 0.42) transparent;
+}
+
+.history-drawer-list::-webkit-scrollbar {
+  width: 0.28rem;
+}
+
+.history-drawer-list::-webkit-scrollbar-thumb {
+  border-radius: 999rem;
+  background: rgba(255, 241, 198, 0.42);
 }
 
 .history-drawer-card {
   display: flex;
+  flex: 0 0 auto;
   align-items: center;
   justify-content: space-between;
   gap: 0.72rem;
@@ -729,8 +755,9 @@ img {
   box-shadow: inset 0 0.08rem 0 rgba(255, 255, 255, 0.08);
 }
 
-.history-drawer-card div {
+.history-drawer-copy {
   min-width: 0;
+  flex: 1 1 auto;
 }
 
 .history-drawer-card strong {
@@ -743,7 +770,9 @@ img {
   white-space: nowrap;
 }
 
-.history-drawer-card span {
+.history-drawer-card span,
+.history-drawer-date,
+.history-drawer-room {
   display: block;
   margin-top: 0.12rem;
   color: rgba(255, 246, 207, 0.7);
@@ -751,14 +780,37 @@ img {
   font-weight: 800;
 }
 
+.history-drawer-room {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: rgba(255, 246, 207, 0.82);
+}
+
 .history-drawer-result {
   flex: 0 0 auto;
   text-align: right;
 }
 
+.history-drawer-result span {
+  color: rgba(255, 246, 207, 0.78);
+  font-size: 0.58rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
 .history-drawer-result strong {
-  margin-top: 0.12rem;
+  margin-top: 0.18rem;
   font-size: 0.74rem;
+}
+
+.history-drawer-result strong.delta-positive {
+  color: #5dff9a;
+}
+
+.history-drawer-result strong.delta-negative {
+  color: #ff8c8c;
 }
 
 .history-drawer-empty {

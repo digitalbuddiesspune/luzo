@@ -324,7 +324,6 @@ class WalletService(
                 userId,
                 Sort.by(Sort.Direction.DESC, "createdAt"),
             )
-                .take(8)
                 .collectList()
                 .map { transactions ->
                     WalletOverviewResponse(
@@ -673,9 +672,10 @@ class WalletService(
         matchId: String,
         winnerUserId: String,
         reservations: List<WalletReservation>,
+        roomId: String? = null,
     ): Mono<Void> {
         return resolvePlatformFeePerPlayer().flatMap { platformFeePerPlayer ->
-            payoutWinnerWithFee(matchId, winnerUserId, reservations, platformFeePerPlayer)
+            payoutWinnerWithFee(matchId, winnerUserId, reservations, platformFeePerPlayer, roomId)
         }
     }
 
@@ -690,6 +690,7 @@ class WalletService(
         winnerUserId: String,
         reservations: List<WalletReservation>,
         platformFeePerPlayer: Long,
+        roomId: String? = null,
     ): Mono<Void> {
         val paidReservations = reservations.filter { it.amount > 0 }
         val realPaidReservations = paidReservations.filterNot { it.synthetic }
@@ -765,7 +766,7 @@ class WalletService(
                             winnerLedgerPayoutAmount,
                             externallyDebitedReservations,
                         )
-                            .then(persistWinnerPayout(matchId, winnerUserId, winnerLedgerPayoutAmount))
+                            .then(persistWinnerPayout(matchId, winnerUserId, winnerLedgerPayoutAmount, roomId))
                     }
                 },
             )
@@ -899,8 +900,10 @@ class WalletService(
         matchId: String,
         winnerUserId: String,
         winnerPayoutAmount: Long,
+        roomId: String? = null,
     ): Mono<Void> {
         if (winnerPayoutAmount <= 0) return Mono.empty()
+        val payoutReferenceId = roomId?.takeIf { it.isNotBlank() } ?: matchId
 
         return adjustBalances(winnerUserId, winnerPayoutAmount, 0)
             .flatMap {
@@ -908,8 +911,8 @@ class WalletService(
                     userId = winnerUserId,
                     amount = winnerPayoutAmount,
                     type = WalletTransactionType.MATCH_PAYOUT,
-                    referenceId = matchId,
-                    description = ludoCreditStatement(winnerPayoutAmount, matchId, "winner payout"),
+                    referenceId = payoutReferenceId,
+                    description = ludoCreditStatement(winnerPayoutAmount, matchId, "winner payout", roomId),
                     idempotencyKey = matchId,
                 )
             }

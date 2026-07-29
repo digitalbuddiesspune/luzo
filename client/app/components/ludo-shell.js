@@ -18,6 +18,7 @@ import {
   fetchMatchSnapshot,
   fetchPrivateRoomState,
   fetchWalletOverview,
+  formatRoomIdLabel,
   isOperatorPlatformEnabled,
   OPERATOR_PLATFORM_ACCESS_MESSAGE,
   joinPrivateRoom as joinPrivateRoomRequest,
@@ -3007,26 +3008,41 @@ function HistorySideDrawer({ isOpen, history = [], onClose }) {
 
         <div className="history-drawer-list">
           {history.length ? (
-            history.map((match) => (
-              <article key={match.id} className="history-drawer-card">
-                <div>
-                  <strong>{match.room}</strong>
-                  <span>{match.when}</span>
-                </div>
-                <div className="history-drawer-result">
-                  <span>{match.outcome}</span>
-                  <strong
-                    className={
-                      match.delta >= 0 ? "delta-positive" : "delta-negative"
-                    }
-                  >
-                    {formatCurrency(match.delta)}
-                  </strong>
-                </div>
-              </article>
-            ))
+            history.map((item) => {
+              const roomLabel =
+                item.roomLabel || formatRoomIdLabel(item.roomId || item.room);
+
+              return (
+                <article key={item.id} className="history-drawer-card">
+                  <div className="history-drawer-copy">
+                    <strong>{item.title || item.outcome}</strong>
+                    {roomLabel ? (
+                      <span className="history-drawer-room">
+                        Room ID {roomLabel}
+                      </span>
+                    ) : null}
+                    <span className="history-drawer-date">
+                      {item.date || item.when}
+                    </span>
+                  </div>
+                  <div className="history-drawer-result">
+                    <span>{item.outcome}</span>
+                    <strong
+                      className={
+                        item.delta >= 0 ? "delta-positive" : "delta-negative"
+                      }
+                    >
+                      {item.delta >= 0 ? "+" : "-"}
+                      {formatCurrency(Math.abs(item.amount ?? item.delta ?? 0))}
+                    </strong>
+                  </div>
+                </article>
+              );
+            })
           ) : (
-            <div className="history-drawer-empty">No wallet activity yet.</div>
+            <div className="history-drawer-empty">
+              No entry fees or winnings yet.
+            </div>
           )}
         </div>
       </aside>
@@ -4490,8 +4506,8 @@ function WaitingLobbyScreen({
 
       <section className="board-room-strip online-room-strip">
         <div>
-          <span className="board-room-label">Room</span>
-          <strong>{room.roomCode}</strong>
+          <span className="board-room-label">Room ID</span>
+          <strong>{formatRoomIdLabel(room.roomId) || room.roomCode}</strong>
         </div>
         <div>
           <span className="board-room-label">Boot Amount</span>
