@@ -652,6 +652,7 @@ class WalletService(
             amount = reservation.amount,
             txnId = newId("txn"),
             description = ludoCreditStatement(reservation.amount, roomId, "refund", roomId),
+            roundId = roomId,
         )
             .then(releaseReservedBalance)
             .then(
@@ -1031,6 +1032,7 @@ class WalletService(
             amount = winnerPayoutAmount,
             txnId = newId("txn"),
             description = ludoCreditStatement(winnerPayoutAmount, matchId, "winner payout"),
+            roundId = matchId,
         )
     }
 
@@ -1039,6 +1041,7 @@ class WalletService(
         amount: Long,
         txnId: String,
         description: String,
+        roundId: String? = null,
     ): Mono<Void> {
         val debitTransactionId = reservation.externalDebitTransactionId ?: return Mono.empty()
         if (!reservation.externalDebitConfirmed) return Mono.empty()
@@ -1058,6 +1061,7 @@ class WalletService(
                 operatorId = operatorId,
                 token = operatorToken,
                 description = description,
+                round_id = roundId,
             ),
         )
     }

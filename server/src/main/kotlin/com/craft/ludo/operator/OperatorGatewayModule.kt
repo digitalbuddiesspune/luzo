@@ -4,10 +4,6 @@ import com.craft.ludo.identity.IdentityService
 import com.craft.ludo.shared.api.DomainException
 import com.craft.ludo.shared.config.AppProperties
 import com.fasterxml.jackson.databind.JsonNode
-import com.fasterxml.jackson.databind.ObjectMapper
-import org.springframework.amqp.core.MessageBuilder
-import org.springframework.amqp.core.MessageProperties
-import org.springframework.amqp.rabbit.core.RabbitTemplate
 import org.springframework.http.HttpStatus
 import org.springframework.http.MediaType
 import org.springframework.http.codec.ServerSentEvent
@@ -23,7 +19,6 @@ import org.slf4j.LoggerFactory
 import reactor.core.publisher.Flux
 import reactor.core.publisher.Mono
 import reactor.core.publisher.Sinks
-import reactor.core.scheduler.Schedulers
 import java.math.BigDecimal
 import java.time.Duration
 import java.time.Instant
@@ -69,6 +64,7 @@ data class OperatorCreditQueueMessage(
     val operatorId: String,
     val token: String,
     val description: String,
+    val round_id: String? = null,
 )
 
 data class OperatorGatewayLogEvent(
@@ -121,8 +117,6 @@ class OperatorGatewayLogStream {
 @Service
 class OperatorGatewayClient(
     webClientBuilder: WebClient.Builder,
-    private val rabbitTemplate: RabbitTemplate,
-    private val objectMapper: ObjectMapper,
     private val operatorGatewayLogStream: OperatorGatewayLogStream,
     appProperties: AppProperties,
 ) {
@@ -136,13 +130,26 @@ class OperatorGatewayClient(
     private val serviceWebClient = webClientBuilder
         .baseUrl(serviceBaseUrl)
         .build()
+    private val creditWebClient = webClientBuilder.build()
+    private val resolvedCreditUrl: String = resolveCreditUrl()
 
     init {
         require(operatorProperties.baseUrl.isNotBlank()) { "app.operator.base-url must not be blank." }
         require(operatorProperties.gameId > 0) { "app.operator.game-id must be positive." }
-        require(operatorProperties.creditExchange.isNotBlank()) { "app.operator.credit-exchange must not be blank." }
-        require(operatorProperties.creditQueueName.isNotBlank()) { "app.operator.credit-queue-name must not be blank." }
-        require(operatorProperties.creditRoutingKey.isNotBlank()) { "app.operator.credit-routing-key must not be blank." }
+        require(resolvedCreditUrl.isNotBlank()) { "app.operator.credit-url must not be blank." }
+    }
+
+    private fun resolveCreditUrl(): String {
+        val configured = operatorProperties.creditUrl.trim()
+        if (configured.isNotBlank()) {
+            return configured
+        }
+        val path = operatorProperties.creditPath.trim().ifBlank { "/api/wallet/credit" }
+        return if (path.startsWith("http://") || path.startsWith("https://")) {
+            path
+        } else {
+            "$operatorBaseUrl/${path.trimStart('/')}"
+        }
     }
 
     fun login(userId: String, password: String): Mono<OperatorLoginResult> {
@@ -316,80 +323,129 @@ class OperatorGatewayClient(
                     txnRefId = message.txn_ref_id,
                     amount = message.amount,
                     description = message.description,
-                    target = "${operatorProperties.creditExchange}:${operatorProperties.creditRoutingKey}",
+                    target = resolvedCreditUrl,
                     createdAt = Instant.now(),
                     ip = message.ip,
                     gameId = message.game_id,
-                    exchange = operatorProperties.creditExchange,
-                    routingKey = operatorProperties.creditRoutingKey,
                 ),
             )
             return Mono.empty()
         }
 
-        val payload = objectMapper.writeValueAsString(message)
-        return Mono.fromRunnable<Void> {
-            val amqpMessage = MessageBuilder.withBody(payload.toByteArray(Charsets.UTF_8))
-                .setContentType(MessageProperties.CONTENT_TYPE_JSON)
-                .setContentEncoding("UTF-8")
-                .build()
+        val roundId = message.round_id?.takeIf { it.isNotBlank() } ?: message.txn_ref_id
+        val body = mapOf(
+            "userId" to message.user_id,
+            "amount" to message.amount,
+            "transactionId" to message.txn_id,
+            "gameId" to message.game_id.toString(),
+            "roundId" to roundId,
+        )
 
-            rabbitTemplate.convertAndSend(
-                operatorProperties.creditExchange,
-                operatorProperties.creditRoutingKey,
-                amqpMessage,
-            )
-            operatorGatewayLogStream.publish(
-                OperatorGatewayLogEvent(
-                    id = "operator_credit:${message.txn_id}",
-                    eventType = "operator_credit_enqueued",
-                    action = "Operator credit enqueued",
-                    gameUserId = message.gameUserId,
-                    userId = message.user_id,
-                    operatorId = message.operatorId,
-                    txnId = message.txn_id,
-                    txnRefId = message.txn_ref_id,
-                    amount = message.amount,
-                    description = message.description,
-                    target = "${operatorProperties.creditExchange}:${operatorProperties.creditRoutingKey}",
-                    createdAt = Instant.now(),
-                    ip = message.ip,
-                    gameId = message.game_id,
-                    exchange = operatorProperties.creditExchange,
-                    routingKey = operatorProperties.creditRoutingKey,
-                ),
-            )
-            log.info(
-                "Operator credit enqueued gameUserId={} userId={} operatorId={} txnId={} txnRefId={} amount={} gameId={} description={} exchange={} routingKey={}",
-                message.gameUserId,
-                message.user_id,
-                message.operatorId,
-                message.txn_id,
-                message.txn_ref_id,
-                message.amount,
-                message.game_id,
-                message.description,
-                operatorProperties.creditExchange,
-                operatorProperties.creditRoutingKey,
-            )
-        }.doOnError { error ->
-            log.error(
-                "Operator credit enqueue failed gameUserId={} userId={} operatorId={} txnId={} txnRefId={} amount={} gameId={} description={} reason={}",
-                message.gameUserId,
-                message.user_id,
-                message.operatorId,
-                message.txn_id,
-                message.txn_ref_id,
-                message.amount,
-                message.game_id,
-                message.description,
-                error.message ?: error.javaClass.simpleName,
-                error,
-            )
-        }
-            // convertAndSend blocks until the broker acknowledges, so it must never run
-            // on an event-loop thread.
-            .subscribeOn(Schedulers.boundedElastic())
+        operatorGatewayLogStream.publish(
+            OperatorGatewayLogEvent(
+                id = "operator_credit:${message.txn_id}",
+                eventType = "operator_credit_api_called",
+                action = "Operator wallet credit API called",
+                gameUserId = message.gameUserId,
+                userId = message.user_id,
+                operatorId = message.operatorId,
+                txnId = message.txn_id,
+                txnRefId = message.txn_ref_id,
+                amount = message.amount,
+                description = message.description,
+                target = resolvedCreditUrl,
+                createdAt = Instant.now(),
+                ip = message.ip,
+                gameId = message.game_id,
+            ),
+        )
+        log.info(
+            "Operator wallet credit api called gameUserId={} userId={} operatorId={} txnId={} roundId={} amount={} gameId={} path={}",
+            message.gameUserId,
+            message.user_id,
+            message.operatorId,
+            message.txn_id,
+            roundId,
+            message.amount,
+            message.game_id,
+            resolvedCreditUrl,
+        )
+
+        val requestSpec = creditWebClient.post()
+            .uri(resolvedCreditUrl)
+            .contentType(MediaType.APPLICATION_JSON)
+            .let { spec ->
+                if (message.token.isNotBlank()) {
+                    spec.header("token", message.token)
+                } else {
+                    spec
+                }
+            }
+
+        return requestSpec
+            .bodyValue(body)
+            .retrieve()
+            .bodyToMono(JsonNode::class.java)
+            .timeout(Duration.ofSeconds(8))
+            .doOnError { error ->
+                log.error(
+                    "Operator wallet credit api failed gameUserId={} userId={} operatorId={} txnId={} roundId={} amount={} gameId={} reason={}",
+                    message.gameUserId,
+                    message.user_id,
+                    message.operatorId,
+                    message.txn_id,
+                    roundId,
+                    message.amount,
+                    message.game_id,
+                    error.message ?: error.javaClass.simpleName,
+                    error,
+                )
+            }
+            .flatMap { response ->
+                val statusOk = when {
+                    response.path("status").isBoolean -> response.path("status").asBoolean(false)
+                    response.path("success").isBoolean -> response.path("success").asBoolean(false)
+                    else -> true
+                }
+                if (!statusOk) {
+                    val msg = response.path("msg").asText(
+                        response.path("message").asText("Operator wallet credit failed."),
+                    )
+                    return@flatMap Mono.error<Void>(DomainException(HttpStatus.BAD_GATEWAY, msg))
+                }
+
+                operatorGatewayLogStream.publish(
+                    OperatorGatewayLogEvent(
+                        id = "operator_credit_accepted:${message.txn_id}",
+                        eventType = "operator_credit_api_accepted",
+                        action = "Operator wallet credit API accepted",
+                        gameUserId = message.gameUserId,
+                        userId = message.user_id,
+                        operatorId = message.operatorId,
+                        txnId = message.txn_id,
+                        txnRefId = message.txn_ref_id,
+                        amount = message.amount,
+                        description = message.description,
+                        target = resolvedCreditUrl,
+                        createdAt = Instant.now(),
+                        ip = message.ip,
+                        gameId = message.game_id,
+                    ),
+                )
+                log.info(
+                    "Operator wallet credit api accepted gameUserId={} userId={} operatorId={} txnId={} roundId={} amount={} msg={}",
+                    message.gameUserId,
+                    message.user_id,
+                    message.operatorId,
+                    message.txn_id,
+                    roundId,
+                    message.amount,
+                    response.path("msg").asText(response.path("message").asText("")),
+                )
+                Mono.empty()
+            }
+            .onErrorMap(WebClientResponseException::class.java, ::toGatewayError)
+            .then()
     }
 
     fun publishExistingDebitReservation(
