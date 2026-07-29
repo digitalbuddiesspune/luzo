@@ -105,8 +105,14 @@ object SuperiorBotEngine {
     }
 
     /**
-     * Hard priority: win the game first, otherwise kill opponent tokens,
-     * otherwise fall back to the highest scored strategic move.
+     * Hard move priorities:
+     * 1. Complete the match when a legal move wins immediately.
+     * 2. Capture an opponent token.
+     * 3. Move a token from the main path into the protected home lane.
+     * 4. Finish a token at home.
+     * 5. Fall back to the highest scored strategic move.
+     *
+     * These priorities only rank legal moves; dice outcomes remain random.
      */
     private fun selectPriorityMove(
         players: List<MatchPlayerState>,
@@ -124,6 +130,16 @@ object SuperiorBotEngine {
             return captureTargets(players, playerIndex, evaluation.move).isNotEmpty()
         }
 
+        fun entersHomeLane(evaluation: MoveEvaluation): Boolean {
+            val move = evaluation.move
+            return move.fromProgress <= MAIN_PATH_LAST_PROGRESS &&
+                move.toProgress in HOME_LANE_START_PROGRESS..HOME_LANE_LAST_PROGRESS
+        }
+
+        fun finishesToken(evaluation: MoveEvaluation): Boolean {
+            return evaluation.move.toProgress == FINISHED_PROGRESS
+        }
+
         val winningMoves = evaluations.filter(::isWinning)
         if (winningMoves.isNotEmpty()) {
             return tieBreak(winningMoves, random)
@@ -132,6 +148,16 @@ object SuperiorBotEngine {
         val capturingMoves = evaluations.filter(::isCapture)
         if (capturingMoves.isNotEmpty()) {
             return tieBreak(capturingMoves, random)
+        }
+
+        val homeLaneMoves = evaluations.filter(::entersHomeLane)
+        if (homeLaneMoves.isNotEmpty()) {
+            return tieBreak(homeLaneMoves, random)
+        }
+
+        val tokenFinishingMoves = evaluations.filter(::finishesToken)
+        if (tokenFinishingMoves.isNotEmpty()) {
+            return tieBreak(tokenFinishingMoves, random)
         }
 
         return tieBreak(evaluations, random)

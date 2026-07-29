@@ -4504,10 +4504,6 @@ function WaitingLobbyScreen({
           </strong>
         </div>
       </section>
-      <p className="online-lobby-fee-note">
-        Entry fee is charged only when the match starts. Waiting in lobby does not
-        deduct coins.
-      </p>
 
       <section className="waiting-lobby-panel online-waiting-panel">
         <div className="waiting-lobby-kicker-row">

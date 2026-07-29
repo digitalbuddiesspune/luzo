@@ -216,6 +216,64 @@ class SuperiorBotEngineTests {
     }
 
     @Test
+    fun `capture has priority over entering home lane`() {
+        // Green token 0 captures yellow@42 with dice=3; token 1 could enter home lane.
+        val players = listOf(
+            bot("green", listOf(0, 50, -1, -1)),
+            human("yellow", listOf(42, -1, -1, -1)),
+        )
+
+        val chosen = SuperiorBotEngine.chooseToken(
+            players = players,
+            playerIndex = 0,
+            movableTokenIndexes = listOf(0, 1),
+            diceValue = 3,
+            difficultyOverride = BotDifficulty.SUPER,
+            random = Random(12),
+        )
+
+        assertThat(chosen).isEqualTo(0)
+    }
+
+    @Test
+    fun `entering home lane has priority over finishing one token`() {
+        val players = listOf(
+            bot("green", listOf(50, 55, 5, -1)),
+            human("yellow", listOf(-1, -1, -1, -1)),
+        )
+
+        val chosen = SuperiorBotEngine.chooseToken(
+            players = players,
+            playerIndex = 0,
+            movableTokenIndexes = listOf(0, 1, 2),
+            diceValue = 1,
+            difficultyOverride = BotDifficulty.SUPER,
+            random = Random(13),
+        )
+
+        assertThat(chosen).isEqualTo(0)
+    }
+
+    @Test
+    fun `finishing one token has priority over ordinary progress`() {
+        val players = listOf(
+            bot("green", listOf(55, 5, -1, -1)),
+            human("yellow", listOf(-1, -1, -1, -1)),
+        )
+
+        val chosen = SuperiorBotEngine.chooseToken(
+            players = players,
+            playerIndex = 0,
+            movableTokenIndexes = listOf(0, 1),
+            diceValue = 1,
+            difficultyOverride = BotDifficulty.SUPER,
+            random = Random(14),
+        )
+
+        assertThat(chosen).isEqualTo(0)
+    }
+
+    @Test
     fun `easy difficulty still returns a legal token`() {
         val players = listOf(bot("green", listOf(3, 9, -1, -1)))
         val chosen = SuperiorBotEngine.chooseToken(

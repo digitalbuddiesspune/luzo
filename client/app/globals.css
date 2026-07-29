@@ -1981,15 +1981,6 @@ img {
   text-shadow: 0 0.08rem 0 rgba(5, 25, 91, 0.46);
 }
 
-.screen-online-waiting .online-lobby-fee-note {
-  width: calc(100% - 1rem);
-  margin: 0.45rem auto 0;
-  color: rgba(255, 246, 207, 0.86);
-  font-size: 0.68rem;
-  line-height: 1.35;
-  text-align: center;
-}
-
 .screen-online-waiting .online-waiting-panel {
   z-index: 2;
   width: calc(100% - 1rem);
