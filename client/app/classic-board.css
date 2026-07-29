@@ -96,10 +96,7 @@
     los demás colores dependen del giro del tablero...
   */
   --finish-row-base: calc(var(--size-tile) * 7);
-  /* Nudge vertical home columns 1px left + slightly larger cells to kill white seams */
-  --finish-col-mid: calc(var(--size-tile) * 7 - 1px);
-  --finish-cell: calc(var(--size-tile) + 1px);
-  /* Top home: white arrow cell + 5 green (vertical column) */
+  /* Top home: white arrow cell + 5 yellow */
   --finish-row-top: linear-gradient(#ffffff, #ffffff),
     linear-gradient(var(--nest-top-right-bg), var(--nest-top-right-bg)),
     linear-gradient(var(--nest-top-right-bg), var(--nest-top-right-bg)),
@@ -107,14 +104,14 @@
     linear-gradient(var(--nest-top-right-bg), var(--nest-top-right-bg)),
     linear-gradient(var(--nest-top-right-bg), var(--nest-top-right-bg));
 
-  --finish-row-top-position: var(--finish-col-mid) 0,
-    var(--finish-col-mid) var(--size-tile),
-    var(--finish-col-mid) calc(var(--size-tile) * 2),
-    var(--finish-col-mid) calc(var(--size-tile) * 3),
-    var(--finish-col-mid) calc(var(--size-tile) * 4),
-    var(--finish-col-mid) calc(var(--size-tile) * 5);
+  --finish-row-top-position: var(--finish-row-base) 0,
+    var(--finish-row-base) var(--size-tile),
+    var(--finish-row-base) calc(var(--size-tile) * 2),
+    var(--finish-row-base) calc(var(--size-tile) * 3),
+    var(--finish-row-base) calc(var(--size-tile) * 4),
+    var(--finish-row-base) calc(var(--size-tile) * 5);
 
-  /* Left home: white arrow cell + 5 red (horizontal row) */
+  /* Left home: white arrow cell + 5 green */
   --finish-row-left: linear-gradient(#ffffff, #ffffff),
     linear-gradient(var(--nest-top-left-bg), var(--nest-top-left-bg)),
     linear-gradient(var(--nest-top-left-bg), var(--nest-top-left-bg)),
@@ -122,14 +119,14 @@
     linear-gradient(var(--nest-top-left-bg), var(--nest-top-left-bg)),
     linear-gradient(var(--nest-top-left-bg), var(--nest-top-left-bg));
 
-  --finish-row-left-position: 0 calc(var(--finish-row-base) - 0.5px),
-    var(--size-tile) calc(var(--finish-row-base) - 0.5px),
-    calc(var(--size-tile) * 2) calc(var(--finish-row-base) - 0.5px),
-    calc(var(--size-tile) * 3) calc(var(--finish-row-base) - 0.5px),
-    calc(var(--size-tile) * 4) calc(var(--finish-row-base) - 0.5px),
-    calc(var(--size-tile) * 5) calc(var(--finish-row-base) - 0.5px);
+  --finish-row-left-position: 0 var(--finish-row-base),
+    var(--size-tile) var(--finish-row-base),
+    calc(var(--size-tile) * 2) var(--finish-row-base),
+    calc(var(--size-tile) * 3) var(--finish-row-base),
+    calc(var(--size-tile) * 4) var(--finish-row-base),
+    calc(var(--size-tile) * 5) var(--finish-row-base);
 
-  /* Right home: 5 yellow + white arrow cell */
+  /* Right home: 5 blue + white arrow cell */
   --finish-row-right: linear-gradient(
       var(--nest-bottom-right-bg),
       var(--nest-bottom-right-bg)
@@ -140,15 +137,14 @@
     linear-gradient(var(--nest-bottom-right-bg), var(--nest-bottom-right-bg)),
     linear-gradient(#ffffff, #ffffff);
 
-  --finish-row-right-position: calc(var(--size-tile) * 9)
-      calc(var(--finish-row-base) - 0.5px),
-    calc(var(--size-tile) * 10) calc(var(--finish-row-base) - 0.5px),
-    calc(var(--size-tile) * 11) calc(var(--finish-row-base) - 0.5px),
-    calc(var(--size-tile) * 12) calc(var(--finish-row-base) - 0.5px),
-    calc(var(--size-tile) * 13) calc(var(--finish-row-base) - 0.5px),
-    calc(var(--size-tile) * 14) calc(var(--finish-row-base) - 0.5px);
+  --finish-row-right-position: calc(var(--size-tile) * 9) var(--finish-row-base),
+    calc(var(--size-tile) * 10) var(--finish-row-base),
+    calc(var(--size-tile) * 11) var(--finish-row-base),
+    calc(var(--size-tile) * 12) var(--finish-row-base),
+    calc(var(--size-tile) * 13) var(--finish-row-base),
+    calc(var(--size-tile) * 14) var(--finish-row-base);
 
-  /* Bottom home: 5 blue + white arrow cell (vertical column) */
+  /* Bottom home: 5 red + white arrow cell */
   --finish-bottom-right: linear-gradient(
       var(--nest-bottom-left-bg),
       var(--nest-bottom-left-bg)
@@ -159,13 +155,13 @@
     linear-gradient(var(--nest-bottom-left-bg), var(--nest-bottom-left-bg)),
     linear-gradient(#ffffff, #ffffff);
 
-  --finish-bottom-right-position: var(--finish-col-mid)
+  --finish-bottom-right-position: var(--finish-row-base)
       calc(var(--size-tile) * 9),
-    var(--finish-col-mid) calc(var(--size-tile) * 10),
-    var(--finish-col-mid) calc(var(--size-tile) * 11),
-    var(--finish-col-mid) calc(var(--size-tile) * 12),
-    var(--finish-col-mid) calc(var(--size-tile) * 13),
-    var(--finish-col-mid) calc(var(--size-tile) * 14);
+    var(--finish-row-base) calc(var(--size-tile) * 10),
+    var(--finish-row-base) calc(var(--size-tile) * 11),
+    var(--finish-row-base) calc(var(--size-tile) * 12),
+    var(--finish-row-base) calc(var(--size-tile) * 13),
+    var(--finish-row-base) calc(var(--size-tile) * 14);
 
   /*
     Luzo start cells (col,row): R(1,6) G(8,1) Y(13,8) B(6,13)
@@ -246,8 +242,7 @@
   overflow: visible;
   background-image: var(--finish-row-top), var(--finish-row-left),
     var(--finish-row-right), var(--finish-bottom-right), var(--safe-points);
-  /* +1px overlap kills subpixel white seams on home-lane fills */
-  background-size: var(--finish-cell) var(--finish-cell);
+  background-size: var(--size-tile) var(--size-tile);
   background-position: var(--finish-row-top-position),
     var(--finish-row-left-position), var(--finish-row-right-position),
     var(--finish-bottom-right-position), var(--safe-points-position);
