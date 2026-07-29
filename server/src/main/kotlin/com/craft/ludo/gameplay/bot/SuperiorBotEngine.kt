@@ -105,14 +105,9 @@ object SuperiorBotEngine {
     }
 
     /**
-     * Hard move priorities:
-     * 1. Complete the match when a legal move wins immediately.
-     * 2. Capture an opponent token.
-     * 3. Move a token from the main path into the protected home lane.
-     * 4. Finish a token at home.
-     * 5. Fall back to the highest scored strategic move.
-     *
-     * These priorities only rank legal moves; dice outcomes remain random.
+     * A match-winning move is the only hard priority. Every other legal move
+     * competes on total expected value, allowing a safe hunt, finish, escape,
+     * or supporting token to beat a low-value suicidal capture.
      */
     private fun selectPriorityMove(
         players: List<MatchPlayerState>,
@@ -126,38 +121,9 @@ object SuperiorBotEngine {
             return tokensAllFinished(resulting[playerIndex])
         }
 
-        fun isCapture(evaluation: MoveEvaluation): Boolean {
-            return captureTargets(players, playerIndex, evaluation.move).isNotEmpty()
-        }
-
-        fun entersHomeLane(evaluation: MoveEvaluation): Boolean {
-            val move = evaluation.move
-            return move.fromProgress <= MAIN_PATH_LAST_PROGRESS &&
-                move.toProgress in HOME_LANE_START_PROGRESS..HOME_LANE_LAST_PROGRESS
-        }
-
-        fun finishesToken(evaluation: MoveEvaluation): Boolean {
-            return evaluation.move.toProgress == FINISHED_PROGRESS
-        }
-
         val winningMoves = evaluations.filter(::isWinning)
         if (winningMoves.isNotEmpty()) {
             return tieBreak(winningMoves, random)
-        }
-
-        val capturingMoves = evaluations.filter(::isCapture)
-        if (capturingMoves.isNotEmpty()) {
-            return tieBreak(capturingMoves, random)
-        }
-
-        val homeLaneMoves = evaluations.filter(::entersHomeLane)
-        if (homeLaneMoves.isNotEmpty()) {
-            return tieBreak(homeLaneMoves, random)
-        }
-
-        val tokenFinishingMoves = evaluations.filter(::finishesToken)
-        if (tokenFinishingMoves.isNotEmpty()) {
-            return tieBreak(tokenFinishingMoves, random)
         }
 
         return tieBreak(evaluations, random)
@@ -238,11 +204,6 @@ object SuperiorBotEngine {
             }
         }
 
-        val guaranteedCaptureExists = movableTokenIndexes.any { tokenIndex ->
-            val move = candidateMove(players[playerIndex], tokenIndex, diceValue)
-            captureTargets(players, playerIndex, move).isNotEmpty()
-        }
-
         return movableTokenIndexes.map { tokenIndex ->
             val move = candidateMove(players[playerIndex], tokenIndex, diceValue)
             val resultingPlayers = simulateMove(players, playerIndex, move, diceValue)
@@ -259,6 +220,12 @@ object SuperiorBotEngine {
                 resultingPlayers = resultingPlayers,
                 threatByOpponent = threatByOpponent,
                 twoPlayer = twoPlayer,
+                weights = weights,
+            ) + huntReward(
+                players = players,
+                playerIndex = playerIndex,
+                move = move,
+                threatByOpponent = threatByOpponent,
                 weights = weights,
             )
             val strategic = strategicReward(
@@ -283,17 +250,8 @@ object SuperiorBotEngine {
                 )
             }
 
-            var finalScore =
+            val finalScore =
                 immediate + progress + safety + attack + strategic + future + risk
-
-            if (
-                guaranteedCaptureExists &&
-                captures.isEmpty() &&
-                !tokensAllFinished(resultingPlayers[playerIndex])
-            ) {
-                // Strongly punish skipping a kill when one is available (unless this move wins).
-                finalScore += weights.ignoreGuaranteedCapture
-            }
 
             MoveEvaluation(
                 move = move,
@@ -530,6 +488,62 @@ object SuperiorBotEngine {
         return reward
     }
 
+    /**
+     * Values opponents that can be reached with fair future dice rolls.
+     *
+     * This is not dice prediction: exact-sum probabilities are calculated from
+     * the uniform 1..6 distribution for each of the next few turns. Targets
+     * close to home and opponents with high overall threat are worth more.
+     */
+    private fun huntReward(
+        players: List<MatchPlayerState>,
+        playerIndex: Int,
+        move: CandidateMove,
+        threatByOpponent: List<Double>,
+        weights: BotRewardWeights,
+    ): Double {
+        if (move.toProgress !in 0..MAIN_PATH_LAST_PROGRESS) {
+            return 0.0
+        }
+
+        val horizon = weights.huntHorizonTurns.coerceIn(1, 4)
+        var reward = 0.0
+        players.forEachIndexed { opponentIndex, opponent ->
+            if (opponentIndex == playerIndex || opponent.isEffectivelyAbandoned()) {
+                return@forEachIndexed
+            }
+
+            opponent.tokens.forEachIndexed { tokenIndex, opponentProgress ->
+                if (opponentProgress !in 0..MAIN_PATH_LAST_PROGRESS) {
+                    return@forEachIndexed
+                }
+                val targetKey = boardCellKey(opponent.color, opponentProgress, tokenIndex)
+                if (ludoSafeCellKeys.contains(targetKey)) {
+                    return@forEachIndexed
+                }
+
+                val distance = forwardDistanceToCell(
+                    color = players[playerIndex].color,
+                    tokenIndex = move.tokenIndex,
+                    fromProgress = move.toProgress,
+                    targetKey = targetKey,
+                    maxDistance = horizon * 6,
+                ) ?: return@forEachIndexed
+                if (distance == 0) {
+                    return@forEachIndexed
+                }
+
+                val reachProbability = exactReachProbability(distance, horizon)
+                val targetValue =
+                    1.0 +
+                        opponentProgress.toDouble() / FINISHED_PROGRESS * 1.4 +
+                        threatByOpponent.getOrElse(opponentIndex) { 0.0 } * 0.06
+                reward += weights.huntReward * reachProbability * targetValue
+            }
+        }
+        return reward
+    }
+
     private fun strategicReward(
         players: List<MatchPlayerState>,
         playerIndex: Int,
@@ -546,6 +560,49 @@ object SuperiorBotEngine {
             reward += weights.breakOwnBlockade * 0.5
         } else if (afterStacks > 0) {
             reward += weights.maintainBlockade * 0.25
+        }
+        reward += tokenDiversityReward(players[playerIndex], move, weights)
+        return reward
+    }
+
+    /**
+     * Develops several tokens instead of repeatedly running only the leader.
+     * The trailing outside token becomes support/hunter while home-lane tokens
+     * naturally retain their finisher rewards.
+     */
+    private fun tokenDiversityReward(
+        player: MatchPlayerState,
+        move: CandidateMove,
+        weights: BotRewardWeights,
+    ): Double {
+        val outside = player.tokens.withIndex()
+            .filter { it.value in 0..MAIN_PATH_LAST_PROGRESS }
+        if (outside.isEmpty()) {
+            return if (move.fromProgress == -1) weights.tokenDiversityReward else 0.0
+        }
+
+        val trailingProgress = outside.minOf { it.value }
+        val leadingProgress = outside.maxOf { it.value }
+        val spread = leadingProgress - trailingProgress
+        var reward = 0.0
+
+        if (move.fromProgress == -1 && outside.size < 3) {
+            reward += weights.tokenDiversityReward * (1.0 - outside.size * 0.2)
+        }
+        if (
+            outside.size >= 2 &&
+            move.fromProgress == trailingProgress &&
+            spread >= 10
+        ) {
+            reward += weights.tokenDiversityReward * (spread.coerceAtMost(30) / 30.0)
+        }
+        if (
+            outside.size >= 2 &&
+            move.fromProgress == leadingProgress &&
+            spread >= 20 &&
+            leadingProgress < HOME_LANE_START_PROGRESS
+        ) {
+            reward -= weights.tokenDiversityReward * 0.35
         }
         return reward
     }
@@ -564,12 +621,14 @@ object SuperiorBotEngine {
         if (ludoSafeCellKeys.contains(key)) {
             return 0.0
         }
-        val attackers = countAttackers(players, playerIndex, key)
-        return when {
-            attackers >= 2 -> weights.multiOpponentDanger * 0.35
-            attackers == 1 -> weights.exposeToCapture * 0.25
-            else -> 0.0
-        }
+        val dangerProbability = captureProbabilityWithinTurns(
+            players = players,
+            playerIndex = playerIndex,
+            cellKey = key,
+            horizonTurns = 2,
+        )
+        val progressMultiplier = 1.0 + progress.toDouble() / FINISHED_PROGRESS
+        return weights.dangerProbabilityPenalty * dangerProbability * progressMultiplier
     }
 
     private fun expectimaxOpponentPly(
@@ -687,6 +746,103 @@ object SuperiorBotEngine {
             }
         }
         return targets
+    }
+
+    private fun forwardDistanceToCell(
+        color: String,
+        tokenIndex: Int,
+        fromProgress: Int,
+        targetKey: String,
+        maxDistance: Int,
+    ): Int? {
+        if (fromProgress !in 0..MAIN_PATH_LAST_PROGRESS) {
+            return null
+        }
+        val allowedDistance = minOf(maxDistance, MAIN_PATH_LAST_PROGRESS - fromProgress)
+        for (distance in 1..allowedDistance) {
+            if (boardCellKey(color, fromProgress + distance, tokenIndex) == targetKey) {
+                return distance
+            }
+        }
+        return null
+    }
+
+    /**
+     * Probability of landing on an exact distance within N fair rolls.
+     * Positive dice mean reaching the distance on different roll counts is
+     * mutually exclusive, so their probabilities can be added safely.
+     */
+    private fun exactReachProbability(distance: Int, horizonTurns: Int): Double {
+        if (distance <= 0) {
+            return 0.0
+        }
+        var distribution = doubleArrayOf(1.0)
+        var probability = 0.0
+        repeat(horizonTurns) {
+            val next = DoubleArray(distribution.size + 6)
+            distribution.forEachIndexed { sum, chance ->
+                if (chance == 0.0) return@forEachIndexed
+                for (dice in 1..6) {
+                    next[sum + dice] += chance / 6.0
+                }
+            }
+            distribution = next
+            probability += distribution.getOrElse(distance) { 0.0 }
+        }
+        return probability.coerceIn(0.0, 1.0)
+    }
+
+    private fun captureProbabilityWithinTurns(
+        players: List<MatchPlayerState>,
+        playerIndex: Int,
+        cellKey: String,
+        horizonTurns: Int,
+    ): Double {
+        var survivalProbability = 1.0
+        players.forEachIndexed { opponentIndex, opponent ->
+            if (opponentIndex == playerIndex || opponent.isEffectivelyAbandoned()) {
+                return@forEachIndexed
+            }
+            val distances = opponent.tokens.mapIndexedNotNull { tokenIndex, progress ->
+                forwardDistanceToCell(
+                    color = opponent.color,
+                    tokenIndex = tokenIndex,
+                    fromProgress = progress,
+                    targetKey = cellKey,
+                    maxDistance = horizonTurns * 6,
+                )
+            }.toSet()
+            val opponentCaptureProbability = probabilityOfAnyReach(distances, horizonTurns)
+            survivalProbability *= 1.0 - opponentCaptureProbability
+        }
+        return (1.0 - survivalProbability).coerceIn(0.0, 1.0)
+    }
+
+    /**
+     * Enumerates at most 6^2 paths in current use. A path succeeds when any
+     * cumulative fair-dice total reaches one of the opponent's token distances.
+     */
+    private fun probabilityOfAnyReach(distances: Set<Int>, horizonTurns: Int): Double {
+        if (distances.isEmpty() || horizonTurns <= 0) {
+            return 0.0
+        }
+        var successfulPaths = 0L
+        var totalPaths = 0L
+
+        fun visit(turn: Int, sum: Int, captured: Boolean) {
+            if (turn == horizonTurns) {
+                totalPaths += 1
+                if (captured) successfulPaths += 1
+                return
+            }
+            for (dice in 1..6) {
+                val nextSum = sum + dice
+                visit(turn + 1, nextSum, captured || nextSum in distances)
+            }
+        }
+
+        visit(turn = 0, sum = 0, captured = false)
+        return if (totalPaths == 0L) 0.0 else successfulPaths.toDouble() / totalPaths
     }
 
     private fun countAttackers(

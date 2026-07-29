@@ -11,6 +11,7 @@ import {
   mockBootState,
 } from "@/app/lib/mock-state";
 import { IS_FRIENDS_MODE_VISIBLE } from "@/app/lib/features";
+import { pickStableBotName } from "@/app/lib/bot-usernames";
 import { Dice3D } from "@/app/components/dice-3d";
 import {
   createPrivateRoom as createPrivateRoomRequest,
@@ -307,11 +308,6 @@ const YARD_LOOKUP = new Map(
   ),
 );
 
-const BOT_NAME_BY_COLOR = {
-  green: "Aarav",
-  yellow: "Meera",
-  blue: "Kabir",
-};
 const TURN_ROLL_DELAY_MS = 500;
 const BOT_MOVE_DELAY_MS = 850;
 const TURN_ADVANCE_DELAY_MS = 750;
@@ -896,14 +892,24 @@ function prependMatchEvent(events, actor, detail) {
 }
 
 function normalizeMatchPlayers(players, userPlayerId) {
-  return players.map((player, index) => ({
-    ...player,
-    isBot: player.id !== userPlayerId || index !== 0,
-    name:
-      player.id === userPlayerId && index === 0
-        ? player.name
-        : (BOT_NAME_BY_COLOR[player.color] ?? "Guest Player"),
-  }));
+  const usedNames = [];
+
+  return players.map((player, index) => {
+    const isUser = player.id === userPlayerId && index === 0;
+    const isBot = !isUser;
+    let name = player.name;
+
+    if (isBot) {
+      name = pickStableBotName(player.id || `${player.color}-${index}`, usedNames);
+      usedNames.push(name);
+    }
+
+    return {
+      ...player,
+      isBot,
+      name,
+    };
+  });
 }
 
 const PLAYER_CARD_COLOR_ORDER = ["red", "green", "yellow", "blue"];
@@ -2350,14 +2356,16 @@ function MainHeader({
         width={120}
         height={120}
       />
-      <HeaderActionButton
-        iconSrc="/assets/MainSettingsIcon.png"
-        label="Open settings"
-        onClick={onUtilities}
-        className="is-settings"
-        width={30}
-        height={30}
-      />
+      {onUtilities ? (
+        <HeaderActionButton
+          iconSrc="/assets/MainSettingsIcon.png"
+          label="Open settings"
+          onClick={onUtilities}
+          className="is-settings"
+          width={30}
+          height={30}
+        />
+      ) : null}
     </header>
   );
 }
@@ -4480,7 +4488,6 @@ function WaitingLobbyScreen({
   countdownMs,
   statusMessage = "",
   onLeave,
-  onOpenUtilities,
   onOpenWallet,
   onOpenHistory,
 }) {
@@ -4495,7 +4502,6 @@ function WaitingLobbyScreen({
       <BoardHeader
         profile={appState.profile}
         wallet={appState.wallet}
-        onUtilities={onOpenUtilities}
         onOpenWallet={onOpenWallet}
         onNotifications={onOpenHistory}
       />
@@ -5007,7 +5013,6 @@ function PrivateRoomLobbyScreen({
   onStart,
   onTransferHost,
   onLeave,
-  onOpenUtilities,
   onOpenWallet,
   onOpenHistory,
 }) {
@@ -5021,7 +5026,6 @@ function PrivateRoomLobbyScreen({
       <BoardHeader
         profile={appState.profile}
         wallet={appState.wallet}
-        onUtilities={onOpenUtilities}
         onOpenWallet={onOpenWallet}
         onNotifications={onOpenHistory}
       />
@@ -6185,7 +6189,6 @@ function PrivateRoomPageShell({ appState }) {
           onStart={handleStartRoom}
           onTransferHost={handleTransferHost}
           onLeave={() => setIsLeaveConfirmOpen(true)}
-          onOpenUtilities={() => setIsUtilityOpen(true)}
           onOpenWallet={undefined}
           onOpenHistory={() => {}}
         />
@@ -6951,7 +6954,6 @@ function OnlineBoardPageShell({ appState, configuredMaxPlayers }) {
           countdownMs={lobbyCountdownMs}
           statusMessage={statusMessage}
           onLeave={handleRequestLeaveOnlineRoom}
-          onOpenUtilities={() => setIsUtilityOpen(true)}
           onOpenWallet={undefined}
           onOpenHistory={() => {}}
         />

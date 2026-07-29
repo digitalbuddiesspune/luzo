@@ -573,10 +573,11 @@ class OnlineMatchmakingService(
         }
         while (seats.size < maxPlayers) {
             val color = remainingColors[seats.size - humans.size]
+            val usedNames = seats.map { seat -> seat.displayName }
             seats.add(
                 RoomSeat(
                     userId = newId("bot"),
-                    displayName = botDisplayName(color),
+                    displayName = botDisplayName(color, usedNames),
                     color = color,
                     isBot = true,
                     joinedAt = now,
@@ -825,7 +826,20 @@ class OnlineMatchmakingService(
             ?: Mono.empty()
 
         return settlement
-            .onErrorResume { Mono.empty() }
+            .onErrorResume { error ->
+                log.error(
+                    "Ludo winner payout failed; room will finish without a payout ledger row " +
+                        "roomId={} roomCode={} matchId={} winnerUserId={} reservations={} reason={}",
+                    room.id,
+                    room.code,
+                    match.id,
+                    match.winnerUserId,
+                    room.walletReservations.size,
+                    error.message ?: error.javaClass.simpleName,
+                    error,
+                )
+                Mono.empty()
+            }
             .then(
                 roomRepository.save(
                     room.copy(

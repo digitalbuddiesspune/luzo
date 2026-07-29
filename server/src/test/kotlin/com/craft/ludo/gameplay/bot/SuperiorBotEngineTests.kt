@@ -236,7 +236,7 @@ class SuperiorBotEngineTests {
     }
 
     @Test
-    fun `entering home lane has priority over finishing one token`() {
+    fun `finishing token wins unified evaluation over home lane entry`() {
         val players = listOf(
             bot("green", listOf(50, 55, 5, -1)),
             human("yellow", listOf(-1, -1, -1, -1)),
@@ -251,7 +251,7 @@ class SuperiorBotEngineTests {
             random = Random(13),
         )
 
-        assertThat(chosen).isEqualTo(0)
+        assertThat(chosen).isEqualTo(1)
     }
 
     @Test
@@ -268,6 +268,51 @@ class SuperiorBotEngineTests {
             diceValue = 1,
             difficultyOverride = BotDifficulty.SUPER,
             random = Random(14),
+        )
+
+        assertThat(chosen).isEqualTo(0)
+    }
+
+    @Test
+    fun `bot hunts valuable opponent reachable in future turns`() {
+        // After dice=3, token 0 is seven cells behind yellow@49 and can hunt it
+        // over the next two rolls. Token 1 has no forward target.
+        val players = listOf(
+            bot("green", listOf(0, 8, -1, -1)),
+            human("yellow", listOf(49, -1, -1, -1)),
+        )
+
+        val chosen = SuperiorBotEngine.chooseToken(
+            players = players,
+            playerIndex = 0,
+            movableTokenIndexes = listOf(0, 1),
+            diceValue = 3,
+            difficultyOverride = BotDifficulty.HARD,
+            weightsOverride = BotRewardWeights(
+                huntReward = 1_200.0,
+                huntHorizonTurns = 3,
+            ),
+            random = Random(15),
+        )
+
+        assertThat(chosen).isEqualTo(0)
+    }
+
+    @Test
+    fun `bot develops trailing outside token instead of relying on leader`() {
+        val players = listOf(
+            bot("green", listOf(0, 20, -1, -1)),
+            human("yellow", listOf(-1, -1, -1, -1)),
+        )
+
+        val chosen = SuperiorBotEngine.chooseToken(
+            players = players,
+            playerIndex = 0,
+            movableTokenIndexes = listOf(0, 1),
+            diceValue = 3,
+            difficultyOverride = BotDifficulty.HARD,
+            weightsOverride = BotRewardWeights(tokenDiversityReward = 400.0),
+            random = Random(16),
         )
 
         assertThat(chosen).isEqualTo(0)

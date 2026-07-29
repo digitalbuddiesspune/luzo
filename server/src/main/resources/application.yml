@@ -84,6 +84,10 @@ app:
       break-own-blockade: ${APP_GAMEPLAY_BOT_BREAK_OWN_BLOCKADE:-300}
       ignore-guaranteed-capture: ${APP_GAMEPLAY_BOT_IGNORE_GUARANTEED_CAPTURE:-2000}
       leave-safety-into-danger: ${APP_GAMEPLAY_BOT_LEAVE_SAFETY_INTO_DANGER:-250}
+      hunt-reward: ${APP_GAMEPLAY_BOT_HUNT_REWARD:650}
+      danger-probability-penalty: ${APP_GAMEPLAY_BOT_DANGER_PROBABILITY_PENALTY:-900}
+      token-diversity-reward: ${APP_GAMEPLAY_BOT_TOKEN_DIVERSITY_REWARD:180}
+      hunt-horizon-turns: ${APP_GAMEPLAY_BOT_HUNT_HORIZON_TURNS:3}
 
   wallet:
     currency: ${APP_WALLET_CURRENCY:INR}

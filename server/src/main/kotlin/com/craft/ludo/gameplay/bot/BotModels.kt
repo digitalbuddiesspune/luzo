@@ -28,6 +28,10 @@ data class BotRewardWeights(
     val ignoreGuaranteedCapture: Double = -2_000.0,
     val leaveSafetyIntoDanger: Double = -250.0,
     val twoPlayerAttackMultiplier: Double = 1.60,
+    val huntReward: Double = 650.0,
+    val dangerProbabilityPenalty: Double = -900.0,
+    val tokenDiversityReward: Double = 180.0,
+    val huntHorizonTurns: Int = 3,
     val expectimaxDepth: Int = 2,
     val maxDecisionMillis: Long = 45,
 )

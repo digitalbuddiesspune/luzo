@@ -340,7 +340,39 @@ internal val botNamesByColor = mapOf(
     "blue" to "Kabir",
 )
 
-internal fun botDisplayName(color: String): String = botNamesByColor[color] ?: "Guest Player"
+private val indianBotUsernames: List<String> by lazy {
+    val loaded = RoomDocument::class.java.classLoader
+        ?.getResourceAsStream("bot-usernames.txt")
+        ?.bufferedReader()
+        ?.useLines { lines ->
+            lines.map { it.trim() }.filter { it.isNotEmpty() }.toList()
+        }
+        .orEmpty()
+
+    if (loaded.isNotEmpty()) {
+        loaded
+    } else {
+        botNamesByColor.values.toList()
+    }
+}
+
+internal fun botDisplayName(
+    color: String,
+    usedNames: Collection<String> = emptyList(),
+): String {
+    val excluded = usedNames
+        .map { it.trim().lowercase() }
+        .filter { it.isNotEmpty() }
+        .toSet()
+    val pool = indianBotUsernames.filter { name ->
+        name.lowercase() !in excluded
+    }
+    val source = if (pool.isNotEmpty()) pool else indianBotUsernames
+    if (source.isEmpty()) {
+        return botNamesByColor[color] ?: "Guest Player"
+    }
+    return source.random()
+}
 
 internal fun allowsPublicPvpMatchmaking(
     waitingRealPlayerCount: Int,

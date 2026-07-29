@@ -46,6 +46,10 @@ fun BotProperties.toRewardWeights(): BotRewardWeights = BotRewardWeights(
     ignoreGuaranteedCapture = ignoreGuaranteedCapture,
     leaveSafetyIntoDanger = leaveSafetyIntoDanger,
     twoPlayerAttackMultiplier = twoPlayerAttackMultiplier,
+    huntReward = huntReward,
+    dangerProbabilityPenalty = dangerProbabilityPenalty,
+    tokenDiversityReward = tokenDiversityReward,
+    huntHorizonTurns = huntHorizonTurns,
     expectimaxDepth = expectimaxDepth,
     maxDecisionMillis = maxDecisionMillis,
 )

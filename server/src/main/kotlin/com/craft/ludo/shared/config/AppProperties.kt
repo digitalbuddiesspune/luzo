@@ -53,6 +53,10 @@ data class BotProperties(
     val breakOwnBlockade: Double = -300.0,
     val ignoreGuaranteedCapture: Double = -2_000.0,
     val leaveSafetyIntoDanger: Double = -250.0,
+    val huntReward: Double = 650.0,
+    val dangerProbabilityPenalty: Double = -900.0,
+    val tokenDiversityReward: Double = 180.0,
+    val huntHorizonTurns: Int = 3,
 )
 
 data class WalletProperties(
