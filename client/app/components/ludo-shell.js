@@ -355,7 +355,7 @@ const TOKEN_STEP_ANIMATION_MS = 200;
 const CAPTURE_RETURN_STEP_MS = 28;
 const CAPTURE_RETURN_SAMPLES_PER_SEGMENT = 4;
 const TURN_WARNING_THRESHOLD_SECONDS = 5;
-const DICE_ROLL_MIN_SPIN_MS = 700;
+const DICE_ROLL_MIN_SPIN_MS = 500;
 const MAIN_PATH_LAST_PROGRESS = 50;
 const HOME_LANE_START_PROGRESS = 51;
 const HOME_LANE_LAST_PROGRESS = 55;
@@ -3120,10 +3120,12 @@ function PlayerStatusCard({
   const finishedTokens = player.tokens.filter(
     (token) => token >= FINISHED_PROGRESS,
   ).length;
-  const showRollCue = canRollDice || isWaitingToRoll || isRollingDice;
+  const showRollCue = canRollDice || isRollingDice;
   const spinningValue = rollTargetValue ?? lastDiceValue;
   // Prefer rolling animation over the settled face so opponents/bots don't
   // skip the tumble when the server result arrives early.
+  // While waiting for another human to roll, keep a static face (Ludo King style)
+  // — animate only when isRollingDice / opponentDiceSpin kicks in after they roll.
   const diceSlot = isRollingDice ? (
     <RollDiceButton
       value={spinningValue}
@@ -3140,12 +3142,7 @@ function PlayerStatusCard({
       showRollCue
     />
   ) : isWaitingToRoll ? (
-    <RollDiceButton
-      value={lastDiceValue}
-      onRollDice={onRollDice}
-      rolling
-      showRollCue
-    />
+    <DieFace value={lastDiceValue} active={isCurrentTurn} />
   ) : (
     <div className="die-slot" aria-hidden="true" />
   );

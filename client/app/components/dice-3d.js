@@ -95,7 +95,7 @@ export function Dice3D({
   rolling = false,
   active = false,
   className = "",
-  rollDurationMs = 700,
+  rollDurationMs = 500,
 }) {
   const cubeRef = useRef(null);
   const safeValue = clampDiceValue(value);
