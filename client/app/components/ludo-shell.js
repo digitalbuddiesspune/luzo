@@ -714,106 +714,6 @@ function resolveTokenCell(color, progress, tokenIndex) {
   return [7, 7];
 }
 
-/**
- * Finished-token anchors — kept well inside each triangle (not on edges).
- * Diamond spans ~40–60% of board; zone centers sit inward from the tip.
- */
-const HOME_FINISH_ZONE = {
-  red: { left: 44.5, top: 50 },
-  green: { left: 50, top: 44.5 },
-  yellow: { left: 55.5, top: 50 },
-  blue: { left: 50, top: 55.5 },
-};
-
-/** Compact offsets so pins + rings stay inside the triangle. */
-const HOME_FINISH_LAYOUTS = {
-  red: {
-    1: [{ x: 0, y: 0 }],
-    2: [
-      { x: 0.3, y: -2.4 },
-      { x: 0.3, y: 2.4 },
-    ],
-    3: [
-      { x: -0.6, y: -2.5 },
-      { x: -0.6, y: 2.5 },
-      { x: 1.6, y: 0 },
-    ],
-    4: [
-      { x: -0.8, y: -2.3 },
-      { x: -0.8, y: 2.3 },
-      { x: 1.7, y: -1.2 },
-      { x: 1.7, y: 1.2 },
-    ],
-  },
-  green: {
-    1: [{ x: 0, y: 0 }],
-    2: [
-      { x: -2.4, y: 0.3 },
-      { x: 2.4, y: 0.3 },
-    ],
-    3: [
-      { x: -2.5, y: -0.6 },
-      { x: 2.5, y: -0.6 },
-      { x: 0, y: 1.6 },
-    ],
-    4: [
-      { x: -2.3, y: -0.8 },
-      { x: 2.3, y: -0.8 },
-      { x: -1.2, y: 1.7 },
-      { x: 1.2, y: 1.7 },
-    ],
-  },
-  yellow: {
-    1: [{ x: 0, y: 0 }],
-    2: [
-      { x: -0.3, y: -2.4 },
-      { x: -0.3, y: 2.4 },
-    ],
-    3: [
-      { x: 0.6, y: -2.5 },
-      { x: 0.6, y: 2.5 },
-      { x: -1.6, y: 0 },
-    ],
-    4: [
-      { x: 0.8, y: -2.3 },
-      { x: 0.8, y: 2.3 },
-      { x: -1.7, y: -1.2 },
-      { x: -1.7, y: 1.2 },
-    ],
-  },
-  blue: {
-    1: [{ x: 0, y: 0 }],
-    2: [
-      { x: -2.4, y: -0.3 },
-      { x: 2.4, y: -0.3 },
-    ],
-    3: [
-      { x: -2.5, y: 0.6 },
-      { x: 2.5, y: 0.6 },
-      { x: 0, y: -1.6 },
-    ],
-    4: [
-      { x: -2.3, y: 0.8 },
-      { x: 2.3, y: 0.8 },
-      { x: -1.2, y: -1.7 },
-      { x: 1.2, y: -1.7 },
-    ],
-  },
-};
-
-function getHomeFinishCenterPercent(color, finishSlot, finishCount) {
-  const zone = HOME_FINISH_ZONE[color] ?? HOME_FINISH_ZONE.red;
-  const count = Math.min(Math.max(finishCount || 1, 1), 4);
-  const slot = Math.min(Math.max(finishSlot || 0, 0), count - 1);
-  const layouts = HOME_FINISH_LAYOUTS[color] ?? HOME_FINISH_LAYOUTS.red;
-  const fan = layouts[count][slot] ?? { x: 0, y: 0 };
-
-  return {
-    left: zone.left + fan.x,
-    top: zone.top + fan.y,
-  };
-}
-
 function getCellCenterPercent(row, col) {
   return {
     left: ((col + 0.5) / 15) * 100,
@@ -829,10 +729,10 @@ function getYardSlotCenterPercent(color, tokenIndex) {
     blue: { left: 0, top: 60 },
   };
   const slotCenterByIndex = [
-    { left: 35, top: 35 },
-    { left: 65, top: 35 },
-    { left: 35, top: 65 },
-    { left: 65, top: 65 },
+    { left: 31.9, top: 31.9 },
+    { left: 68.1, top: 31.9 },
+    { left: 31.9, top: 68.1 },
+    { left: 68.1, top: 68.1 },
   ];
 
   const houseOrigin = houseOriginByColor[color] ?? houseOriginByColor.red;
@@ -3306,14 +3206,12 @@ function PlayerStatusCard({
 function BoardToken({
   color,
   stackIndex,
-  stackCount = 1,
   isSelectable,
   showChoiceRing = false,
   isUserTurnToken = false,
   onSelect,
 }) {
   const pressHandlers = useImmediatePress(onSelect, !isSelectable);
-  const stackClass = `stack-count-${Math.min(Math.max(stackCount, 1), 8)} stack-i-${stackIndex}`;
   const tokenImage = (
     <TokenPin
       color={color}
@@ -3335,7 +3233,7 @@ function BoardToken({
   if (!isSelectable) {
     return (
       <span
-        className={`board-token-marker ${stackClass}${isUserTurnToken ? " is-user-turn-token" : ""}`}
+        className={`board-token-marker stack-${stackIndex}${isUserTurnToken ? " is-user-turn-token" : ""}`}
       >
         {markerContent}
       </span>
@@ -3345,7 +3243,7 @@ function BoardToken({
   return (
     <button
       type="button"
-      className={`board-token-button ${stackClass} is-choice`}
+      className={`board-token-button stack-${stackIndex} is-choice`}
       {...pressHandlers}
       aria-label={`Move ${color} token`}
     >
@@ -3520,7 +3418,6 @@ function BoardPathCell({
             key={token.id}
             color={token.color}
             stackIndex={tokenIndex}
-            stackCount={tokens.length}
             isSelectable={isSelectable}
             showChoiceRing={showChoiceRing}
             isUserTurnToken={isUserTurnToken}
@@ -3569,32 +3466,6 @@ function LudoBoard({
     () => getBoardRotationQuarterTurns(userColor) * 90,
     [userColor],
   );
-  const boardSurfaceRef = useRef(null);
-
-  useEffect(() => {
-    const node = boardSurfaceRef.current;
-    if (!node) {
-      return undefined;
-    }
-
-    const syncBoardMetrics = () => {
-      const width = node.getBoundingClientRect().width;
-      if (!width) {
-        return;
-      }
-
-      const tile = width / 15;
-      node.style.setProperty("--size-board", `${width}px`);
-      node.style.setProperty("--size-tile", `${tile}px`);
-    };
-
-    syncBoardMetrics();
-
-    const observer = new ResizeObserver(syncBoardMetrics);
-    observer.observe(node);
-
-    return () => observer.disconnect();
-  }, []);
 
   useEffect(() => {
     displayPlayersRef.current = displayPlayers;
@@ -3783,7 +3654,7 @@ function LudoBoard({
     [capturedTokenAnimations],
   );
 
-  const { tokenMap, yardTokenMap, finishTokens } = useMemo(() => {
+  const { tokenMap, yardTokenMap } = useMemo(() => {
     const boardEntries = new Map();
     const yardEntries = {
       red: Array(4).fill(null),
@@ -3791,7 +3662,6 @@ function LudoBoard({
       yellow: Array(4).fill(null),
       blue: Array(4).fill(null),
     };
-    const finished = [];
 
     displayPlayers.forEach((player) => {
       player.tokens.forEach((progress, tokenIndex) => {
@@ -3811,11 +3681,6 @@ function LudoBoard({
           return;
         }
 
-        if (progress >= FINISHED_PROGRESS) {
-          finished.push(token);
-          return;
-        }
-
         const [row, col] = resolveTokenCell(player.color, progress, tokenIndex);
         const key = `${row}-${col}`;
         const tokens = boardEntries.get(key) ?? [];
@@ -3827,7 +3692,6 @@ function LudoBoard({
     return {
       tokenMap: boardEntries,
       yardTokenMap: yardEntries,
-      finishTokens: finished,
     };
   }, [displayPlayers, animatingCapturedTokenIds]);
   const shouldHighlightUserBoardTokens =
@@ -3840,13 +3704,24 @@ function LudoBoard({
   return (
     <div className="ludo-board-frame">
       <div
-        ref={boardSurfaceRef}
         className="ludo-board-surface"
         style={{
           transform: `rotate(${boardRotation}deg)`,
           "--token-upright-rotation": `${-boardRotation}deg`,
         }}
       >
+        {Object.entries(HOME_ASSETS).map(([color, asset]) => (
+          <img
+            key={color}
+            className={`board-home-image house-${color}${activeTurnColor === color ? " is-turn-house" : ""}`}
+            src={asset}
+            alt=""
+            width={137}
+            height={137}
+            draggable={false}
+          />
+        ))}
+
         {Object.keys(HOME_ASSETS).map((color) => (
           <div
             key={`${color}-yard`}
@@ -3866,6 +3741,15 @@ function LudoBoard({
             ))}
           </div>
         ))}
+
+        <img
+          className="board-final-home"
+          src="/assets/BoardFinalDest.png"
+          alt=""
+          width={70}
+          height={70}
+          draggable={false}
+        />
 
         <div className="board-grid">
           {Array.from({ length: 15 * 15 }, (_, index) => {
@@ -3914,50 +3798,6 @@ function LudoBoard({
             );
           })}
         </div>
-
-        {(() => {
-          const finishCountByColor = finishTokens.reduce((counts, token) => {
-            counts[token.color] = (counts[token.color] || 0) + 1;
-            return counts;
-          }, {});
-          const finishSlotByColor = {
-            red: 0,
-            green: 0,
-            yellow: 0,
-            blue: 0,
-          };
-
-          return finishTokens.map((token) => {
-            const finishCount = finishCountByColor[token.color] || 1;
-            const finishSlot = finishSlotByColor[token.color] || 0;
-            finishSlotByColor[token.color] = finishSlot + 1;
-            const position = getHomeFinishCenterPercent(
-              token.color,
-              finishSlot,
-              finishCount,
-            );
-
-            return (
-              <span
-                key={`finish-${token.id}`}
-                className="board-finish-token-slot"
-                style={{
-                  left: `${position.left}%`,
-                  top: `${position.top}%`,
-                }}
-              >
-                <BoardToken
-                  color={token.color}
-                  stackIndex={0}
-                  stackCount={1}
-                  isSelectable={false}
-                  showChoiceRing={false}
-                  isUserTurnToken={false}
-                />
-              </span>
-            );
-          });
-        })()}
 
         {capturedTokenAnimations.map((animation) => (
           <span

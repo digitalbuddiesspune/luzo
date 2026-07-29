@@ -18,11 +18,10 @@ class SuperiorBotConfiguration(
         SuperiorBotEngine.difficulty = parseDifficulty(bot.difficulty)
         SuperiorBotEngine.weights = bot.toRewardWeights()
         log.info(
-            "Superior bot configured difficulty={} expectimaxDepth={} maxDecisionMillis={} debug={}",
+            "Superior bot configured difficulty={} expectimaxDepth={} maxDecisionMillis={}",
             SuperiorBotEngine.difficulty,
             SuperiorBotEngine.weights.expectimaxDepth,
             SuperiorBotEngine.weights.maxDecisionMillis,
-            SuperiorBotEngine.weights.debugLogging,
         )
     }
 }
@@ -51,17 +50,8 @@ fun BotProperties.toRewardWeights(): BotRewardWeights = BotRewardWeights(
     dangerProbabilityPenalty = dangerProbabilityPenalty,
     tokenDiversityReward = tokenDiversityReward,
     huntHorizonTurns = huntHorizonTurns,
-    balanceReward = balanceReward,
-    territoryReward = territoryReward,
-    pressureReward = pressureReward,
-    escapeReward = escapeReward,
-    homeLaneFinishBonus = homeLaneFinishBonus,
-    captureNearHomeBonus = captureNearHomeBonus,
-    captureAdvancedBonus = captureAdvancedBonus,
-    lateProgressMultiplier = lateProgressMultiplier,
     expectimaxDepth = expectimaxDepth,
     maxDecisionMillis = maxDecisionMillis,
-    debugLogging = debugLogging,
 )
 
 fun parseDifficulty(raw: String): BotDifficulty =
