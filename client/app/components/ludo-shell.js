@@ -3222,6 +3222,7 @@ function PlayerStatusCard({
   lastDiceValue = 1,
   rollTargetValue = null,
   turnProgress,
+  turnSecondsLeft = 0,
   canRollDice = false,
   isRollingDice = false,
   isWaitingToRoll = false,
@@ -3257,9 +3258,25 @@ function PlayerStatusCard({
     <div className="die-slot" aria-hidden="true" />
   );
 
+  const showTurnTimer = isCurrentTurn && !player.isAbandoned;
+  const isUrgent = showTurnTimer && isUser && turnSecondsLeft <= 5;
+  const clampedProgress = showTurnTimer
+    ? Math.max(0, Math.min(1, turnProgress))
+    : 0;
+
   return (
     <article
-      className={`board-player-card color-${color} ${isCurrentTurn ? "is-current-turn" : ""} ${isUser ? "is-user" : ""} ${player.isAbandoned ? "is-abandoned" : ""}`}
+      className={`board-player-card color-${color} ${isCurrentTurn ? "is-current-turn" : ""} ${isUser ? "is-user" : ""} ${player.isAbandoned ? "is-abandoned" : ""} ${showTurnTimer ? "has-turn-timer" : ""} ${isUrgent ? "is-turn-urgent" : ""}`}
+      style={
+        showTurnTimer
+          ? { "--turn-progress": clampedProgress }
+          : undefined
+      }
+      aria-label={
+        showTurnTimer
+          ? `${isUser ? "Your turn" : `${player.name}'s turn`}, ${Math.max(0, turnSecondsLeft)} seconds left`
+          : undefined
+      }
     >
       {player.isAbandoned ? (
         <div className="player-abandoned-overlay">
@@ -3291,13 +3308,6 @@ function PlayerStatusCard({
             ))}
           </div>
         </div>
-      </div>
-
-      <div
-        className={`player-turn-timer ${isCurrentTurn ? "is-active" : ""}`}
-        aria-hidden="true"
-      >
-        <span style={{ transform: `scaleX(${turnProgress})` }} />
       </div>
     </article>
   );
@@ -4030,6 +4040,11 @@ function BoardScreen({
   const [potIntroPhase, setPotIntroPhase] = useState("visible");
   const potIntroMatchIdRef = useRef(match.id);
   const isPotIntroBlocking = potIntroPhase !== "done";
+  const turnTimeoutSeconds =
+    match.turnTimeoutSeconds ?? match.turnTimer ?? 30;
+  const turnSecondsLeft = isPotIntroBlocking
+    ? 0
+    : Math.max(0, Math.ceil(turnProgress * turnTimeoutSeconds));
 
   useEffect(() => {
     if (potIntroMatchIdRef.current === match.id) {
@@ -4567,6 +4582,13 @@ function BoardScreen({
                       ? turnProgress
                       : 0
                 }
+                turnSecondsLeft={
+                  isPotIntroBlocking
+                    ? 0
+                    : visibleTurnUserId === player.id
+                      ? turnSecondsLeft
+                      : 0
+                }
               />
             ) : (
               <div
@@ -4625,6 +4647,13 @@ function BoardScreen({
                     ? 0
                     : visibleTurnUserId === player.id
                       ? turnProgress
+                      : 0
+                }
+                turnSecondsLeft={
+                  isPotIntroBlocking
+                    ? 0
+                    : visibleTurnUserId === player.id
+                      ? turnSecondsLeft
                       : 0
                 }
               />
