@@ -369,6 +369,7 @@ const soundController = {
   matchStartAudio: null,
   tokenCaptureAudio: null,
   homeArrivalAudio: null,
+  starLandAudio: null,
   matchWinAudio: null,
   matchLoseAudio: null,
   lobbyMusicAudio: null,
@@ -574,6 +575,20 @@ const soundController = {
     // Clone so multi-cell goti moves can overlap step sounds cleanly.
     const stepAudio = this.tokenStepAudio.cloneNode();
     stepAudio.play().catch(() => {});
+  },
+
+  starLand() {
+    if (this.muted || typeof window === "undefined") {
+      return;
+    }
+
+    if (!this.starLandAudio) {
+      this.starLandAudio = new window.Audio("/sounds/star-land.mp3");
+      this.starLandAudio.preload = "auto";
+    }
+
+    this.starLandAudio.currentTime = 0;
+    this.starLandAudio.play().catch(() => {});
   },
 
   homeArrival() {
@@ -2078,6 +2093,38 @@ function hasNewHomeArrival(previousPlayers = [], nextPlayers = []) {
   );
 }
 
+function moveLandsOnStarCell(previousPlayers = [], nextPlayers = []) {
+  return nextPlayers.some((player, playerIndex) => {
+    const previousPlayer = previousPlayers[playerIndex];
+    if (!previousPlayer || previousPlayer.id !== player.id) {
+      return false;
+    }
+
+    return player.tokens.some((progress, tokenIndex) => {
+      const previousProgress = previousPlayer.tokens[tokenIndex];
+      if (previousProgress === progress || typeof progress !== "number") {
+        return false;
+      }
+
+      // Only forward moves (or leaving the yard) can land on a star.
+      if (
+        typeof previousProgress === "number" &&
+        previousProgress >= 0 &&
+        progress < previousProgress
+      ) {
+        return false;
+      }
+
+      if (progress < 0) {
+        return false;
+      }
+
+      const cellKey = getBoardCellKey(player.color, progress, tokenIndex);
+      return Object.prototype.hasOwnProperty.call(STAR_SAFE_CELLS, cellKey);
+    });
+  });
+}
+
 function useGameplayTransitionSounds(match) {
   const previousStateRef = useRef(null);
 
@@ -3553,6 +3600,7 @@ function LudoBoard({
   onAnimationChange,
   onTokenStep,
   onTokenCapture,
+  onStarLand,
   userPlayerId,
 }) {
   const [displayPlayers, setDisplayPlayers] = useState(() =>
@@ -3724,6 +3772,7 @@ function LudoBoard({
     }
 
     const frames = buildTokenAnimationFrames(currentPlayers, nextPlayers);
+    const landsOnStar = moveLandsOnStarCell(currentPlayers, nextPlayers);
     const capturedAnimations = buildCapturedTokenAnimations(
       currentPlayers,
       nextPlayers,
@@ -3745,6 +3794,9 @@ function LudoBoard({
 
     if (totalAnimationDuration <= 0) {
       onTokenStep?.();
+      if (landsOnStar) {
+        onStarLand?.();
+      }
       setDisplayPlayers(nextPlayers);
       startCapturedTokenAnimations(capturedAnimations, 0);
       return;
@@ -3759,6 +3811,9 @@ function LudoBoard({
               () => {
                 onTokenStep?.();
                 setDisplayPlayers(framePlayers);
+                if (landsOnStar && frameIndex === frames.length - 1) {
+                  onStarLand?.();
+                }
               },
               TOKEN_STEP_ANIMATION_MS * frameIndex,
             ),
@@ -3786,7 +3841,7 @@ function LudoBoard({
         setDisplayPlayers(pendingPlayers);
       }
     }, totalAnimationDuration);
-  }, [match.players, onAnimationChange, onTokenCapture, onTokenStep]);
+  }, [match.players, onAnimationChange, onTokenCapture, onTokenStep, onStarLand]);
 
   const animatingCapturedTokenIds = useMemo(
     () => new Set(capturedTokenAnimations.map((animation) => animation.id)),
@@ -4613,6 +4668,7 @@ function BoardScreen({
             onAnimationChange={handleBoardAnimationChange}
             onTokenStep={() => soundController.tokenStep()}
             onTokenCapture={() => soundController.tokenCapture()}
+            onStarLand={() => soundController.starLand()}
             userPlayerId={userPlayerId}
           />
         </div>
