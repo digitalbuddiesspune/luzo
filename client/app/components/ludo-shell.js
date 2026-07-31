@@ -1014,7 +1014,7 @@ function normalizeMatchPlayers(players, userPlayerId) {
 
 const PLAYER_CARD_COLOR_ORDER = ["red", "green", "yellow", "blue"];
 const PLAYER_CARD_BOTTOM_RIGHT_COLOR = "yellow";
-const TURN_COLOR_ORDER = ["red", "blue", "yellow", "green"];
+const TURN_COLOR_ORDER = ["red", "green", "yellow", "blue"];
 
 function sortPlayersByTurnOrder(players) {
   return [...players].sort((left, right) => {

@@ -329,7 +329,7 @@ data class MatchRealtimeRedisMessage(
 )
 
 internal val playerColors = listOf("red", "green", "yellow", "blue")
-private val antiClockwiseTurnColors = listOf("red", "blue", "yellow", "green")
+private val clockwiseTurnColors = listOf("red", "green", "yellow", "blue")
 private val diagonalColorPairs = listOf(
     listOf("red", "yellow"),
     listOf("green", "blue"),
@@ -674,9 +674,9 @@ internal fun randomizeSeatColors(seats: List<RoomSeat>): List<RoomSeat> {
     }
 }
 
-private fun antiClockwiseColorIndex(color: String): Int {
-    val index = antiClockwiseTurnColors.indexOf(color)
-    return if (index == -1) antiClockwiseTurnColors.size else index
+private fun clockwiseColorIndex(color: String): Int {
+    val index = clockwiseTurnColors.indexOf(color)
+    return if (index == -1) clockwiseTurnColors.size else index
 }
 
 internal fun RoomDocument.toSummary(): RoomSummaryResponse {
@@ -1280,7 +1280,7 @@ class MatchService(
                     operatorId = seat.operatorId,
                 )
             }
-            .sortedBy { player -> antiClockwiseColorIndex(player.color) }
+            .sortedBy { player -> clockwiseColorIndex(player.color) }
         val openingPlayer = players.first()
         val match = MatchDocument(
             id = matchId,
