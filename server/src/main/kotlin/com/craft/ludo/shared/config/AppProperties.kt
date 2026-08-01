@@ -27,10 +27,6 @@ data class GameplayProperties(
     val rollDelayMillis: Long = 700,
     val botMoveDelayMillis: Long = 850,
     val advanceDelayMillis: Long = 750,
-    /** After this many failed open rolls (all tokens still in yard), next roll is a guaranteed 6. Same for humans and bots. */
-    val openingSixPityAfterRolls: Int = 3,
-    /** While stuck in yard, slightly raise six chance (2/7). Same for humans and bots. */
-    val openingSixSoftBoost: Boolean = true,
     val bot: BotProperties = BotProperties(),
 )
 

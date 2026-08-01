@@ -61,8 +61,6 @@ app:
     roll-delay-millis: ${APP_GAMEPLAY_ROLL_DELAY_MILLIS:700}
     bot-move-delay-millis: ${APP_GAMEPLAY_BOT_MOVE_DELAY_MILLIS:850}
     advance-delay-millis: ${APP_GAMEPLAY_ADVANCE_DELAY_MILLIS:750}
-    opening-six-pity-after-rolls: ${APP_GAMEPLAY_OPENING_SIX_PITY_AFTER_ROLLS:3}
-    opening-six-soft-boost: ${APP_GAMEPLAY_OPENING_SIX_SOFT_BOOST:true}
     bot:
       difficulty: ${APP_GAMEPLAY_BOT_DIFFICULTY:SUPER}
       expectimax-depth: ${APP_GAMEPLAY_BOT_EXPECTIMAX_DEPTH:2}

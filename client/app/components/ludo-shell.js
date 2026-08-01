@@ -888,46 +888,9 @@ function samplePathPositions(anchorPositions) {
   return sampledPositions;
 }
 
-function needsOpeningSix(player) {
-  const hasYardToken = player.tokens.some((progress) => progress < 0);
-  const hasOnBoardToken = player.tokens.some(
-    (progress) => progress >= 0 && progress < FINISHED_PROGRESS,
-  );
-  return hasYardToken && !hasOnBoardToken;
-}
-
-function nextConsecutiveFailedOpenRolls(player, dice) {
-  if (!needsOpeningSix(player)) {
-    return 0;
-  }
-
-  return dice === 6 ? 0 : (player.consecutiveFailedOpenRolls ?? 0) + 1;
-}
-
-function rollDiceValue(
-  consecutiveSixCount = 0,
-  {
-    needsOpeningSix: openingNeeded = false,
-    consecutiveFailedOpenRolls = 0,
-    openingSixPityAfterRolls = 3,
-    openingSixSoftBoost = true,
-  } = {},
-) {
+function rollDiceValue(consecutiveSixCount = 0) {
   if (consecutiveSixCount >= 2) {
     return Math.floor(Math.random() * 5) + 1;
-  }
-
-  if (
-    openingNeeded &&
-    openingSixPityAfterRolls > 0 &&
-    consecutiveFailedOpenRolls >= openingSixPityAfterRolls
-  ) {
-    return 6;
-  }
-
-  if (openingNeeded && openingSixSoftBoost) {
-    const roll = Math.floor(Math.random() * 7) + 1;
-    return roll === 7 ? 6 : roll;
   }
 
   return Math.floor(Math.random() * 6) + 1;
@@ -1442,20 +1405,7 @@ function rollInteractiveMatch(match) {
   }
 
   const activePlayer = match.players[match.currentPlayerIndex];
-  const openingNeeded = needsOpeningSix(activePlayer);
-  const dice = rollDiceValue(match.consecutiveSixCount ?? 0, {
-    needsOpeningSix: openingNeeded,
-    consecutiveFailedOpenRolls: activePlayer.consecutiveFailedOpenRolls ?? 0,
-  });
-  const nextFailedOpenRolls = nextConsecutiveFailedOpenRolls(activePlayer, dice);
-  const players =
-    nextFailedOpenRolls === (activePlayer.consecutiveFailedOpenRolls ?? 0)
-      ? match.players
-      : match.players.map((player, index) =>
-          index === match.currentPlayerIndex
-            ? { ...player, consecutiveFailedOpenRolls: nextFailedOpenRolls }
-            : player,
-        );
+  const dice = rollDiceValue(match.consecutiveSixCount ?? 0);
   const selectableTokenIndexes = getMovableTokenIndexes(activePlayer, dice);
   const nextConsecutiveSixCount =
     dice === 6 ? (match.consecutiveSixCount ?? 0) + 1 : 0;
@@ -1466,7 +1416,6 @@ function rollInteractiveMatch(match) {
 
   const rolledMatch = {
     ...match,
-    players,
     dice,
     consecutiveSixCount: nextConsecutiveSixCount,
     phase: selectableTokenIndexes.length === 0
