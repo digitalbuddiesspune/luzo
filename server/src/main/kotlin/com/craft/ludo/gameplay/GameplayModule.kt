@@ -132,6 +132,8 @@ data class MatchPlayerState(
     val isAbandoned: Boolean = false,
     val tokens: List<Int>,
     val consecutiveMissedTurns: Int = 0,
+    /** Failed rolls while needing a 6 to leave yard; shared pity for humans and bots. */
+    val consecutiveFailedOpenRolls: Int = 0,
     val operatorUserId: String? = null,
     val operatorId: String? = null,
 )
@@ -963,12 +965,45 @@ internal fun chooseBotToken(
     )
 }
 
-private fun randomDice(consecutiveSixCount: Int = 0): Int {
-    return if (consecutiveSixCount >= 2) {
-        (1..5).random()
-    } else {
-        (1..6).random()
+internal fun needsOpeningSix(player: MatchPlayerState): Boolean {
+    val hasYardToken = player.tokens.any { it < 0 }
+    val hasOnBoardToken = player.tokens.any { it in 0 until FINISHED_PROGRESS }
+    return hasYardToken && !hasOnBoardToken
+}
+
+internal fun nextConsecutiveFailedOpenRolls(
+    player: MatchPlayerState,
+    dice: Int,
+): Int {
+    if (!needsOpeningSix(player)) {
+        return 0
     }
+    return if (dice == 6) 0 else player.consecutiveFailedOpenRolls + 1
+}
+
+internal fun randomDice(
+    consecutiveSixCount: Int = 0,
+    needsOpeningSix: Boolean = false,
+    consecutiveFailedOpenRolls: Int = 0,
+    openingSixPityAfterRolls: Int = 3,
+    openingSixSoftBoost: Boolean = true,
+): Int {
+    if (consecutiveSixCount >= 2) {
+        return (1..5).random()
+    }
+    if (
+        needsOpeningSix &&
+        openingSixPityAfterRolls > 0 &&
+        consecutiveFailedOpenRolls >= openingSixPityAfterRolls
+    ) {
+        return 6
+    }
+    if (needsOpeningSix && openingSixSoftBoost) {
+        // Faces 1..6 plus an extra 6 → 2/7 chance while stuck in yard.
+        val roll = (1..7).random()
+        return if (roll == 7) 6 else roll
+    }
+    return (1..6).random()
 }
 
 private fun clientIp(request: ServerHttpRequest): String? {
@@ -1234,12 +1269,17 @@ class MatchService(
     private val rollDelayMillis = appProperties.gameplay.rollDelayMillis
     private val botMoveDelayMillis = appProperties.gameplay.botMoveDelayMillis
     private val advanceDelayMillis = appProperties.gameplay.advanceDelayMillis
+    private val openingSixPityAfterRolls = appProperties.gameplay.openingSixPityAfterRolls
+    private val openingSixSoftBoost = appProperties.gameplay.openingSixSoftBoost
     private val noMoveRollHoldMillis = 700L
 
     init {
         require(turnTimeoutSeconds > 0) { "app.gameplay.turn-timeout-seconds must be positive." }
         require(maxConsecutiveMissedTurns > 0) {
             "app.gameplay.max-consecutive-missed-turns must be positive."
+        }
+        require(openingSixPityAfterRolls >= 0) {
+            "app.gameplay.opening-six-pity-after-rolls must be non-negative."
         }
         require(houseUserId.isNotBlank()) { "app.wallet.house-user-id must not be blank." }
     }
@@ -1689,7 +1729,26 @@ class MatchService(
             match
         }
         val rollingPlayer = matchForRoll.players[playerIndex]
-        val dice = randomDice(matchForRoll.consecutiveSixCount)
+        val openingNeeded = needsOpeningSix(rollingPlayer)
+        val dice = randomDice(
+            consecutiveSixCount = matchForRoll.consecutiveSixCount,
+            needsOpeningSix = openingNeeded,
+            consecutiveFailedOpenRolls = rollingPlayer.consecutiveFailedOpenRolls,
+            openingSixPityAfterRolls = openingSixPityAfterRolls,
+            openingSixSoftBoost = openingSixSoftBoost,
+        )
+        val nextFailedOpenRolls = nextConsecutiveFailedOpenRolls(rollingPlayer, dice)
+        val playersAfterRoll = if (nextFailedOpenRolls == rollingPlayer.consecutiveFailedOpenRolls) {
+            matchForRoll.players
+        } else {
+            matchForRoll.players.mapIndexed { index, player ->
+                if (index == playerIndex) {
+                    player.copy(consecutiveFailedOpenRolls = nextFailedOpenRolls)
+                } else {
+                    player
+                }
+            }
+        }
         val selectableTokenIndexes = movableTokenIndexes(rollingPlayer, dice)
         val nextConsecutiveSixCount = if (dice == 6) {
             matchForRoll.consecutiveSixCount + 1
@@ -1708,6 +1767,7 @@ class MatchService(
             lastRollDisplayName = rollingPlayer.displayName,
             lastRollDice = dice,
             consecutiveSixCount = nextConsecutiveSixCount,
+            players = playersAfterRoll,
             phase = when {
                 selectableTokenIndexes.isEmpty() -> MatchPhase.ADVANCING
                 rollingPlayer.isBot -> MatchPhase.BOT_MOVING
