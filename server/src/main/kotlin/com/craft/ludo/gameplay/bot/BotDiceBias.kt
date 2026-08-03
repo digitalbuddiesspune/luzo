@@ -30,7 +30,7 @@ data class BotDiceSettings(
     }
 
     companion object {
-        const val DEFAULT_BOT_KILL_FAVOR_PERCENT = 30
+        const val DEFAULT_BOT_KILL_FAVOR_PERCENT = 33
         const val DEFAULT_USER_KILL_FAVOR_PERCENT = 30
         const val DEFAULT_SIX_BOOST_PERCENT = 15
 
