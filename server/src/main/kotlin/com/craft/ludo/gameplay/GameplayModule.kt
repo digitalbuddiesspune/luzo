@@ -5,6 +5,15 @@ import com.craft.ludo.identity.SessionPrincipalResolver
 import com.craft.ludo.shared.api.DomainException
 import com.craft.ludo.shared.config.AppProperties
 import com.craft.ludo.shared.support.newId
+import com.craft.ludo.gameplay.bot.BotDiceDecision
+import com.craft.ludo.gameplay.bot.BotDiceSettings
+import com.craft.ludo.gameplay.bot.KillStalkPlan
+import com.craft.ludo.gameplay.bot.buildDiceRollContext
+import com.craft.ludo.gameplay.bot.incrementPlayerRollStats
+import com.craft.ludo.gameplay.bot.rollBotDice
+import com.craft.ludo.gameplay.bot.rollUserDice
+import com.craft.ludo.gameplay.bot.stalkPlanFor
+import com.craft.ludo.gameplay.bot.upsertStalkPlan
 import com.craft.ludo.wallet.WalletReservation
 import com.craft.ludo.wallet.WalletService
 import com.fasterxml.jackson.annotation.JsonProperty
@@ -132,6 +141,8 @@ data class MatchPlayerState(
     val isAbandoned: Boolean = false,
     val tokens: List<Int>,
     val consecutiveMissedTurns: Int = 0,
+    val matchDiceRollCount: Int = 0,
+    val matchSixCount: Int = 0,
     val operatorUserId: String? = null,
     val operatorId: String? = null,
 )
@@ -166,6 +177,9 @@ data class MatchDocument(
     val players: List<MatchPlayerState>,
     val selectableTokenIndexes: List<Int> = emptyList(),
     val pendingNextPlayerIndex: Int? = null,
+    /** Server-only bot hunt state; never exposed in match snapshots. */
+    val botStalkPlans: List<KillStalkPlan> = emptyList(),
+    val botForcedTokenIndex: Int? = null,
     val phaseDeadlineAt: Instant? = null,
     val turnDeadlineAt: Instant? = null,
     val winnerUserId: String? = null,
@@ -1471,8 +1485,7 @@ class MatchService(
                 }
 
                 val now = Instant.now(clock)
-                val rolledMatch = resolveRoll(match, now)
-                persistMatchTransition(rolledMatch)
+                persistMatchTransition(resolveRoll(match, now))
             }
     }
 
@@ -1616,12 +1629,15 @@ class MatchService(
             match.phase == MatchPhase.BOT_MOVING &&
                 match.phaseDeadlineAt != null &&
                 !now.isBefore(match.phaseDeadlineAt) -> {
-                val tokenIndex = chooseBotToken(
-                    match.players,
-                    match.currentPlayerIndex,
-                    match.selectableTokenIndexes,
-                    match.dice ?: 1,
-                )
+                // A staged hunt already picked the token the rigged dice was meant for.
+                val tokenIndex = match.botForcedTokenIndex
+                    ?.takeIf { forced -> match.selectableTokenIndexes.contains(forced) }
+                    ?: chooseBotToken(
+                        match.players,
+                        match.currentPlayerIndex,
+                        match.selectableTokenIndexes,
+                        match.dice ?: 1,
+                    )
                 persistMatchTransition(applyTokenMove(match, tokenIndex, now))
             }
 
@@ -1680,7 +1696,11 @@ class MatchService(
         )
     }
 
-    private fun resolveRoll(match: MatchDocument, now: Instant): MatchDocument {
+    private fun resolveRoll(
+        match: MatchDocument,
+        now: Instant,
+    ): MatchDocument {
+        val botDiceSettings = BotDiceSettings.DEFAULT
         val playerIndex = match.currentPlayerIndex
         val activePlayer = match.players[playerIndex]
         val matchForRoll = if (!activePlayer.isBot) {
@@ -1689,7 +1709,29 @@ class MatchService(
             match
         }
         val rollingPlayer = matchForRoll.players[playerIndex]
-        val dice = randomDice(matchForRoll.consecutiveSixCount)
+        val diceContext = buildDiceRollContext(matchForRoll.players, playerIndex)
+        val rollDecision = if (rollingPlayer.isBot) {
+            rollBotDice(
+                consecutiveSixCount = matchForRoll.consecutiveSixCount,
+                players = matchForRoll.players,
+                playerIndex = playerIndex,
+                settings = botDiceSettings,
+                context = diceContext,
+                stalkPlan = stalkPlanFor(matchForRoll.botStalkPlans, playerIndex),
+            )
+        } else {
+            BotDiceDecision(
+                dice = rollUserDice(
+                    consecutiveSixCount = matchForRoll.consecutiveSixCount,
+                    players = matchForRoll.players,
+                    playerIndex = playerIndex,
+                    killFavorPercent = botDiceSettings.userKillFavorFor(matchForRoll.players.size),
+                    context = diceContext,
+                ),
+            )
+        }
+        val dice = rollDecision.dice
+        val playersAfterRoll = incrementPlayerRollStats(matchForRoll.players, playerIndex, dice)
         val selectableTokenIndexes = movableTokenIndexes(rollingPlayer, dice)
         val nextConsecutiveSixCount = if (dice == 6) {
             matchForRoll.consecutiveSixCount + 1
@@ -1703,6 +1745,7 @@ class MatchService(
         }
 
         val rolledMatch = matchForRoll.copy(
+            players = playersAfterRoll,
             dice = dice,
             lastRollUserId = rollingPlayer.userId,
             lastRollDisplayName = rollingPlayer.displayName,
@@ -1719,6 +1762,13 @@ class MatchService(
             } else {
                 null
             },
+            botStalkPlans = if (rollingPlayer.isBot) {
+                upsertStalkPlan(matchForRoll.botStalkPlans, playerIndex, rollDecision.stalkPlan)
+            } else {
+                matchForRoll.botStalkPlans
+            },
+            botForcedTokenIndex = rollDecision.forcedTokenIndex
+                ?.takeIf { tokenIndex -> selectableTokenIndexes.contains(tokenIndex) },
             phaseDeadlineAt = when {
                 selectableTokenIndexes.isEmpty() -> now.plusMillis(noMoveRollHoldMillis)
                 rollingPlayer.isBot -> now.plusMillis(botMoveDelayMillis)
@@ -1820,6 +1870,7 @@ class MatchService(
             phase = if (hasWon) MatchPhase.FINISHED else MatchPhase.ADVANCING,
             players = mutablePlayers.toList(),
             selectableTokenIndexes = emptyList(),
+            botForcedTokenIndex = null,
             pendingNextPlayerIndex = if (hasWon) null else nextPlayerIndex,
             phaseDeadlineAt = if (hasWon) null else now.plusMillis(advanceDelayMillis),
             turnDeadlineAt = if (hasWon) null else match.turnDeadlineAt,
@@ -2063,6 +2114,7 @@ class MatchService(
             dice = null,
             selectableTokenIndexes = emptyList(),
             pendingNextPlayerIndex = null,
+            botForcedTokenIndex = null,
             phaseDeadlineAt = if (activePlayer.isBot) now.plusMillis(rollDelayMillis) else null,
             turnDeadlineAt = now.plusSeconds(match.turnTimeoutSeconds),
             updatedAt = now,

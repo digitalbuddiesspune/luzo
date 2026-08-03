@@ -312,11 +312,11 @@ const TURN_ROLL_DELAY_MS = 500;
 const BOT_MOVE_DELAY_MS = 850;
 const TURN_ADVANCE_DELAY_MS = 750;
 const DICE_PASS_DELAY_MS = 500;
-const TURN_TICK_MS = 100;
+const TURN_TICK_MS = 250;
 const ONLINE_SOCKET_RECONNECT_DELAY_MS = 1500;
 const ONLINE_LOBBY_POLL_MS = 2000;
-const ONLINE_LOBBY_FAST_POLL_MS = 400;
-const ONLINE_LOBBY_BOT_FILL_POLL_MS = 250;
+const ONLINE_LOBBY_FAST_POLL_MS = 1000;
+const ONLINE_LOBBY_BOT_FILL_POLL_MS = 1000;
 // Must exceed server hung/recovery windows (12s hung claim, 15s full recovery)
 // so the client does not leave mid fee-debit and undo an in-flight bot start.
 const ONLINE_LOBBY_STUCK_STARTING_MS = 20000;
@@ -888,12 +888,691 @@ function samplePathPositions(anchorPositions) {
   return sampledPositions;
 }
 
+// Dice bias for the offline board. The online server mirrors these in
+// server/src/main/kotlin/com/craft/ludo/gameplay/bot/BotDiceBias.kt, and
+// BotDiceBiasTests fails when the two sides drift apart. Change both together.
+const BOT_KILL_FAVOR_2P = 55;
+const USER_KILL_FAVOR_2P = 30;
+const BOT_KILL_FAVOR_MULTI = 55;
+const USER_KILL_FAVOR_MULTI = 30;
+const BOT_SIX_BOOST_PERCENT = 15;
+const TARGET_PLAYER_TO_BOT_SIX_RATIO = 7 / 11;
+/** Bot→bot kill favor (~2–3 of 10), kept low so bots do not farm each other. */
+const BOT_VS_BOT_KILL_FAVOR_PERCENT = 25;
+/**
+ * Favor for the exact face that walks a bot token onto its home square.
+ * Matches are won by bringing four tokens home rather than by capturing, and an
+ * "exact number" reads as luck far more than a suspicious run of kills does.
+ */
+const BOT_HOME_FINISH_FAVOR_PERCENT = 60;
+
+function killFavorPercentForBot(players) {
+  return players.length === 2 ? BOT_KILL_FAVOR_2P : BOT_KILL_FAVOR_MULTI;
+}
+
+function killFavorPercentForUser(players) {
+  return players.length === 2 ? USER_KILL_FAVOR_2P : USER_KILL_FAVOR_MULTI;
+}
+const FIRST_SIX_MIN_ROLL_NUMBER = 2;
+const FIRST_SIX_MAX_ROLL_NUMBER = 6;
+const MIN_TOTAL_SIXES_BEFORE_BALANCE = 3;
+const MAX_SIX_PROBABILITY = 0.35;
+
+function aggregateBotMatchSixRolls(players) {
+  return players
+    .filter((player) => player.isBot && !player.isAbandoned)
+    .reduce((total, player) => total + (player.matchSixCount ?? 0), 0);
+}
+
+function aggregatePlayerMatchSixRolls(players) {
+  return players
+    .filter((player) => !player.isBot && !player.isAbandoned)
+    .reduce((total, player) => total + (player.matchSixCount ?? 0), 0);
+}
+
+function buildDiceRollContext(players, playerIndex) {
+  const roller = players[playerIndex];
+  if (!roller) {
+    return {
+      rollerMatchDiceRollCount: 0,
+      rollerMatchSixCount: 0,
+      botMatchSixRolls: 0,
+      playerMatchSixRolls: 0,
+    };
+  }
+
+  return {
+    rollerMatchDiceRollCount: roller.matchDiceRollCount ?? 0,
+    rollerMatchSixCount: roller.matchSixCount ?? 0,
+    botMatchSixRolls: aggregateBotMatchSixRolls(players),
+    playerMatchSixRolls: aggregatePlayerMatchSixRolls(players),
+  };
+}
+
+function incrementPlayerRollStats(players, playerIndex, dice) {
+  return players.map((player, index) => {
+    if (index !== playerIndex) {
+      return player;
+    }
+    return {
+      ...player,
+      matchDiceRollCount: (player.matchDiceRollCount ?? 0) + 1,
+      matchSixCount: (player.matchSixCount ?? 0) + (dice === 6 ? 1 : 0),
+    };
+  });
+}
+
+function allowsFirstSixOnThisRoll(rollerMatchSixCount, nextRollNumber) {
+  if (rollerMatchSixCount > 0) {
+    return true;
+  }
+  if (nextRollNumber < FIRST_SIX_MIN_ROLL_NUMBER) {
+    return false;
+  }
+  return true;
+}
+
+function computeSixProbabilityNudge(isBot, botMatchSixRolls, playerMatchSixRolls) {
+  const totalSixes = botMatchSixRolls + playerMatchSixRolls;
+  if (totalSixes < MIN_TOTAL_SIXES_BEFORE_BALANCE) {
+    return 0;
+  }
+
+  const expectedPlayerSixes = botMatchSixRolls * TARGET_PLAYER_TO_BOT_SIX_RATIO;
+  const playerGap = expectedPlayerSixes - playerMatchSixRolls;
+  const expectedBotSixes = TARGET_PLAYER_TO_BOT_SIX_RATIO <= 0
+    ? botMatchSixRolls
+    : playerMatchSixRolls / TARGET_PLAYER_TO_BOT_SIX_RATIO;
+  const botGap = expectedBotSixes - botMatchSixRolls;
+  const jitter = (Math.random() - 0.5) * 0.02;
+
+  if (isBot) {
+    if (botGap > 0.75) {
+      return Math.min(0.10, Math.max(0, botGap * 0.03)) + jitter;
+    }
+    if (botGap < -1.0) {
+      return Math.max(-0.05, Math.min(0, botGap * 0.015)) + jitter;
+    }
+    return jitter * 0.4;
+  }
+
+  if (playerGap > 0.75) {
+    return Math.min(0.08, Math.max(0, playerGap * 0.022)) + jitter;
+  }
+  if (playerGap < -1.0) {
+    return Math.max(-0.05, Math.min(0, playerGap * 0.015)) + jitter;
+  }
+  return jitter * 0.4;
+}
+
+function firstSixWindowNudge(rollerMatchSixCount, nextRollNumber) {
+  if (rollerMatchSixCount > 0) {
+    return 0;
+  }
+  if (
+    nextRollNumber < FIRST_SIX_MIN_ROLL_NUMBER ||
+    nextRollNumber > FIRST_SIX_MAX_ROLL_NUMBER
+  ) {
+    return 0;
+  }
+  return 0.03 + Math.random() * 0.02;
+}
+
+function resolveAllowSix(consecutiveSixCount, isBot, context) {
+  const nextRollNumber = context.rollerMatchDiceRollCount + 1;
+  if (!allowsFirstSixOnThisRoll(context.rollerMatchSixCount, nextRollNumber)) {
+    return false;
+  }
+  if (isBot) {
+    return (consecutiveSixCount ?? 0) <= 0;
+  }
+  return (consecutiveSixCount ?? 0) < 2;
+}
+
+function rollWeightedSixOrLow(allowSix, baseSixProbability, context, isBot) {
+  if (!allowSix) {
+    return Math.floor(Math.random() * 5) + 1;
+  }
+
+  const nextRollNumber = context.rollerMatchDiceRollCount + 1;
+  const balanceNudge = computeSixProbabilityNudge(
+    isBot,
+    context.botMatchSixRolls,
+    context.playerMatchSixRolls,
+  );
+  const windowNudge = firstSixWindowNudge(
+    context.rollerMatchSixCount,
+    nextRollNumber,
+  );
+  const sixProbability = Math.min(
+    MAX_SIX_PROBABILITY,
+    Math.max(0, baseSixProbability + balanceNudge + windowNudge),
+  );
+
+  if (Math.random() < sixProbability) {
+    return 6;
+  }
+  return Math.floor(Math.random() * 5) + 1;
+}
+
 function rollDiceValue(consecutiveSixCount = 0) {
   if (consecutiveSixCount >= 2) {
     return Math.floor(Math.random() * 5) + 1;
   }
 
   return Math.floor(Math.random() * 6) + 1;
+}
+
+function findKillDiceValues(players, playerIndex) {
+  return findCaptureDiceValues(players, playerIndex, { humansOnly: true });
+}
+
+function findBotOnlyKillDiceValues(players, playerIndex) {
+  const roller = players[playerIndex];
+  if (!roller?.isBot) {
+    return [];
+  }
+  const humanKills = new Set(findCaptureDiceValues(players, playerIndex, { humansOnly: true }));
+  const botKills = findCaptureDiceValues(players, playerIndex, { botsOnly: true });
+  return botKills.filter((face) => !humanKills.has(face));
+}
+
+function findCaptureDiceValues(players, playerIndex, { humansOnly = false, botsOnly = false } = {}) {
+  const roller = players[playerIndex];
+  if (!roller) {
+    return [];
+  }
+
+  const killFaces = new Set();
+
+  for (let dice = 1; dice <= 6; dice += 1) {
+    roller.tokens.forEach((progress, tokenIndex) => {
+      if (!canMoveToken(progress, dice)) {
+        return;
+      }
+      const nextProgress = progress === -1 ? 0 : progress + dice;
+      if (nextProgress < 0 || nextProgress > MAIN_PATH_LAST_PROGRESS) {
+        return;
+      }
+      const landingKey = getBoardCellKey(roller.color, nextProgress, tokenIndex);
+      if (SAFE_CELL_KEYS.has(landingKey)) {
+        return;
+      }
+      const wouldCapture = players.some((opponent, opponentIndex) => {
+        if (opponentIndex === playerIndex || opponent.isAbandoned) {
+          return false;
+        }
+        if (humansOnly && opponent.isBot) {
+          return false;
+        }
+        if (botsOnly && !opponent.isBot) {
+          return false;
+        }
+        return opponent.tokens.some((opponentProgress, opponentTokenIndex) => {
+          if (opponentProgress < 0 || opponentProgress > MAIN_PATH_LAST_PROGRESS) {
+            return false;
+          }
+          return (
+            getBoardCellKey(opponent.color, opponentProgress, opponentTokenIndex) ===
+            landingKey
+          );
+        });
+      });
+      if (wouldCapture) {
+        killFaces.add(dice);
+      }
+    });
+  }
+
+  return [...killFaces];
+}
+
+/** Share of engaged hunts that still capture on the spot, so kills stay unpredictable. */
+const STALK_INSTANT_KILL_PERCENT = 22;
+/** Farthest gap (in board steps) the bot will start closing on a human token. */
+const STALK_MAX_CHASE_STEPS = 12;
+const STALK_MIN_PLANNED_ROUNDS = 2;
+const STALK_MAX_PLANNED_ROUNDS = 3;
+/** Sixes grant an extra turn and can open yard tokens, so approach steps stay below six. */
+const STALK_MAX_APPROACH_FACE = 5;
+
+function botDiceDecision(dice, stalkPlan = null, forcedTokenIndex = null) {
+  return { dice, stalkPlan, forcedTokenIndex };
+}
+
+function isStalkableHunter(player) {
+  return Boolean(player?.isBot) && !player?.isAbandoned;
+}
+
+function isStalkableTarget(player) {
+  return Boolean(player) && !player.isBot && !player.isAbandoned;
+}
+
+/** Board cell of a token worth hunting, or null when it cannot be captured there. */
+function stalkTargetCellKey(target, targetTokenIndex) {
+  const progress = target.tokens[targetTokenIndex];
+  if (progress == null || progress < 0 || progress > MAIN_PATH_LAST_PROGRESS) {
+    return null;
+  }
+  const cellKey = getBoardCellKey(target.color, progress, targetTokenIndex);
+  return SAFE_CELL_KEYS.has(cellKey) ? null : cellKey;
+}
+
+/**
+ * Board steps needed for one hunter token to land exactly on the target cell,
+ * or null when the cell is behind the token or out of reach.
+ */
+function stepsToReachCell(
+  hunter,
+  hunterTokenIndex,
+  targetCellKey,
+  maxSteps = STALK_MAX_CHASE_STEPS,
+) {
+  const progress = hunter.tokens[hunterTokenIndex];
+  if (progress == null || progress < 0 || progress > MAIN_PATH_LAST_PROGRESS) {
+    return null;
+  }
+
+  for (let steps = 1; steps <= maxSteps; steps += 1) {
+    const nextProgress = progress + steps;
+    if (nextProgress > MAIN_PATH_LAST_PROGRESS) {
+      return null;
+    }
+    if (
+      getBoardCellKey(hunter.color, nextProgress, hunterTokenIndex) === targetCellKey
+    ) {
+      return steps;
+    }
+  }
+
+  return null;
+}
+
+/** Every hunter/prey pairing within chasing range, including gaps larger than one roll. */
+function findStalkCandidates(players, playerIndex, maxSteps = STALK_MAX_CHASE_STEPS) {
+  const hunter = players[playerIndex];
+  if (!isStalkableHunter(hunter)) {
+    return [];
+  }
+
+  const candidates = [];
+
+  players.forEach((target, targetPlayerIndex) => {
+    if (targetPlayerIndex === playerIndex || !isStalkableTarget(target)) {
+      return;
+    }
+
+    target.tokens.forEach((_, targetTokenIndex) => {
+      const targetCellKey = stalkTargetCellKey(target, targetTokenIndex);
+      if (!targetCellKey) {
+        return;
+      }
+
+      hunter.tokens.forEach((__, hunterTokenIndex) => {
+        const steps = stepsToReachCell(
+          hunter,
+          hunterTokenIndex,
+          targetCellKey,
+          maxSteps,
+        );
+        if (steps == null) {
+          return;
+        }
+
+        candidates.push({
+          hunterTokenIndex,
+          targetPlayerIndex,
+          targetTokenIndex,
+          steps,
+        });
+      });
+    });
+  });
+
+  return candidates;
+}
+
+/** True when an approach landing could be captured before the hunt finishes. */
+function isStalkLandingRisky(players, playerIndex, cellKey) {
+  if (SAFE_CELL_KEYS.has(cellKey)) {
+    return false;
+  }
+  return isCellThreatenedByOpponents(players, playerIndex, cellKey);
+}
+
+/**
+ * Face that closes part of the gap without landing on the prey yet, splitting
+ * the gap across the rounds left so the hunt finishes roughly on schedule.
+ * Returns null when the prey is already one step away and cannot be shadowed.
+ */
+function choosePartialStalkFace(
+  players,
+  playerIndex,
+  hunterTokenIndex,
+  steps,
+  roundsLeft,
+) {
+  const hunter = players[playerIndex];
+  const progress = hunter?.tokens?.[hunterTokenIndex];
+  if (progress == null || progress < 0 || progress > MAIN_PATH_LAST_PROGRESS) {
+    return null;
+  }
+
+  const maxFace = Math.min(STALK_MAX_APPROACH_FACE, steps - 1);
+  if (maxFace < 1) {
+    return null;
+  }
+
+  // Leave at least one step for every round still to come.
+  const rounds = Math.max(1, roundsLeft);
+  const reserved = rounds - 1;
+  const idealFace = Math.min(maxFace, Math.max(1, Math.ceil(steps / rounds)));
+  const window = [];
+
+  for (
+    let face = Math.max(1, idealFace - 1);
+    face <= Math.min(maxFace, idealFace + 1);
+    face += 1
+  ) {
+    if (face <= steps - reserved || face === 1) {
+      window.push(face);
+    }
+  }
+
+  if (!window.length) {
+    window.push(idealFace);
+  }
+
+  const quietLandings = window.filter(
+    (face) =>
+      !isStalkLandingRisky(
+        players,
+        playerIndex,
+        getBoardCellKey(hunter.color, progress + face, hunterTokenIndex),
+      ),
+  );
+  const pool = quietLandings.length ? quietLandings : window;
+
+  return pool[Math.floor(Math.random() * pool.length)];
+}
+
+function canFinishStalkThisTurn(steps, allowSix) {
+  return steps >= 1 && steps <= 6 && (allowSix || steps !== 6);
+}
+
+/** Advance a hunt the bot already committed to, or null when the prey got away. */
+function continueStalk(players, playerIndex, plan, allowSix) {
+  if (plan.hunterPlayerIndex !== playerIndex) {
+    return null;
+  }
+
+  const hunter = players[playerIndex];
+  if (!isStalkableHunter(hunter)) {
+    return null;
+  }
+
+  const target = players[plan.targetPlayerIndex];
+  if (!isStalkableTarget(target)) {
+    return null;
+  }
+
+  const targetCellKey = stalkTargetCellKey(target, plan.targetTokenIndex);
+  if (!targetCellKey) {
+    return null;
+  }
+
+  const steps = stepsToReachCell(hunter, plan.hunterTokenIndex, targetCellKey);
+  if (steps == null) {
+    return null;
+  }
+
+  const roundsLeft = Math.max(1, plan.plannedRounds - plan.roundsSpent);
+  const canFinish = canFinishStalkThisTurn(steps, allowSix);
+
+  if (canFinish && roundsLeft <= 1) {
+    return botDiceDecision(steps, null, plan.hunterTokenIndex);
+  }
+
+  const partialFace = choosePartialStalkFace(
+    players,
+    playerIndex,
+    plan.hunterTokenIndex,
+    steps,
+    roundsLeft,
+  );
+
+  if (partialFace == null) {
+    return canFinish ? botDiceDecision(steps, null, plan.hunterTokenIndex) : null;
+  }
+
+  return botDiceDecision(
+    partialFace,
+    { ...plan, roundsSpent: plan.roundsSpent + 1 },
+    plan.hunterTokenIndex,
+  );
+}
+
+/** Open a new hunt on the nearest human token, staging it over 2-3 rounds. */
+function startStalk(players, playerIndex, allowSix) {
+  const candidates = findStalkCandidates(players, playerIndex);
+  if (!candidates.length) {
+    return null;
+  }
+
+  const nearestSteps = Math.min(...candidates.map((candidate) => candidate.steps));
+  const nearest = candidates.filter(
+    (candidate) => candidate.steps === nearestSteps,
+  );
+  const chosen = nearest[Math.floor(Math.random() * nearest.length)];
+  const canFinish = canFinishStalkThisTurn(chosen.steps, allowSix);
+
+  if (canFinish && Math.random() * 100 < STALK_INSTANT_KILL_PERCENT) {
+    return botDiceDecision(chosen.steps, null, chosen.hunterTokenIndex);
+  }
+
+  const plannedRounds =
+    STALK_MIN_PLANNED_ROUNDS +
+    Math.floor(
+      Math.random() * (STALK_MAX_PLANNED_ROUNDS - STALK_MIN_PLANNED_ROUNDS + 1),
+    );
+  const partialFace = choosePartialStalkFace(
+    players,
+    playerIndex,
+    chosen.hunterTokenIndex,
+    chosen.steps,
+    plannedRounds,
+  );
+
+  if (partialFace == null) {
+    return canFinish
+      ? botDiceDecision(chosen.steps, null, chosen.hunterTokenIndex)
+      : null;
+  }
+
+  return botDiceDecision(
+    partialFace,
+    {
+      hunterPlayerIndex: playerIndex,
+      hunterTokenIndex: chosen.hunterTokenIndex,
+      targetPlayerIndex: chosen.targetPlayerIndex,
+      targetTokenIndex: chosen.targetTokenIndex,
+      plannedRounds,
+      roundsSpent: 1,
+    },
+    chosen.hunterTokenIndex,
+  );
+}
+
+/**
+ * Dice face for a bot that hunts human tokens across turns rather than snapping
+ * to the capture face. An in-flight hunt always continues; the kill favor percent
+ * only gates whether a new hunt starts. Null means roll normally.
+ */
+function resolveStalkDice(
+  players,
+  playerIndex,
+  allowSix,
+  killFavorPercent,
+  existingPlan,
+) {
+  if (!isStalkableHunter(players[playerIndex])) {
+    return null;
+  }
+
+  if (existingPlan) {
+    const continued = continueStalk(players, playerIndex, existingPlan, allowSix);
+    if (continued) {
+      return continued;
+    }
+  }
+
+  if (Math.random() * 100 >= killFavorPercent) {
+    return null;
+  }
+
+  return startStalk(players, playerIndex, allowSix);
+}
+
+/** Hunt this bot is currently committed to, if any. */
+function stalkPlanFor(plans, playerIndex) {
+  return (
+    (plans ?? []).find((plan) => plan.hunterPlayerIndex === playerIndex) ?? null
+  );
+}
+
+/** Replace only this bot's hunt, leaving other bots' hunts untouched. */
+function upsertStalkPlan(plans, playerIndex, plan) {
+  const others = (plans ?? []).filter(
+    (existing) => existing.hunterPlayerIndex !== playerIndex,
+  );
+  return plan ? [...others, plan] : others;
+}
+
+/** Tokens of `playerIndex` that land exactly on the home square with a single face. */
+function findHomeFinishOptions(players, playerIndex) {
+  const roller = players[playerIndex];
+  if (!roller) {
+    return [];
+  }
+
+  return roller.tokens.reduce((options, progress, tokenIndex) => {
+    if (progress < 0 || progress >= FINISHED_PROGRESS) {
+      return options;
+    }
+    const dice = FINISHED_PROGRESS - progress;
+    if (dice >= 1 && dice <= 6 && canMoveToken(progress, dice)) {
+      options.push({ tokenIndex, dice });
+    }
+    return options;
+  }, []);
+}
+
+/**
+ * Roll the exact face that brings a token home, naming the token so the move AI
+ * cannot spend the face on a capture and leave the token stranded.
+ */
+function rollWithHomeFinishFavor(players, playerIndex, allowSix) {
+  const roller = players[playerIndex];
+  if (!roller?.isBot) {
+    return null;
+  }
+  const options = findHomeFinishOptions(players, playerIndex).filter(
+    (option) => allowSix || option.dice !== 6,
+  );
+  if (!options.length) {
+    return null;
+  }
+  if (Math.random() * 100 >= BOT_HOME_FINISH_FAVOR_PERCENT) {
+    return null;
+  }
+  const chosen = options[Math.floor(Math.random() * options.length)];
+  return botDiceDecision(chosen.dice, null, chosen.tokenIndex);
+}
+
+function rollWithBotVsBotKillFavor(players, playerIndex, allowSix) {
+  const roller = players[playerIndex];
+  if (!roller?.isBot) {
+    return null;
+  }
+  const botOnlyKills = findBotOnlyKillDiceValues(players, playerIndex).filter(
+    (face) => allowSix || face !== 6,
+  );
+  if (!botOnlyKills.length) {
+    return null;
+  }
+  if (Math.random() * 100 >= BOT_VS_BOT_KILL_FAVOR_PERCENT) {
+    return null;
+  }
+  return botOnlyKills[Math.floor(Math.random() * botOnlyKills.length)];
+}
+
+/**
+ * Kills on real players are staged: instead of snapping to the capture face the
+ * bot walks its token in over 2-3 turns, so `stalkPlan` carries the hunt between
+ * turns and the returned decision names the token that must be moved.
+ *
+ * Finishing a token takes priority over opening a new hunt, since matches are
+ * won by bringing tokens home.
+ */
+function rollBotDiceValue(
+  consecutiveSixCount,
+  players,
+  playerIndex,
+  context,
+  stalkPlan,
+) {
+  const diceContext = context ?? buildDiceRollContext(players, playerIndex);
+  const allowSix = resolveAllowSix(consecutiveSixCount, true, diceContext);
+
+  // Walk tokens home when an exact face is available. Skipped while a hunt is
+  // in flight so the committed stalk does not lose its thread.
+  if (!stalkPlan) {
+    const finishing = rollWithHomeFinishFavor(players, playerIndex, allowSix);
+    if (finishing) {
+      return finishing;
+    }
+  }
+
+  const stalked = resolveStalkDice(
+    players,
+    playerIndex,
+    allowSix,
+    killFavorPercentForBot(players),
+    stalkPlan,
+  );
+  if (stalked) {
+    return stalked;
+  }
+
+  const botVsBot = rollWithBotVsBotKillFavor(players, playerIndex, allowSix);
+  if (botVsBot != null) {
+    return botDiceDecision(botVsBot);
+  }
+
+  const baseSixProbability = (1 / 6) * (1 + BOT_SIX_BOOST_PERCENT / 100);
+  return botDiceDecision(
+    rollWeightedSixOrLow(allowSix, baseSixProbability, diceContext, true),
+  );
+}
+
+function rollUserDiceValue(consecutiveSixCount, players, playerIndex, context) {
+  const diceContext = context ?? buildDiceRollContext(players, playerIndex);
+  const allowSix = resolveAllowSix(consecutiveSixCount, false, diceContext);
+  const killDice = findKillDiceValues(players, playerIndex).filter(
+    (face) => allowSix || face !== 6,
+  );
+
+  if (killDice.length > 0 && Math.random() * 100 < killFavorPercentForUser(players)) {
+    return killDice[Math.floor(Math.random() * killDice.length)];
+  }
+
+  const baseSixProbability = (consecutiveSixCount ?? 0) >= 2 ? 0 : 1 / 6;
+  return rollWeightedSixOrLow(
+    allowSix,
+    baseSixProbability,
+    diceContext,
+    false,
+  );
 }
 
 function canMoveToken(progress, diceValue) {
@@ -1375,6 +2054,8 @@ function initializeInteractiveMatch(liveMatch, userPlayerId) {
     phase: "rolling",
     selectableTokenIndexes: [],
     pendingNextPlayerIndex: null,
+    botStalkPlans: [],
+    botForcedTokenIndex: null,
     winnerId: null,
   };
 }
@@ -1396,6 +2077,7 @@ function startPlayerTurn(match, playerIndex) {
     phase: "rolling",
     selectableTokenIndexes: [],
     pendingNextPlayerIndex: null,
+    botForcedTokenIndex: null,
   };
 }
 
@@ -1405,7 +2087,30 @@ function rollInteractiveMatch(match) {
   }
 
   const activePlayer = match.players[match.currentPlayerIndex];
-  const dice = rollDiceValue(match.consecutiveSixCount ?? 0);
+  const consecutiveSixCount = match.consecutiveSixCount ?? 0;
+  const diceContext = buildDiceRollContext(match.players, match.currentPlayerIndex);
+  const rollDecision = activePlayer.isBot
+    ? rollBotDiceValue(
+        consecutiveSixCount,
+        match.players,
+        match.currentPlayerIndex,
+        diceContext,
+        stalkPlanFor(match.botStalkPlans, match.currentPlayerIndex),
+      )
+    : botDiceDecision(
+        rollUserDiceValue(
+          consecutiveSixCount,
+          match.players,
+          match.currentPlayerIndex,
+          diceContext,
+        ),
+      );
+  const dice = rollDecision.dice;
+  const playersAfterRoll = incrementPlayerRollStats(
+    match.players,
+    match.currentPlayerIndex,
+    dice,
+  );
   const selectableTokenIndexes = getMovableTokenIndexes(activePlayer, dice);
   const nextConsecutiveSixCount =
     dice === 6 ? (match.consecutiveSixCount ?? 0) + 1 : 0;
@@ -1416,6 +2121,7 @@ function rollInteractiveMatch(match) {
 
   const rolledMatch = {
     ...match,
+    players: playersAfterRoll,
     dice,
     consecutiveSixCount: nextConsecutiveSixCount,
     phase: selectableTokenIndexes.length === 0
@@ -1430,6 +2136,18 @@ function rollInteractiveMatch(match) {
         : dice === 6
           ? match.currentPlayerIndex
           : (match.currentPlayerIndex + 1) % match.players.length,
+    botStalkPlans: activePlayer.isBot
+      ? upsertStalkPlan(
+          match.botStalkPlans,
+          match.currentPlayerIndex,
+          rollDecision.stalkPlan,
+        )
+      : (match.botStalkPlans ?? []),
+    botForcedTokenIndex:
+      rollDecision.forcedTokenIndex != null &&
+      selectableTokenIndexes.includes(rollDecision.forcedTokenIndex)
+        ? rollDecision.forcedTokenIndex
+        : null,
     turnEndsAt:
       !activePlayer.isBot && selectableTokenIndexes.length > 0
         ? Date.now() + match.turnTimer * 1000
@@ -1518,6 +2236,13 @@ function opponentThreatScore(players, botIndex, opponentIndex) {
   return completed * 3 + avg / 20 + nearHome * 1.5;
 }
 
+function isPackHuntHumanTable(players) {
+  const active = players.filter((player) => !player.isAbandoned);
+  const bots = active.filter((player) => player.isBot).length;
+  const humans = active.filter((player) => !player.isBot).length;
+  return bots >= 2 && humans >= 1;
+}
+
 function scoreBotMove(players, playerIndex, tokenIndex, diceValue) {
   const player = players[playerIndex];
   const currentProgress = player.tokens[tokenIndex];
@@ -1525,6 +2250,7 @@ function scoreBotMove(players, playerIndex, tokenIndex, diceValue) {
     currentProgress === -1 ? 0 : currentProgress + diceValue;
   const activePlayers = players.filter((p) => !p.isAbandoned).length;
   const twoPlayerAttackMultiplier = activePlayers === 2 ? 1.6 : 1;
+  const packHuntHuman = isPackHuntHumanTable(players);
 
   const tokensAfterMove = [...player.tokens];
   tokensAfterMove[tokenIndex] = nextProgress;
@@ -1540,19 +2266,21 @@ function scoreBotMove(players, playerIndex, tokenIndex, diceValue) {
   let risk = 0;
 
   if (nextProgress === FINISHED_PROGRESS) {
-    immediate += 1_200;
+    // Keep in sync with server BotRewardWeights.tokenHome (was 1200).
+    immediate += 2_200;
   }
 
   if (
     nextProgress >= HOME_LANE_START_PROGRESS &&
     nextProgress <= HOME_LANE_LAST_PROGRESS
   ) {
-    immediate += 300;
+    // Keep in sync with server BotRewardWeights.enterHomePath (was 300).
+    immediate += 500;
   }
 
   const steps = currentProgress < 0 ? 1 : Math.max(0, nextProgress - currentProgress);
   progressScore +=
-    steps * 10 * progressRewardMultiplier(Math.max(nextProgress, 0));
+    steps * 12 * progressRewardMultiplier(Math.max(nextProgress, 0));
 
   if (currentProgress === -1 && nextProgress === 0) {
     const activeTokens = player.tokens.filter(
@@ -1596,9 +2324,15 @@ function scoreBotMove(players, playerIndex, tokenIndex, diceValue) {
             const threatBonus = opponentThreatScore(players, playerIndex, opponentIndex) * 40;
             const nearHomeBonus =
               opponentProgress >= 40 ? 180 : opponentProgress >= 25 ? 80 : 0;
-            attack +=
+            let captureValue =
               (2500 + opponentProgress * 4 + nearHomeBonus + threatBonus) *
               twoPlayerAttackMultiplier;
+            if (opponent.isBot) {
+              captureValue *= 0.28;
+            } else if (packHuntHuman) {
+              captureValue *= 1.32;
+            }
+            attack += captureValue;
           }
         });
       });
@@ -1622,13 +2356,14 @@ function scoreBotMove(players, playerIndex, tokenIndex, diceValue) {
     } else {
       safety += 220;
       if (wasThreatened) {
-        safety += 500;
+        // Keep near server escapeThreat + saveThreatened.
+        safety += 650;
       }
     }
   } else if (wasThreatened && nextProgress >= HOME_LANE_START_PROGRESS) {
     safety += 700;
   } else if (wasThreatened && nextProgress > currentProgress) {
-    safety += 200;
+    safety += 280;
   }
 
   // Stack / blockade hint
@@ -1682,7 +2417,7 @@ function chooseBotToken(players, playerIndex, movableTokenIndexes, diceValue) {
     return tokensAfterMove.every((progress) => progress === FINISHED_PROGRESS);
   };
 
-  const isCaptureMove = (tokenIndex) => {
+  const isHumanCaptureMove = (tokenIndex) => {
     const currentProgress = player.tokens[tokenIndex];
     const nextProgress = currentProgress === -1 ? 0 : currentProgress + diceValue;
     if (nextProgress < 0 || nextProgress > MAIN_PATH_LAST_PROGRESS) {
@@ -1693,7 +2428,7 @@ function chooseBotToken(players, playerIndex, movableTokenIndexes, diceValue) {
       return false;
     }
     return players.some((opponent, opponentIndex) => {
-      if (opponentIndex === playerIndex || opponent.isAbandoned) {
+      if (opponentIndex === playerIndex || opponent.isAbandoned || opponent.isBot) {
         return false;
       }
       return opponent.tokens.some((opponentProgress, opponentTokenIndex) => {
@@ -1708,14 +2443,14 @@ function chooseBotToken(players, playerIndex, movableTokenIndexes, diceValue) {
     });
   };
 
-  // Hard priority: win first, then kill opponent goti, then best score.
+  // Hard priority: win first, then kill real player, then best score (bot-vs-bot not forced).
   const winningMoves = movableTokenIndexes.filter(isWinningMove);
   const candidateIndexes =
     winningMoves.length > 0
       ? winningMoves
       : (() => {
-          const capturingMoves = movableTokenIndexes.filter(isCaptureMove);
-          return capturingMoves.length > 0 ? capturingMoves : movableTokenIndexes;
+          const humanCaptures = movableTokenIndexes.filter(isHumanCaptureMove);
+          return humanCaptures.length > 0 ? humanCaptures : movableTokenIndexes;
         })();
 
   return candidateIndexes.reduce((bestTokenIndex, tokenIndex) => {
@@ -1814,6 +2549,7 @@ function applyTokenMove(match, tokenIndex) {
     phase: hasWon ? "finished" : "advancing",
     pendingNextPlayerIndex: hasWon ? null : nextPlayerIndex,
     selectableTokenIndexes: [],
+    botForcedTokenIndex: null,
     winnerId: hasWon ? activePlayer.id : null,
     sequence: match.sequence + 1,
     events: prependMatchEvent(match.events, activePlayer.name, detail),
@@ -5857,16 +6593,23 @@ function PrivateRoomPageShell({ appState }) {
     let cancelled = false;
 
     function clearRealtimeConnection() {
-      if (socketRef.current) {
-        socketRef.current.close();
-        socketRef.current = null;
-      }
-      setIsRealtimeConnected(false);
-
       if (reconnectTimeoutRef.current) {
         window.clearTimeout(reconnectTimeoutRef.current);
         reconnectTimeoutRef.current = null;
       }
+
+      if (socketRef.current) {
+        const socket = socketRef.current;
+        socketRef.current = null;
+        // Drop handlers before close so intentional reconnects do not
+        // schedule a second connectSocket from the old socket's onclose.
+        socket.onopen = null;
+        socket.onmessage = null;
+        socket.onerror = null;
+        socket.onclose = null;
+        socket.close();
+      }
+      setIsRealtimeConnected(false);
     }
 
     function connectSocket(websocketPath) {
@@ -5876,13 +6619,17 @@ function PrivateRoomPageShell({ appState }) {
       socketRef.current = socket;
 
       socket.onopen = () => {
-        if (!cancelled) {
+        if (!cancelled && socketRef.current === socket) {
           setIsRealtimeConnected(true);
           setStatusMessage("");
         }
       };
 
       socket.onmessage = (event) => {
+        if (socketRef.current !== socket) {
+          return;
+        }
+
         try {
           const envelope = JSON.parse(event.data);
 
@@ -5895,10 +6642,11 @@ function PrivateRoomPageShell({ appState }) {
       };
 
       socket.onclose = () => {
-        if (cancelled) {
+        if (cancelled || socketRef.current !== socket) {
           return;
         }
 
+        socketRef.current = null;
         setIsRealtimeConnected(false);
         reconnectTimeoutRef.current = window.setTimeout(() => {
           connectSocket(websocketPath);
@@ -5906,7 +6654,7 @@ function PrivateRoomPageShell({ appState }) {
       };
 
       socket.onerror = () => {
-        if (!cancelled) {
+        if (!cancelled && socketRef.current === socket) {
           setIsRealtimeConnected(false);
         }
       };
@@ -6618,12 +7366,6 @@ function OnlineBoardPageShell({ appState, configuredMaxPlayers }) {
     let cancelled = false;
 
     function clearRealtimeConnection() {
-      if (socketRef.current) {
-        socketRef.current.close();
-        socketRef.current = null;
-      }
-      setIsRealtimeConnected(false);
-
       if (moveSyncTimeoutRef.current) {
         window.clearTimeout(moveSyncTimeoutRef.current);
         moveSyncTimeoutRef.current = null;
@@ -6638,6 +7380,19 @@ function OnlineBoardPageShell({ appState, configuredMaxPlayers }) {
         window.clearTimeout(lobbyPollTimeoutRef.current);
         lobbyPollTimeoutRef.current = null;
       }
+
+      if (socketRef.current) {
+        const socket = socketRef.current;
+        socketRef.current = null;
+        // Drop handlers before close so intentional reconnects do not
+        // schedule a second connectSocket from the old socket's onclose.
+        socket.onopen = null;
+        socket.onmessage = null;
+        socket.onerror = null;
+        socket.onclose = null;
+        socket.close();
+      }
+      setIsRealtimeConnected(false);
     }
 
     function connectSocket(websocketPath) {
@@ -6647,13 +7402,17 @@ function OnlineBoardPageShell({ appState, configuredMaxPlayers }) {
       socketRef.current = socket;
 
       socket.onopen = () => {
-        if (!cancelled) {
+        if (!cancelled && socketRef.current === socket) {
           setIsRealtimeConnected(true);
           setStatusMessage("");
         }
       };
 
       socket.onmessage = (event) => {
+        if (socketRef.current !== socket) {
+          return;
+        }
+
         try {
           const envelope = JSON.parse(event.data);
 
@@ -6666,10 +7425,11 @@ function OnlineBoardPageShell({ appState, configuredMaxPlayers }) {
       };
 
       socket.onclose = () => {
-        if (cancelled) {
+        if (cancelled || socketRef.current !== socket) {
           return;
         }
 
+        socketRef.current = null;
         setIsRealtimeConnected(false);
         reconnectTimeoutRef.current = window.setTimeout(() => {
           connectSocket(websocketPath);
@@ -6677,7 +7437,7 @@ function OnlineBoardPageShell({ appState, configuredMaxPlayers }) {
       };
 
       socket.onerror = () => {
-        if (!cancelled) {
+        if (!cancelled && socketRef.current === socket) {
           setIsRealtimeConnected(false);
         }
       };
@@ -7377,12 +8137,19 @@ function LocalBoardPageShell({ mode, appState }) {
           return currentMatch;
         }
 
-        const tokenIndex = chooseBotToken(
-          currentMatch.players,
-          currentMatch.currentPlayerIndex,
-          currentMatch.selectableTokenIndexes,
-          currentMatch.dice ?? 1,
-        );
+        // A staged hunt already picked the token the rigged dice was meant for.
+        const tokenIndex =
+          currentMatch.botForcedTokenIndex != null &&
+          currentMatch.selectableTokenIndexes.includes(
+            currentMatch.botForcedTokenIndex,
+          )
+            ? currentMatch.botForcedTokenIndex
+            : chooseBotToken(
+                currentMatch.players,
+                currentMatch.currentPlayerIndex,
+                currentMatch.selectableTokenIndexes,
+                currentMatch.dice ?? 1,
+              );
 
         return applyTokenMove(currentMatch, tokenIndex);
       });

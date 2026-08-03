@@ -5,7 +5,7 @@ const OPERATOR_PLATFORM_ENABLED = ["1", "true", "enabled", "yes"].includes(
   (process.env.NEXT_PUBLIC_OPERATOR_PLATFORM_ENABLED ?? "").toLowerCase(),
 );
 const CORS_DEBUG_ENABLED = ["1", "true", "enabled", "yes"].includes(
-  (process.env.NEXT_PUBLIC_CORS_DEBUG ?? "true").toLowerCase(),
+  (process.env.NEXT_PUBLIC_CORS_DEBUG ?? "false").toLowerCase(),
 );
 
 const SESSION_STORAGE_KEY = "ludo.guest-session";

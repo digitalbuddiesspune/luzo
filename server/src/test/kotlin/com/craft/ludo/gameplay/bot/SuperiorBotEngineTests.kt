@@ -2,6 +2,7 @@ package com.craft.ludo.gameplay.bot
 
 import com.craft.ludo.gameplay.HOME_LANE_START_PROGRESS
 import com.craft.ludo.gameplay.MatchPlayerState
+import com.craft.ludo.gameplay.boardCellKey
 import com.craft.ludo.gameplay.chooseBotToken
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.BeforeEach
@@ -316,6 +317,33 @@ class SuperiorBotEngineTests {
         )
 
         assertThat(chosen).isEqualTo(0)
+    }
+
+    @Test
+    fun `pack hunt prefers capturing the human over another bot`() {
+        // Place a yellow bot and a red human on cells green can hit with dice=3.
+        val botLanding = boardCellKey("green", 1 + 3, 0)
+        val humanLanding = boardCellKey("green", 0 + 3, 0)
+        val yellowProgress = (0..50).first { boardCellKey("yellow", it, 0) == botLanding }
+        val redProgress = (0..50).first { boardCellKey("red", it, 0) == humanLanding }
+
+        val players = listOf(
+            bot("green", listOf(1, 0, -1, -1)),
+            bot("yellow", listOf(yellowProgress, -1, -1, -1)),
+            human("red", listOf(redProgress, -1, -1, -1)),
+        )
+        assertThat(isPackHuntHumanTable(players)).isTrue()
+
+        val chosen = SuperiorBotEngine.chooseToken(
+            players = players,
+            playerIndex = 0,
+            movableTokenIndexes = listOf(0, 1),
+            diceValue = 3,
+            difficultyOverride = BotDifficulty.HARD,
+            random = Random(7),
+        )
+
+        assertThat(chosen).isEqualTo(1)
     }
 
     @Test

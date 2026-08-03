@@ -17,7 +17,8 @@ import kotlin.random.Random
 /**
  * Superior Ludo bot decision engine.
  *
- * Strength comes only from evaluating legal moves — dice are never manipulated.
+ * Strength comes from evaluating legal moves. Dice bias (kill favor / six boost)
+ * is applied separately in [com.craft.ludo.gameplay.bot.rollBotDice].
  */
 object SuperiorBotEngine {
     private val log = LoggerFactory.getLogger(SuperiorBotEngine::class.java)
@@ -196,11 +197,16 @@ object SuperiorBotEngine {
         val deadlineNs = System.nanoTime() + weights.maxDecisionMillis * 1_000_000
         val activeHumanOrBotCount = players.count { !it.isEffectivelyAbandoned() }
         val twoPlayer = activeHumanOrBotCount == 2
+        val packHuntHuman = isPackHuntHumanTable(players)
         val threatByOpponent = players.mapIndexed { index, _ ->
             if (index == playerIndex || players[index].isEffectivelyAbandoned()) {
                 0.0
             } else {
-                opponentThreat(players, playerIndex, index)
+                var threat = opponentThreat(players, playerIndex, index)
+                if (packHuntHuman && !players[index].isBot) {
+                    threat *= PACK_HUNT_HUMAN_THREAT_MULT
+                }
+                threat
             }
         }
 
@@ -220,12 +226,14 @@ object SuperiorBotEngine {
                 resultingPlayers = resultingPlayers,
                 threatByOpponent = threatByOpponent,
                 twoPlayer = twoPlayer,
+                packHuntHuman = packHuntHuman,
                 weights = weights,
             ) + huntReward(
                 players = players,
                 playerIndex = playerIndex,
                 move = move,
                 threatByOpponent = threatByOpponent,
+                packHuntHuman = packHuntHuman,
                 weights = weights,
             )
             val strategic = strategicReward(
@@ -235,7 +243,13 @@ object SuperiorBotEngine {
                 resultingPlayers = resultingPlayers,
                 weights = weights,
             )
-            val risk = captureRiskPenalty(resultingPlayers, playerIndex, move.tokenIndex, weights)
+            val risk = captureRiskPenalty(
+                resultingPlayers,
+                playerIndex,
+                move.tokenIndex,
+                weights,
+                packHuntHuman = packHuntHuman,
+            )
             var future = 0.0
             if (
                 useExpectimax &&
@@ -374,8 +388,8 @@ object SuperiorBotEngine {
         }
         val attackers = countAttackers(players, playerIndex, landingKey)
         return when {
-            attackers >= 2 -> weights.multiOpponentDanger * 0.5
-            attackers == 1 -> weights.exposeToCapture * 0.5
+            attackers >= 2.0 -> weights.multiOpponentDanger * 0.5
+            attackers >= 0.99 -> weights.exposeToCapture * 0.5
             else -> 0.0
         }
     }
@@ -399,7 +413,7 @@ object SuperiorBotEngine {
         if (move.toProgress in 0..MAIN_PATH_LAST_PROGRESS) {
             val landingKey = boardCellKey(player.color, move.toProgress, move.tokenIndex)
             val attackers = if (ludoSafeCellKeys.contains(landingKey)) {
-                0
+                0.0
             } else {
                 countAttackers(players, playerIndex, landingKey)
             }
@@ -407,21 +421,21 @@ object SuperiorBotEngine {
             if (ludoSafeCellKeys.contains(landingKey)) {
                 reward += weights.landSafe
             } else {
-                if (attackers >= 2) {
+                if (attackers >= 2.0) {
                     reward += weights.multiOpponentDanger
-                } else if (attackers == 1) {
+                } else if (attackers >= 0.99) {
                     reward += weights.exposeToCapture
                 }
                 if (
                     move.fromProgress in 0..MAIN_PATH_LAST_PROGRESS &&
                     ludoSafeCellKeys.contains(boardCellKey(player.color, move.fromProgress, move.tokenIndex)) &&
-                    attackers > 0
+                    attackers > 0.0
                 ) {
                     reward += weights.leaveSafetyIntoDanger
                 }
             }
 
-            if (wasThreatened && attackers == 0) {
+            if (wasThreatened && attackers <= 0.0) {
                 reward += weights.escapeThreat + weights.saveThreatened
             }
         } else if (wasThreatened && move.toProgress >= HOME_LANE_START_PROGRESS) {
@@ -441,6 +455,7 @@ object SuperiorBotEngine {
         resultingPlayers: List<MatchPlayerState>,
         threatByOpponent: List<Double>,
         twoPlayer: Boolean,
+        packHuntHuman: Boolean,
         weights: BotRewardWeights,
     ): Double {
         var reward = 0.0
@@ -452,12 +467,25 @@ object SuperiorBotEngine {
             if (twoPlayer) {
                 captureValue *= weights.twoPlayerAttackMultiplier
             }
+            val opponent = players.getOrNull(opponentIndex)
+            if (opponent?.isBot == true) {
+                // Soft: rarely value killing fellow bots.
+                captureValue *= BOT_VS_BOT_CAPTURE_SCORE_MULTIPLIER
+            } else if (packHuntHuman) {
+                // Soft: prefer knocking the human without hard-forcing every capture.
+                captureValue *= PACK_HUNT_HUMAN_CAPTURE_MULT
+            }
             val landingKey = boardCellKey(
                 resultingPlayers[playerIndex].color,
                 move.toProgress,
                 move.tokenIndex,
             )
-            val postDanger = countAttackers(resultingPlayers, playerIndex, landingKey)
+            val postDanger = countAttackers(
+                resultingPlayers,
+                playerIndex,
+                landingKey,
+                packHuntHuman = packHuntHuman,
+            )
             if (postDanger > 0 && move.toProgress in 0..MAIN_PATH_LAST_PROGRESS && !ludoSafeCellKeys.contains(landingKey)) {
                 captureValue -= 220.0 * postDanger
             }
@@ -479,7 +507,15 @@ object SuperiorBotEngine {
                             progress in 0..MAIN_PATH_LAST_PROGRESS &&
                             boardCellKey(opponent.color, progress, tokenIndex) == reachKey
                         ) {
-                            reward += weights.createCaptureThreat / 6.0
+                            var threatValue = weights.createCaptureThreat / 6.0
+                            if (packHuntHuman) {
+                                threatValue *= if (opponent.isBot) {
+                                    PACK_HUNT_BOT_HUNT_MULT
+                                } else {
+                                    PACK_HUNT_HUMAN_HUNT_MULT
+                                }
+                            }
+                            reward += threatValue
                         }
                     }
                 }
@@ -500,6 +536,7 @@ object SuperiorBotEngine {
         playerIndex: Int,
         move: CandidateMove,
         threatByOpponent: List<Double>,
+        packHuntHuman: Boolean,
         weights: BotRewardWeights,
     ): Double {
         if (move.toProgress !in 0..MAIN_PATH_LAST_PROGRESS) {
@@ -534,10 +571,17 @@ object SuperiorBotEngine {
                 }
 
                 val reachProbability = exactReachProbability(distance, horizon)
-                val targetValue =
+                var targetValue =
                     1.0 +
                         opponentProgress.toDouble() / FINISHED_PROGRESS * 1.4 +
                         threatByOpponent.getOrElse(opponentIndex) { 0.0 } * 0.06
+                if (packHuntHuman) {
+                    targetValue *= if (opponent.isBot) {
+                        PACK_HUNT_BOT_HUNT_MULT
+                    } else {
+                        PACK_HUNT_HUMAN_HUNT_MULT
+                    }
+                }
                 reward += weights.huntReward * reachProbability * targetValue
             }
         }
@@ -612,6 +656,7 @@ object SuperiorBotEngine {
         playerIndex: Int,
         tokenIndex: Int,
         weights: BotRewardWeights,
+        packHuntHuman: Boolean = false,
     ): Double {
         val progress = players[playerIndex].tokens[tokenIndex]
         if (progress !in 0..MAIN_PATH_LAST_PROGRESS) {
@@ -626,6 +671,7 @@ object SuperiorBotEngine {
             playerIndex = playerIndex,
             cellKey = key,
             horizonTurns = 2,
+            packHuntHuman = packHuntHuman,
         )
         val progressMultiplier = 1.0 + progress.toDouble() / FINISHED_PROGRESS
         return weights.dangerProbabilityPenalty * dangerProbability * progressMultiplier
@@ -677,8 +723,14 @@ object SuperiorBotEngine {
                 else -> -8.0
             }
         }
+        val packHuntHuman = isPackHuntHumanTable(players)
         players.forEachIndexed { index, opponent ->
             if (index == botIndex || opponent.isEffectivelyAbandoned()) return@forEachIndexed
+            val opponentWeight = when {
+                packHuntHuman && !opponent.isBot -> 0.48
+                packHuntHuman && opponent.isBot -> 0.18
+                else -> 0.35
+            }
             value -= opponent.tokens.sumOf { progress ->
                 when {
                     progress == FINISHED_PROGRESS -> 160.0
@@ -686,7 +738,7 @@ object SuperiorBotEngine {
                     progress >= 0 -> progress * 1.1
                     else -> 0.0
                 }
-            } * 0.35
+            } * opponentWeight
         }
         return value
     }
@@ -797,6 +849,7 @@ object SuperiorBotEngine {
         playerIndex: Int,
         cellKey: String,
         horizonTurns: Int,
+        packHuntHuman: Boolean = false,
     ): Double {
         var survivalProbability = 1.0
         players.forEachIndexed { opponentIndex, opponent ->
@@ -812,8 +865,12 @@ object SuperiorBotEngine {
                     maxDistance = horizonTurns * 6,
                 )
             }.toSet()
-            val opponentCaptureProbability = probabilityOfAnyReach(distances, horizonTurns)
-            survivalProbability *= 1.0 - opponentCaptureProbability
+            var opponentCaptureProbability = probabilityOfAnyReach(distances, horizonTurns)
+            // Soft: treat fellow bots as less dangerous so packs focus on the human.
+            if (packHuntHuman && opponent.isBot) {
+                opponentCaptureProbability *= PACK_HUNT_ALLY_DANGER_MULT
+            }
+            survivalProbability *= 1.0 - opponentCaptureProbability.coerceIn(0.0, 1.0)
         }
         return (1.0 - survivalProbability).coerceIn(0.0, 1.0)
     }
@@ -849,8 +906,9 @@ object SuperiorBotEngine {
         players: List<MatchPlayerState>,
         playerIndex: Int,
         cellKey: String,
-    ): Int {
-        var attackers = 0
+        packHuntHuman: Boolean = false,
+    ): Double {
+        var attackers = 0.0
         players.forEachIndexed { opponentIndex, opponent ->
             if (opponentIndex == playerIndex || opponent.isEffectivelyAbandoned()) {
                 return@forEachIndexed
@@ -866,7 +924,11 @@ object SuperiorBotEngine {
                 }
             }
             if (canReach) {
-                attackers += 1
+                attackers += if (packHuntHuman && opponent.isBot) {
+                    PACK_HUNT_ALLY_DANGER_MULT
+                } else {
+                    1.0
+                }
             }
         }
         return attackers

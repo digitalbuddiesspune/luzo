@@ -11,6 +11,13 @@ function normalizeFee(value, fallback = config.platformFeePerPlayer) {
   return parsed;
 }
 
+function toSettingsResponse(doc) {
+  return {
+    platformFeePerPlayer: normalizeFee(doc.platformFeePerPlayer),
+    updatedAt: doc.updatedAt || null,
+  };
+}
+
 class PlatformSettingsService {
   constructor(database) {
     this.collection = database.collection(COLLECTION);
@@ -19,10 +26,7 @@ class PlatformSettingsService {
   async getSettings() {
     const existing = await this.collection.findOne({ _id: SETTINGS_ID });
     if (existing) {
-      return {
-        platformFeePerPlayer: normalizeFee(existing.platformFeePerPlayer),
-        updatedAt: existing.updatedAt || null,
-      };
+      return toSettingsResponse(existing);
     }
 
     const created = {
@@ -31,10 +35,7 @@ class PlatformSettingsService {
       updatedAt: new Date(),
     };
     await this.collection.insertOne(created);
-    return {
-      platformFeePerPlayer: created.platformFeePerPlayer,
-      updatedAt: created.updatedAt,
-    };
+    return toSettingsResponse(created);
   }
 
   async updateSettings({ platformFeePerPlayer }) {
