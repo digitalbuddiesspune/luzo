@@ -3119,19 +3119,11 @@ function UtilitySheet({
             Home
           </button>
           <button type="button" onClick={() => onStartMode("online2")}>
-            Multiplayer 2
+            2 Player
           </button>
           <button type="button" onClick={() => onStartMode("online4")}>
-            Multiplayer 4
+            4 Player
           </button>
-          <button type="button" onClick={() => onStartMode("computer")}>
-            Vs Computer
-          </button>
-          {!hideLocalMatch ? (
-            <button type="button" onClick={() => onStartMode("local")}>
-              Local Match
-            </button>
-          ) : null}
         </div>
       </aside>
     </div>
@@ -3268,30 +3260,6 @@ function MenuHeader({
       onNotifications={onNotifications}
       onUtilities={onUtilities}
     />
-  );
-}
-
-function MenuActionCard({
-  title,
-  artwork,
-  onClick,
-  className = "",
-}) {
-  return (
-    <button
-      type="button"
-      className={`menu-action-card ${className}`.trim()}
-      onClick={onClick}
-    >
-      <img
-        className="menu-action-image"
-        src={artwork}
-        alt=""
-        width={485}
-        height={736}
-        draggable={false}
-      />
-    </button>
   );
 }
 
@@ -3481,6 +3449,128 @@ function FriendsRoomModal({
   );
 }
 
+function PlayerAvatarIcon({ players }) {
+  if (players === 2) {
+    return (
+      <svg
+        className="player-mode-avatar-svg"
+        viewBox="0 0 72 72"
+        width="44"
+        height="44"
+        aria-hidden="true"
+      >
+        <defs>
+          <linearGradient id="pm2-blue" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor="#7ec4ff" />
+            <stop offset="100%" stopColor="#2f7dff" />
+          </linearGradient>
+          <linearGradient id="pm2-red" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor="#ff8a8a" />
+            <stop offset="100%" stopColor="#e83838" />
+          </linearGradient>
+        </defs>
+        {/* back/left person */}
+        <g>
+          <circle cx="26" cy="24" r="11" fill="url(#pm2-blue)" stroke="#d5dae3" strokeWidth="2.2" />
+          <path
+            d="M10 58c1.8-14.5 8.2-21.5 16-21.5S40.2 43.5 42 58Z"
+            fill="url(#pm2-blue)"
+            stroke="#d5dae3"
+            strokeWidth="2.2"
+            strokeLinejoin="round"
+          />
+        </g>
+        {/* front/right person */}
+        <g>
+          <circle cx="46" cy="24" r="11" fill="url(#pm2-red)" stroke="#d5dae3" strokeWidth="2.2" />
+          <path
+            d="M30 58c1.8-14.5 8.2-21.5 16-21.5S60.2 43.5 62 58Z"
+            fill="url(#pm2-red)"
+            stroke="#d5dae3"
+            strokeWidth="2.2"
+            strokeLinejoin="round"
+          />
+        </g>
+      </svg>
+    );
+  }
+
+  return (
+    <svg
+      className="player-mode-avatar-svg"
+      viewBox="0 0 72 72"
+      width="44"
+      height="44"
+      aria-hidden="true"
+    >
+      <defs>
+        <linearGradient id="pm4-blue" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor="#7ec4ff" />
+          <stop offset="100%" stopColor="#2f7dff" />
+        </linearGradient>
+        <linearGradient id="pm4-yellow" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor="#ffe27a" />
+          <stop offset="100%" stopColor="#f0b423" />
+        </linearGradient>
+        <linearGradient id="pm4-green" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor="#6aeba0" />
+          <stop offset="100%" stopColor="#1ea34d" />
+        </linearGradient>
+        <linearGradient id="pm4-red" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor="#ff8a8a" />
+          <stop offset="100%" stopColor="#e83838" />
+        </linearGradient>
+      </defs>
+      {[
+        { cx: 24, cy: 22, fill: "url(#pm4-blue)" },
+        { cx: 48, cy: 22, fill: "url(#pm4-yellow)" },
+        { cx: 24, cy: 48, fill: "url(#pm4-green)" },
+        { cx: 48, cy: 48, fill: "url(#pm4-red)" },
+      ].map((p) => (
+        <g key={`${p.cx}-${p.cy}`}>
+          <circle
+            cx={p.cx}
+            cy={p.cy - 7}
+            r="7.2"
+            fill={p.fill}
+            stroke="#d5dae3"
+            strokeWidth="1.8"
+          />
+          <path
+            d={`M${p.cx - 10.5} ${p.cy + 12}c1.2-9.2 5.4-13.8 10.5-13.8s9.3 4.6 10.5 13.8Z`}
+            fill={p.fill}
+            stroke="#d5dae3"
+            strokeWidth="1.8"
+            strokeLinejoin="round"
+          />
+        </g>
+      ))}
+    </svg>
+  );
+}
+
+function PlayerModeCard({ players, subtitle, tone, onPlay }) {
+  return (
+    <article className={`player-mode-card player-mode-card-${tone}`}>
+      <div className="player-mode-top">
+        <div className="player-mode-icon" aria-hidden="true">
+          <PlayerAvatarIcon players={players} />
+        </div>
+        <div className="player-mode-copy">
+          <strong>{players} PLAYER</strong>
+          <span>{subtitle}</span>
+        </div>
+      </div>
+      <button type="button" className="player-mode-play" onClick={onPlay}>
+        <span>PLAY NOW</span>
+        <span className="player-mode-play-arrow" aria-hidden="true">
+          ›
+        </span>
+      </button>
+    </article>
+  );
+}
+
 function MenuScreen({
   appState,
   onModeSelect,
@@ -3503,10 +3593,28 @@ function MenuScreen({
         onNotifications={onOpenHistory}
       />
 
-      <section className="menu-home-layout">
-        <div className="menu-home-hero">
+      <section className="menu-home-layout menu-home-layout-modern">
+        <div className="menu-home-hero menu-home-hero-modern">
+          <div className="menu-home-brand">
+            <h1 className="menu-home-brand-name" aria-label="PotLudo">
+              <span className="menu-home-logo-curve" aria-hidden="true">
+                <span className="menu-home-logo-char menu-home-logo-pot" style={{ "--r": -20, "--y": 0.02 }}>P</span>
+                <span className="menu-home-logo-char menu-home-logo-pot" style={{ "--r": -12, "--y": -0.08 }}>o</span>
+                <span className="menu-home-logo-char menu-home-logo-pot" style={{ "--r": -5, "--y": -0.14 }}>t</span>
+                <span className="menu-home-logo-char menu-home-logo-ludo" style={{ "--r": 2, "--y": -0.16 }}>L</span>
+                <span className="menu-home-logo-char menu-home-logo-ludo" style={{ "--r": 9, "--y": -0.12 }}>u</span>
+                <span className="menu-home-logo-char menu-home-logo-ludo" style={{ "--r": 15, "--y": -0.05 }}>d</span>
+                <span className="menu-home-logo-char menu-home-logo-ludo" style={{ "--r": 22, "--y": 0.04 }}>o</span>
+              </span>
+            </h1>
+            <p className="menu-home-brand-tagline">
+              <span className="menu-home-tag-star" aria-hidden="true" />
+              Roll, race, and win the pot.
+              <span className="menu-home-tag-star" aria-hidden="true" />
+            </p>
+          </div>
           <img
-            className="menu-ludo-hero"
+            className="menu-ludo-hero menu-ludo-hero-modern"
             src="/assets/LudoHome.png"
             alt=""
             width={978}
@@ -3515,31 +3623,26 @@ function MenuScreen({
           />
         </div>
 
-        <div className="menu-game-banner" aria-label="Ludo game">
-          <img
-            className="menu-game-banner-art"
-            src="/assets/LudoGameBanner.png"
-            alt=""
-            width={1228}
-            height={816}
-            draggable={false}
-          />
+        <div className="menu-home-cta-group">
+          <div
+            className="menu-home-player-options"
+            role="group"
+            aria-label="Choose players"
+          >
+            <PlayerModeCard
+              players={2}
+              subtitle="Play with a friend"
+              tone="blue"
+              onPlay={() => onModeSelect("online2")}
+            />
+            <PlayerModeCard
+              players={4}
+              subtitle="Play with everyone"
+              tone="green"
+              onPlay={() => onModeSelect("online4")}
+            />
+          </div>
         </div>
-
-        <div className="menu-action-grid">
-          <MenuActionCard
-            title="Multiplayer 2"
-            artwork="/assets/Multiplayer2Option.png"
-            className="menu-action-card-friends"
-            onClick={() => onModeSelect("online2")}
-          />
-          <MenuActionCard
-            title="Multiplayer 4"
-            artwork="/assets/Multiplayer4Option.png"
-            onClick={() => onModeSelect("online4")}
-          />
-        </div>
-
       </section>
     </AppFrame>
   );
@@ -3838,7 +3941,7 @@ function HomeSideDrawer({
               onClose();
             }}
           >
-            Multiplayer 2
+            2 Player
           </button>
           <button
             type="button"
@@ -3848,7 +3951,7 @@ function HomeSideDrawer({
               onClose();
             }}
           >
-            Multiplayer 4
+            4 Player
           </button>
         </div>
       </aside>
