@@ -492,6 +492,7 @@ class WalletService(
                         userId = operatorSession.operatorUserId!!,
                         operatorId = operatorSession.operatorId!!,
                         token = operatorSession.operatorToken!!,
+                        betId = "BT:$debitTransactionId:${operatorSession.operatorUserId}:${operatorSession.operatorId}",
                     ),
                 )
                     .doOnError { error ->
@@ -652,7 +653,6 @@ class WalletService(
             amount = reservation.amount,
             txnId = newId("txn"),
             description = ludoCreditStatement(reservation.amount, roomId, "refund", roomId),
-            roundId = roomId,
         )
             .then(releaseReservedBalance)
             .then(
@@ -1032,7 +1032,6 @@ class WalletService(
             amount = winnerPayoutAmount,
             txnId = newId("txn"),
             description = ludoCreditStatement(winnerPayoutAmount, matchId, "winner payout"),
-            roundId = matchId,
         )
     }
 
@@ -1041,7 +1040,6 @@ class WalletService(
         amount: Long,
         txnId: String,
         description: String,
-        roundId: String? = null,
     ): Mono<Void> {
         val debitTransactionId = reservation.externalDebitTransactionId ?: return Mono.empty()
         if (!reservation.externalDebitConfirmed) return Mono.empty()
@@ -1051,17 +1049,16 @@ class WalletService(
 
         return operatorGatewayClient.enqueueCredit(
             OperatorCreditQueueMessage(
-                gameUserId = reservation.userId,
-                amount = amount.toExternalAmount(),
                 txn_id = txnId,
                 txn_ref_id = debitTransactionId,
-                ip = reservation.ipAddress ?: "0.0.0.0",
-                game_id = reservation.gameId ?: operatorGatewayClient.gameId(),
+                txn_type = 1,
+                amount = amount.toExternalAmount().toPlainString(),
                 user_id = operatorUserId,
+                game_id = (reservation.gameId ?: operatorGatewayClient.gameId()).toString(),
+                description = description,
+                ip = reservation.ipAddress ?: "0.0.0.0",
                 operatorId = operatorId,
                 token = operatorToken,
-                description = description,
-                round_id = roundId,
             ),
         )
     }

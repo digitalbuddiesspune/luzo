@@ -4,6 +4,8 @@ import com.craft.ludo.identity.IdentityService
 import com.craft.ludo.shared.api.DomainException
 import com.craft.ludo.shared.config.AppProperties
 import com.fasterxml.jackson.databind.JsonNode
+import org.springframework.amqp.core.MessageDeliveryMode
+import org.springframework.amqp.rabbit.core.RabbitTemplate
 import org.springframework.http.HttpStatus
 import org.springframework.http.MediaType
 import org.springframework.http.codec.ServerSentEvent
@@ -19,7 +21,9 @@ import org.slf4j.LoggerFactory
 import reactor.core.publisher.Flux
 import reactor.core.publisher.Mono
 import reactor.core.publisher.Sinks
+import reactor.core.scheduler.Schedulers
 import java.math.BigDecimal
+import java.math.RoundingMode
 import java.time.Duration
 import java.time.Instant
 
@@ -50,21 +54,25 @@ data class OperatorDebitRequest(
     val userId: String,
     val operatorId: String,
     val token: String,
+    val betId: String,
     val txnType: Int = 0,
 )
 
+/**
+ * Cashout payload published to RabbitMQ — field names/types match the operator integration guide.
+ * Amount and game_id are strings (e.g. "700.00", "2").
+ */
 data class OperatorCreditQueueMessage(
-    val gameUserId: String,
-    val amount: BigDecimal,
     val txn_id: String,
     val txn_ref_id: String,
-    val ip: String,
-    val game_id: Int,
+    val txn_type: Int = 1,
+    val amount: String,
     val user_id: String,
+    val game_id: String,
+    val description: String,
+    val ip: String,
     val operatorId: String,
     val token: String,
-    val description: String,
-    val round_id: String? = null,
 )
 
 data class OperatorGatewayLogEvent(
@@ -118,6 +126,7 @@ class OperatorGatewayLogStream {
 class OperatorGatewayClient(
     webClientBuilder: WebClient.Builder,
     private val operatorGatewayLogStream: OperatorGatewayLogStream,
+    private val rabbitTemplate: RabbitTemplate,
     appProperties: AppProperties,
 ) {
     private val log = LoggerFactory.getLogger(OperatorGatewayClient::class.java)
@@ -130,25 +139,15 @@ class OperatorGatewayClient(
     private val serviceWebClient = webClientBuilder
         .baseUrl(serviceBaseUrl)
         .build()
-    private val creditWebClient = webClientBuilder.build()
-    private val resolvedCreditUrl: String = resolveCreditUrl()
 
     init {
         require(operatorProperties.baseUrl.isNotBlank()) { "app.operator.base-url must not be blank." }
         require(operatorProperties.gameId > 0) { "app.operator.game-id must be positive." }
-        require(resolvedCreditUrl.isNotBlank()) { "app.operator.credit-url must not be blank." }
-    }
-
-    private fun resolveCreditUrl(): String {
-        val configured = operatorProperties.creditUrl.trim()
-        if (configured.isNotBlank()) {
-            return configured
+        require(operatorProperties.creditExchange.isNotBlank()) {
+            "app.operator.credit-exchange must not be blank."
         }
-        val path = operatorProperties.creditPath.trim().ifBlank { "/api/wallet/credit" }
-        return if (path.startsWith("http://") || path.startsWith("https://")) {
-            path
-        } else {
-            "$operatorBaseUrl/${path.trimStart('/')}"
+        require(operatorProperties.creditRoutingKey.isNotBlank()) {
+            "app.operator.credit-routing-key must not be blank."
         }
     }
 
@@ -200,6 +199,8 @@ class OperatorGatewayClient(
     }
 
     fun debit(request: OperatorDebitRequest): Mono<String> {
+        val amountText = request.amount.toGuideAmountString()
+        val gameIdText = request.gameId.toString()
         operatorGatewayLogStream.publish(
             OperatorGatewayLogEvent(
                 id = "operator_debit:${request.txnId}",
@@ -219,17 +220,19 @@ class OperatorGatewayClient(
             ),
         )
         log.info(
-            "Operator debit api called gameUserId={} userId={} operatorId={} txnId={} amount={} txnType={} gameId={} path={}",
+            "Operator debit api called gameUserId={} userId={} operatorId={} txnId={} betId={} amount={} txnType={} gameId={} path={}",
             request.gameUserId,
             request.userId,
             request.operatorId,
             request.txnId,
-            request.amount,
+            request.betId,
+            amountText,
             request.txnType,
-            request.gameId,
+            gameIdText,
             operatorProperties.balancePath,
         )
 
+        // Body fields match the operator integration guide (section 5).
         return webClient.post()
             .uri(operatorProperties.balancePath)
             .header("token", request.token)
@@ -237,28 +240,29 @@ class OperatorGatewayClient(
             .bodyValue(
                 mapOf(
                     "txn_id" to request.txnId,
-                    "amount" to request.amount,
-                    "description" to request.description,
                     "txn_type" to request.txnType,
-                    "ip" to request.ip,
-                    "game_id" to request.gameId,
+                    "amount" to amountText,
                     "user_id" to request.userId,
-                    "operator_id" to request.operatorId,
+                    "game_id" to gameIdText,
+                    "bet_id" to request.betId,
+                    "description" to request.description,
+                    "ip" to request.ip,
                 ),
             )
             .retrieve()
             .bodyToMono(JsonNode::class.java)
-            .timeout(Duration.ofSeconds(8))
+            .timeout(Duration.ofSeconds(5))
             .doOnError { error ->
                 log.error(
-                    "Operator debit api failed gameUserId={} userId={} operatorId={} txnId={} amount={} txnType={} gameId={} description={} reason={}",
+                    "Operator debit api failed gameUserId={} userId={} operatorId={} txnId={} betId={} amount={} txnType={} gameId={} description={} reason={}",
                     request.gameUserId,
                     request.userId,
                     request.operatorId,
                     request.txnId,
-                    request.amount,
+                    request.betId,
+                    amountText,
                     request.txnType,
-                    request.gameId,
+                    gameIdText,
                     request.description,
                     error.message ?: error.javaClass.simpleName,
                     error,
@@ -269,12 +273,13 @@ class OperatorGatewayClient(
                     throw DomainException(HttpStatus.BAD_GATEWAY, body.path("msg").asText("Operator debit failed."))
                 }
                 log.info(
-                    "Operator debit api accepted gameUserId={} userId={} operatorId={} txnId={} amount={} description={} msg={}",
+                    "Operator debit api accepted gameUserId={} userId={} operatorId={} txnId={} betId={} amount={} description={} msg={}",
                     request.gameUserId,
                     request.userId,
                     request.operatorId,
                     request.txnId,
-                    request.amount,
+                    request.betId,
+                    amountText,
                     request.description,
                     body.path("msg").asText(""),
                 )
@@ -304,8 +309,7 @@ class OperatorGatewayClient(
     fun enqueueCredit(message: OperatorCreditQueueMessage): Mono<Void> {
         if (message.txn_ref_id.startsWith("roomfee:")) {
             log.warn(
-                "Blocked operator credit for legacy/unconfirmed debit reference gameUserId={} userId={} txnId={} txnRefId={} amount={}",
-                message.gameUserId,
+                "Blocked operator credit for legacy/unconfirmed debit reference userId={} txnId={} txnRefId={} amount={}",
                 message.user_id,
                 message.txn_id,
                 message.txn_ref_id,
@@ -316,135 +320,119 @@ class OperatorGatewayClient(
                     id = "operator_credit_blocked:${message.txn_id}",
                     eventType = "operator_credit_blocked_legacy_debit_ref",
                     action = "Operator credit blocked for legacy debit reference",
-                    gameUserId = message.gameUserId,
+                    gameUserId = message.user_id,
                     userId = message.user_id,
                     operatorId = message.operatorId,
                     txnId = message.txn_id,
                     txnRefId = message.txn_ref_id,
-                    amount = message.amount,
+                    amount = message.amount.toBigDecimalOrNull() ?: BigDecimal.ZERO,
                     description = message.description,
-                    target = resolvedCreditUrl,
+                    target = operatorProperties.creditExchange,
                     createdAt = Instant.now(),
                     ip = message.ip,
-                    gameId = message.game_id,
+                    gameId = message.game_id.toIntOrNull(),
                 ),
             )
             return Mono.empty()
         }
 
-        val roundId = message.round_id?.takeIf { it.isNotBlank() } ?: message.txn_ref_id
-        val body = mapOf(
-            "userId" to message.user_id,
-            "amount" to message.amount,
-            "transactionId" to message.txn_id,
-            "gameId" to message.game_id.toString(),
-            "roundId" to roundId,
-        )
+        return publishCreditToRabbit(message)
+    }
+
+    private fun publishCreditToRabbit(message: OperatorCreditQueueMessage): Mono<Void> {
+        val exchange = operatorProperties.creditExchange
+        val routingKey = operatorProperties.creditRoutingKey
+        val target = "$exchange#$routingKey"
+        val amountDecimal = message.amount.toBigDecimalOrNull() ?: BigDecimal.ZERO
 
         operatorGatewayLogStream.publish(
             OperatorGatewayLogEvent(
                 id = "operator_credit:${message.txn_id}",
-                eventType = "operator_credit_api_called",
-                action = "Operator wallet credit API called",
-                gameUserId = message.gameUserId,
+                eventType = "operator_credit_rabbit_publish_called",
+                action = "Operator wallet credit published to RabbitMQ",
+                gameUserId = message.user_id,
                 userId = message.user_id,
                 operatorId = message.operatorId,
                 txnId = message.txn_id,
                 txnRefId = message.txn_ref_id,
-                amount = message.amount,
+                amount = amountDecimal,
                 description = message.description,
-                target = resolvedCreditUrl,
+                target = target,
                 createdAt = Instant.now(),
                 ip = message.ip,
-                gameId = message.game_id,
+                gameId = message.game_id.toIntOrNull(),
+                exchange = exchange,
+                routingKey = routingKey,
             ),
         )
         log.info(
-            "Operator wallet credit api called gameUserId={} userId={} operatorId={} txnId={} roundId={} amount={} gameId={} path={}",
-            message.gameUserId,
+            "Operator wallet credit rabbit publish called userId={} operatorId={} txnId={} txnRefId={} amount={} gameId={} exchange={} routingKey={}",
             message.user_id,
             message.operatorId,
             message.txn_id,
-            roundId,
+            message.txn_ref_id,
             message.amount,
             message.game_id,
-            resolvedCreditUrl,
+            exchange,
+            routingKey,
         )
 
-        val requestSpec = creditWebClient.post()
-            .uri(resolvedCreditUrl)
-            .contentType(MediaType.APPLICATION_JSON)
-            .let { spec ->
-                if (message.token.isNotBlank()) {
-                    spec.header("token", message.token)
-                } else {
-                    spec
-                }
+        return Mono.fromCallable {
+            rabbitTemplate.convertAndSend(exchange, routingKey, message) { rabbitMessage ->
+                // Guide: new cashout messages start with x-delay=0 and x-retries=0.
+                rabbitMessage.messageProperties.setHeader("x-delay", 0)
+                rabbitMessage.messageProperties.setHeader("x-retries", 0)
+                rabbitMessage.messageProperties.deliveryMode = MessageDeliveryMode.PERSISTENT
+                rabbitMessage
             }
-
-        return requestSpec
-            .bodyValue(body)
-            .retrieve()
-            .bodyToMono(JsonNode::class.java)
-            .timeout(Duration.ofSeconds(8))
-            .doOnError { error ->
-                log.error(
-                    "Operator wallet credit api failed gameUserId={} userId={} operatorId={} txnId={} roundId={} amount={} gameId={} reason={}",
-                    message.gameUserId,
-                    message.user_id,
-                    message.operatorId,
-                    message.txn_id,
-                    roundId,
-                    message.amount,
-                    message.game_id,
-                    error.message ?: error.javaClass.simpleName,
-                    error,
-                )
-            }
-            .flatMap { response ->
-                val statusOk = when {
-                    response.path("status").isBoolean -> response.path("status").asBoolean(false)
-                    response.path("success").isBoolean -> response.path("success").asBoolean(false)
-                    else -> true
-                }
-                if (!statusOk) {
-                    val msg = response.path("msg").asText(
-                        response.path("message").asText("Operator wallet credit failed."),
-                    )
-                    return@flatMap Mono.error<Void>(DomainException(HttpStatus.BAD_GATEWAY, msg))
-                }
-
+            null
+        }
+            .subscribeOn(Schedulers.boundedElastic())
+            .doOnSuccess {
                 operatorGatewayLogStream.publish(
                     OperatorGatewayLogEvent(
                         id = "operator_credit_accepted:${message.txn_id}",
-                        eventType = "operator_credit_api_accepted",
-                        action = "Operator wallet credit API accepted",
-                        gameUserId = message.gameUserId,
+                        eventType = "operator_credit_rabbit_publish_accepted",
+                        action = "Operator wallet credit RabbitMQ publish accepted",
+                        gameUserId = message.user_id,
                         userId = message.user_id,
                         operatorId = message.operatorId,
                         txnId = message.txn_id,
                         txnRefId = message.txn_ref_id,
-                        amount = message.amount,
+                        amount = amountDecimal,
                         description = message.description,
-                        target = resolvedCreditUrl,
+                        target = target,
                         createdAt = Instant.now(),
                         ip = message.ip,
-                        gameId = message.game_id,
+                        gameId = message.game_id.toIntOrNull(),
+                        exchange = exchange,
+                        routingKey = routingKey,
                     ),
                 )
                 log.info(
-                    "Operator wallet credit api accepted gameUserId={} userId={} operatorId={} txnId={} roundId={} amount={} msg={}",
-                    message.gameUserId,
+                    "Operator wallet credit rabbit publish accepted userId={} operatorId={} txnId={} txnRefId={} amount={}",
                     message.user_id,
                     message.operatorId,
                     message.txn_id,
-                    roundId,
+                    message.txn_ref_id,
                     message.amount,
-                    response.path("msg").asText(response.path("message").asText("")),
                 )
-                Mono.empty()
             }
-            .onErrorMap(WebClientResponseException::class.java, ::toGatewayError)
+            .doOnError { error ->
+                log.error(
+                    "Operator wallet credit rabbit publish failed userId={} operatorId={} txnId={} txnRefId={} amount={} gameId={} exchange={} routingKey={} reason={}",
+                    message.user_id,
+                    message.operatorId,
+                    message.txn_id,
+                    message.txn_ref_id,
+                    message.amount,
+                    message.game_id,
+                    exchange,
+                    routingKey,
+                    error.message ?: error.javaClass.simpleName,
+                    error,
+                )
+            }
             .then()
     }
 
@@ -514,14 +502,17 @@ class OperatorGatewayClient(
     }
 
     private fun parseUserDetail(body: JsonNode): OperatorUserDetail {
-        if (!body.path("status").asBoolean(false)) {
+        // Guide: success is a payload with a `user` object; status is optional.
+        // Reject when status is explicitly false, or when no user object / user_id is present.
+        if (body.has("status") && body.path("status").isBoolean && !body.path("status").asBoolean()) {
             throw DomainException(HttpStatus.BAD_GATEWAY, body.path("msg").asText("Operator user detail failed."))
         }
 
         val data = body.path("user")
             .takeUnless { it.isMissingNode || it.isNull }
             ?: body.path("data").takeUnless { it.isMissingNode || it.isNull }
-            ?: body
+            ?: throw DomainException(HttpStatus.BAD_GATEWAY, "Operator user detail response did not include user.")
+
         val userId = firstText(data, "user_id", "userId", "id")
         val displayName = firstText(data, "username", "display_name", "displayName", "name").ifBlank { userId }
         val currency = firstText(data, "currency").ifBlank { "INR" }
@@ -554,6 +545,9 @@ class OperatorGatewayClient(
         val raw = firstText(node, *names)
         return raw.toBigDecimalOrNull() ?: BigDecimal.ZERO
     }
+
+    private fun BigDecimal.toGuideAmountString(): String =
+        setScale(2, RoundingMode.HALF_UP).toPlainString()
 
     private fun toGatewayError(error: WebClientResponseException): DomainException {
         val message = error.responseBodyAsString.takeIf { it.isNotBlank() }

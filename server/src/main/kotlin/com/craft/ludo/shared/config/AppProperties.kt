@@ -72,12 +72,17 @@ data class OperatorProperties(
     val loginPath: String = "/operator/user/login",
     val userDetailPath: String = "/service/user/detail",
     val balancePath: String = "/service/operator/user/balance/v2",
-    /** Full URL for HTTP wallet credits (wins/refunds). */
-    val creditUrl: String = "https://api.aakda.in/api/wallet/credit",
-    val creditPath: String = "/api/wallet/credit",
+    /** Delayed exchange used to publish winner/refund cashout messages. */
     val creditExchange: String = "/games/admin",
     val creditQueueName: String = "games_cashout",
     val creditRoutingKey: String = "games_cashout",
+    /** When true, declare delayed exchange + queue + DLQ (local/dev). Production usually leaves this false. */
+    val creditDeclareTopology: Boolean = false,
+    val creditDeadLetterExchange: String = "",
+    val creditDeadLetterQueue: String = "games_cashout.dlq",
+    val creditDeadLetterRoutingKey: String = "games_cashout.dlq",
+    val creditMaxRetries: Int = 5,
+    val creditRetryDelayMillis: Long = 5_000,
     val gameId: Int = 2,
 )
 
