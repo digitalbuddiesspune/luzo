@@ -30,7 +30,7 @@ data class BotDiceSettings(
     }
 
     companion object {
-        const val DEFAULT_BOT_KILL_FAVOR_PERCENT = 33
+        const val DEFAULT_BOT_KILL_FAVOR_PERCENT = 0
         const val DEFAULT_USER_KILL_FAVOR_PERCENT = 30
         const val DEFAULT_SIX_BOOST_PERCENT = 15
 
@@ -65,7 +65,7 @@ internal const val BOT_VS_BOT_KILL_FAVOR_PERCENT = 25
  * Matches are won by bringing four tokens home rather than by capturing, and an
  * "exact number" reads as luck far more than a suspicious run of kills does.
  */
-internal const val BOT_HOME_FINISH_FAVOR_PERCENT = 60
+internal const val BOT_HOME_FINISH_FAVOR_PERCENT = 50
 /** Hardcoded move-AI scale when capturing another bot (vs real player). */
 internal const val BOT_VS_BOT_CAPTURE_SCORE_MULTIPLIER = 0.28
 /**
@@ -437,15 +437,9 @@ fun rollUserDice(
 }
 
 /**
- * Roll dice for a bot with kill favoritism and boosted sixes.
+ * Roll dice for a bot. Kill faces are not forced — captures only happen on a
+ * natural roll. Still allows home-finish favor and a mild six boost.
  * Never returns 6 when [consecutiveSixCount] >= 1 (no back-to-back sixes).
- *
- * Kills on real players are staged: instead of snapping to the capture face the
- * bot walks its token in over 2–3 turns, so [stalkPlan] carries the hunt between
- * turns and the returned decision names the token that must be moved.
- *
- * Finishing a token takes priority over opening a new hunt, since matches are
- * won by bringing tokens home.
  */
 fun rollBotDice(
     consecutiveSixCount: Int,
@@ -453,47 +447,22 @@ fun rollBotDice(
     playerIndex: Int,
     settings: BotDiceSettings = BotDiceSettings.DEFAULT,
     context: DiceRollContext = DiceRollContext.DEFAULT,
-    stalkPlan: KillStalkPlan? = null,
+    @Suppress("UNUSED_PARAMETER") stalkPlan: KillStalkPlan? = null,
     random: Random = Random.Default,
 ): BotDiceDecision {
     val allowSix = resolveAllowSix(consecutiveSixCount, isBot = true, context)
-    // 1) Walk tokens home when an exact face is available. Skipped while a hunt
-    //    is in flight so the committed stalk does not lose its thread.
-    if (stalkPlan == null) {
-        val finishing = rollWithHomeFinishFavor(
-            allowSix = allowSix,
-            players = players,
-            playerIndex = playerIndex,
-            favorPercent = BOT_HOME_FINISH_FAVOR_PERCENT,
-            random = random,
-        )
-        if (finishing != null) {
-            return finishing
-        }
-    }
-    // 2) Hunt real players across turns (admin %).
-    val stalked = resolveStalkDice(
+    // Walk tokens home when an exact face is available.
+    val finishing = rollWithHomeFinishFavor(
         allowSix = allowSix,
         players = players,
         playerIndex = playerIndex,
-        killFavorPercent = settings.botKillFavorFor(players.size),
-        existingPlan = stalkPlan,
+        favorPercent = BOT_HOME_FINISH_FAVOR_PERCENT,
         random = random,
     )
-    if (stalked != null) {
-        return stalked
+    if (finishing != null) {
+        return finishing
     }
-    // 3) Rare soft favor for bot→bot kills (~2–3 of 10).
-    val botFavored = rollWithBotVsBotKillFavor(
-        allowSix = allowSix,
-        players = players,
-        playerIndex = playerIndex,
-        random = random,
-    )
-    if (botFavored != null) {
-        return BotDiceDecision(dice = botFavored)
-    }
-    // 4) Otherwise normal weighted six roll (fair-feeling).
+    // No kill-face / stalk manipulation — natural weighted roll only.
     val baseSixProbability = (1.0 / 6.0) * (1.0 + settings.botSixBoostPercent / 100.0)
     return BotDiceDecision(
         dice = rollWeightedSixOrLow(

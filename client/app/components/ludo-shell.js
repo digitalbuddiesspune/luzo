@@ -891,9 +891,9 @@ function samplePathPositions(anchorPositions) {
 // Dice bias for the offline board. The online server mirrors these in
 // server/src/main/kotlin/com/craft/ludo/gameplay/bot/BotDiceBias.kt, and
 // BotDiceBiasTests fails when the two sides drift apart. Change both together.
-const BOT_KILL_FAVOR_2P = 33;
+const BOT_KILL_FAVOR_2P = 0;
 const USER_KILL_FAVOR_2P = 30;
-const BOT_KILL_FAVOR_MULTI = 33;
+const BOT_KILL_FAVOR_MULTI = 0;
 const USER_KILL_FAVOR_MULTI = 30;
 const BOT_SIX_BOOST_PERCENT = 15;
 const TARGET_PLAYER_TO_BOT_SIX_RATIO = 7 / 11;
@@ -904,7 +904,7 @@ const BOT_VS_BOT_KILL_FAVOR_PERCENT = 25;
  * Matches are won by bringing four tokens home rather than by capturing, and an
  * "exact number" reads as luck far more than a suspicious run of kills does.
  */
-const BOT_HOME_FINISH_FAVOR_PERCENT = 60;
+const BOT_HOME_FINISH_FAVOR_PERCENT = 50;
 
 function killFavorPercentForBot(players) {
   return players.length === 2 ? BOT_KILL_FAVOR_2P : BOT_KILL_FAVOR_MULTI;
@@ -1507,12 +1507,8 @@ function rollWithBotVsBotKillFavor(players, playerIndex, allowSix) {
 }
 
 /**
- * Kills on real players are staged: instead of snapping to the capture face the
- * bot walks its token in over 2-3 turns, so `stalkPlan` carries the hunt between
- * turns and the returned decision names the token that must be moved.
- *
- * Finishing a token takes priority over opening a new hunt, since matches are
- * won by bringing tokens home.
+ * Bot rolls without kill-face / stalk manipulation — captures only on a natural
+ * roll. Home-finish favor and a mild six boost still apply.
  */
 function rollBotDiceValue(
   consecutiveSixCount,
@@ -1524,29 +1520,9 @@ function rollBotDiceValue(
   const diceContext = context ?? buildDiceRollContext(players, playerIndex);
   const allowSix = resolveAllowSix(consecutiveSixCount, true, diceContext);
 
-  // Walk tokens home when an exact face is available. Skipped while a hunt is
-  // in flight so the committed stalk does not lose its thread.
-  if (!stalkPlan) {
-    const finishing = rollWithHomeFinishFavor(players, playerIndex, allowSix);
-    if (finishing) {
-      return finishing;
-    }
-  }
-
-  const stalked = resolveStalkDice(
-    players,
-    playerIndex,
-    allowSix,
-    killFavorPercentForBot(players),
-    stalkPlan,
-  );
-  if (stalked) {
-    return stalked;
-  }
-
-  const botVsBot = rollWithBotVsBotKillFavor(players, playerIndex, allowSix);
-  if (botVsBot != null) {
-    return botDiceDecision(botVsBot);
+  const finishing = rollWithHomeFinishFavor(players, playerIndex, allowSix);
+  if (finishing) {
+    return finishing;
   }
 
   const baseSixProbability = (1 / 6) * (1 + BOT_SIX_BOOST_PERCENT / 100);

@@ -1024,7 +1024,8 @@ img {
 }
 
 .menu-ludo-hero-modern {
-  width: min(72vw, 19rem);
+  width: min(82vw, 21rem);
+  max-width: 100%;
   animation: menu-home-float 5.5s ease-in-out infinite;
 }
 
@@ -4609,11 +4610,15 @@ img {
   }
 
   .menu-ludo-hero-modern {
-    width: min(68vw, 16.5rem);
+    width: min(88vw, 22.5rem);
+  }
+
+  .menu-ludo-hero.menu-ludo-hero-modern {
+    width: min(88vw, 22.5rem);
   }
 
   .menu-home-brand-name {
-    font-size: clamp(2.55rem, 8.5vw, 3.4rem);
+    font-size: clamp(3.25rem, 11.5vw, 4.15rem);
   }
 
   .menu-game-banner {
@@ -4741,6 +4746,10 @@ img {
     width: min(50vw, 11.2rem);
   }
 
+  .menu-ludo-hero.menu-ludo-hero-modern {
+    width: min(88vw, 21.5rem);
+  }
+
   .menu-game-banner {
     width: min(100%, 16.2rem);
   }
@@ -4824,6 +4833,10 @@ img {
   .menu-ludo-hero,
   .menu-live-goti-row {
     width: min(46vw, 10.4rem);
+  }
+
+  .menu-ludo-hero.menu-ludo-hero-modern {
+    width: min(88vw, 20.5rem);
   }
 
   .menu-live-goti {

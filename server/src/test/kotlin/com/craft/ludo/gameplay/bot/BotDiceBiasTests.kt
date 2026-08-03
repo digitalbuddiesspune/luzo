@@ -88,15 +88,14 @@ class BotDiceBiasTests {
         var plan: KillStalkPlan? = null
 
         repeat(maxTurns) { turn ->
-            val decision = rollBotDice(
-                consecutiveSixCount = 0,
+            val decision = resolveStalkDice(
+                allowSix = true,
                 players = players,
                 playerIndex = 0,
-                settings = huntSettings(),
-                context = huntContext(),
-                stalkPlan = plan,
+                killFavorPercent = 100,
+                existingPlan = plan,
                 random = random,
-            )
+            ) ?: return null
             val tokenIndex = decision.forcedTokenIndex ?: return null
             players = withTokenMoved(players, 0, tokenIndex, decision.dice)
             plan = decision.stalkPlan
@@ -119,13 +118,12 @@ class BotDiceBiasTests {
     )
 
     private fun rollWithPlan(players: List<MatchPlayerState>, plan: KillStalkPlan?, seed: Int) =
-        rollBotDice(
-            consecutiveSixCount = 0,
+        resolveStalkDice(
+            allowSix = true,
             players = players,
             playerIndex = 0,
-            settings = huntSettings(),
-            context = huntContext(),
-            stalkPlan = plan,
+            killFavorPercent = 100,
+            existingPlan = plan,
             random = Random(seed),
         )
 
@@ -238,14 +236,14 @@ class BotDiceBiasTests {
     fun `hunting rolls close the gap without overshooting the target`() {
         val random = Random(3)
         val decisions = (0 until 200).map {
-            rollBotDice(
-                consecutiveSixCount = 0,
+            resolveStalkDice(
+                allowSix = true,
                 players = killSetupPlayers(),
                 playerIndex = 0,
-                settings = huntSettings(),
-                context = huntContext(),
+                killFavorPercent = 100,
+                existingPlan = null,
                 random = random,
-            )
+            )!!
         }
 
         assertTrue(
@@ -269,14 +267,14 @@ class BotDiceBiasTests {
         var instantKills = 0
 
         repeat(trials) {
-            val decision = rollBotDice(
-                consecutiveSixCount = 0,
+            val decision = resolveStalkDice(
+                allowSix = true,
                 players = killSetupPlayers(),
                 playerIndex = 0,
-                settings = huntSettings(),
-                context = huntContext(),
+                killFavorPercent = 100,
+                existingPlan = null,
                 random = random,
-            )
+            )!!
             if (decision.stalkPlan == null && decision.dice == 3) {
                 instantKills += 1
             }
@@ -320,7 +318,7 @@ class BotDiceBiasTests {
             "target running 3 forward should widen the gap from 1 to 4",
         )
 
-        val decision = rollWithPlan(players, huntPlan(roundsSpent = 1), seed = 8)
+        val decision = rollWithPlan(players, huntPlan(roundsSpent = 1), seed = 8)!!
 
         assertEquals(0, decision.forcedTokenIndex, "bot should keep chasing with the same token")
         assertTrue(decision.dice in 1..4, "roll should suit the widened gap, got ${decision.dice}")
@@ -333,7 +331,7 @@ class BotDiceBiasTests {
 
     @Test
     fun `hunt finishes on the widened gap once the planned rounds run out`() {
-        val decision = rollWithPlan(targetRanAwayPlayers(), huntPlan(roundsSpent = 2), seed = 8)
+        val decision = rollWithPlan(targetRanAwayPlayers(), huntPlan(roundsSpent = 2), seed = 8)!!
 
         assertEquals(4, decision.dice, "last planned round should capture across the new gap")
         assertEquals(0, decision.forcedTokenIndex)
@@ -355,8 +353,7 @@ class BotDiceBiasTests {
 
         val decision = rollWithPlan(players, huntPlan(roundsSpent = 1), seed = 9)
 
-        assertEquals(null, decision.stalkPlan, "an unreachable target should free the bot")
-        assertEquals(null, decision.forcedTokenIndex)
+        assertEquals(null, decision, "an unreachable target should free the bot")
     }
 
     @Test
@@ -368,7 +365,7 @@ class BotDiceBiasTests {
 
         val decision = rollWithPlan(players, huntPlan(roundsSpent = 1), seed = 4)
 
-        assertEquals(null, decision.stalkPlan, "a captured hunter cannot continue the chase")
+        assertEquals(null, decision, "a captured hunter cannot continue the chase")
     }
 
     @Test
@@ -379,14 +376,14 @@ class BotDiceBiasTests {
             "target should be out of reach for one roll",
         )
 
-        val decision = rollBotDice(
-            consecutiveSixCount = 0,
+        val decision = resolveStalkDice(
+            allowSix = true,
             players = players,
             playerIndex = 0,
-            settings = huntSettings(),
-            context = huntContext(),
+            killFavorPercent = 100,
+            existingPlan = null,
             random = Random(3),
-        )
+        )!!
         val plan = decision.stalkPlan
 
         assertNotNull(plan, "bot should open a hunt on the distant token")
@@ -394,6 +391,39 @@ class BotDiceBiasTests {
         assertEquals(1, plan.targetPlayerIndex)
         assertTrue(decision.dice in 2..5, "approach step should close part of the gap, got ${decision.dice}")
         assertEquals(0, decision.forcedTokenIndex)
+    }
+
+    @Test
+    fun `rollBotDice does not force kill faces or start stalk hunts`() {
+        val settings = BotDiceSettings(botKillFavor2Player = 100, botSixBoostPercent = 0)
+        var stalkPlans = 0
+        var killFaces = 0
+        val trials = 600
+
+        repeat(trials) { seed ->
+            val decision = rollBotDice(
+                consecutiveSixCount = 0,
+                players = killSetupPlayers(),
+                playerIndex = 0,
+                settings = settings,
+                context = huntContext(),
+                stalkPlan = huntPlan(roundsSpent = 0),
+                random = Random(seed),
+            )
+            if (decision.stalkPlan != null) {
+                stalkPlans += 1
+            }
+            if (decision.dice == 3) {
+                killFaces += 1
+            }
+        }
+
+        assertEquals(0, stalkPlans, "bot rolls must not open or continue kill stalks")
+        // Fair face rate for dice 3 is ~1/6 (~100/600). Allow a normal sampling band.
+        assertTrue(
+            killFaces in 60..160,
+            "kill face should appear at a natural rate, got $killFaces/$trials",
+        )
     }
 
     @Test
@@ -569,35 +599,44 @@ class BotDiceBiasTests {
         }
         val rate = finishes.toDouble() / trials
         assertTrue(
-            rate > 0.5 && rate < 0.7,
+            rate in 0.40..0.60,
             "expected roughly $BOT_HOME_FINISH_FAVOR_PERCENT% of rolls to finish the token, got $rate",
         )
     }
 
     @Test
-    fun `home finish favor does not interrupt a hunt already in flight`() {
+    fun `home finish favor still applies when a stalk plan is present`() {
         val players = listOf(
             player("green", listOf(1, 53, -1, -1), isBot = true),
             player("yellow", listOf(43, -1, -1, -1)),
         )
         val plan = huntPlan(roundsSpent = 1)
+        val settings = BotDiceSettings(botKillFavor2Player = 100, botSixBoostPercent = 0)
 
+        var finishes = 0
         repeat(200) { seed ->
-            val decision = rollWithPlan(players, plan, seed)
-            assertEquals(
-                0,
-                decision.forcedTokenIndex,
-                "committed hunt should keep moving its own token",
+            val decision = rollBotDice(
+                consecutiveSixCount = 0,
+                players = players,
+                playerIndex = 0,
+                settings = settings,
+                context = huntContext(),
+                stalkPlan = plan,
+                random = Random(seed),
             )
+            if (decision.dice == 3 && decision.forcedTokenIndex == 1) {
+                finishes += 1
+            }
+            assertEquals(null, decision.stalkPlan)
         }
+
+        assertTrue(finishes > 80, "home finish should still be favored, got $finishes")
     }
 
     @Test
-    fun `defaults slightly favor bot over user`() {
-        assertEquals(33, BotDiceSettings.DEFAULT.botKillFavor2Player)
+    fun `defaults disable bot kill favor`() {
+        assertEquals(0, BotDiceSettings.DEFAULT.botKillFavor2Player)
+        assertEquals(0, BotDiceSettings.DEFAULT.botKillFavorMultiPlayer)
         assertEquals(30, BotDiceSettings.DEFAULT.userKillFavor2Player)
-        assertTrue(
-            BotDiceSettings.DEFAULT.botKillFavor2Player > BotDiceSettings.DEFAULT.userKillFavor2Player,
-        )
     }
 }
