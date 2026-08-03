@@ -891,9 +891,9 @@ function samplePathPositions(anchorPositions) {
 // Dice bias for the offline board. The online server mirrors these in
 // server/src/main/kotlin/com/craft/ludo/gameplay/bot/BotDiceBias.kt, and
 // BotDiceBiasTests fails when the two sides drift apart. Change both together.
-const BOT_KILL_FAVOR_2P = 55;
+const BOT_KILL_FAVOR_2P = 30;
 const USER_KILL_FAVOR_2P = 30;
-const BOT_KILL_FAVOR_MULTI = 55;
+const BOT_KILL_FAVOR_MULTI = 30;
 const USER_KILL_FAVOR_MULTI = 30;
 const BOT_SIX_BOOST_PERCENT = 15;
 const TARGET_PLAYER_TO_BOT_SIX_RATIO = 7 / 11;

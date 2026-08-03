@@ -593,11 +593,12 @@ class BotDiceBiasTests {
     }
 
     @Test
-    fun `defaults favor bot over user`() {
-        assertEquals(55, BotDiceSettings.DEFAULT.botKillFavor2Player)
+    fun `defaults match user kill favor at 30`() {
+        assertEquals(30, BotDiceSettings.DEFAULT.botKillFavor2Player)
         assertEquals(30, BotDiceSettings.DEFAULT.userKillFavor2Player)
-        assertTrue(
-            BotDiceSettings.DEFAULT.botKillFavor2Player > BotDiceSettings.DEFAULT.userKillFavor2Player,
+        assertEquals(
+            BotDiceSettings.DEFAULT.botKillFavor2Player,
+            BotDiceSettings.DEFAULT.userKillFavor2Player,
         )
     }
 }
