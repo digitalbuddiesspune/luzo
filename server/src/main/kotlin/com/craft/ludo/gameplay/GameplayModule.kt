@@ -16,6 +16,7 @@ import com.craft.ludo.gameplay.bot.stalkPlanFor
 import com.craft.ludo.gameplay.bot.upsertStalkPlan
 import com.craft.ludo.wallet.WalletReservation
 import com.craft.ludo.wallet.WalletService
+import com.fasterxml.jackson.annotation.JsonAlias
 import com.fasterxml.jackson.annotation.JsonProperty
 import com.fasterxml.jackson.databind.ObjectMapper
 import jakarta.annotation.PostConstruct
@@ -26,6 +27,7 @@ import org.springframework.context.annotation.Configuration
 import org.springframework.dao.OptimisticLockingFailureException
 import org.springframework.data.annotation.Id
 import org.springframework.data.annotation.Version
+import org.springframework.data.mongodb.core.mapping.Field
 import org.springframework.data.domain.Sort
 import org.springframework.data.redis.core.ReactiveStringRedisTemplate
 import org.springframework.data.redis.listener.ChannelTopic
@@ -140,7 +142,12 @@ data class MatchPlayerState(
     @get:JsonProperty("isAbandoned")
     val isAbandoned: Boolean = false,
     val tokens: List<Int>,
-    val consecutiveMissedTurns: Int = 0,
+    // Total missed turns in this match (not consecutive). Kept under the legacy
+    // Mongo field name so in-progress matches keep their counters.
+    @Field("consecutiveMissedTurns")
+    @get:JsonProperty("missedTurns")
+    @get:JsonAlias("consecutiveMissedTurns")
+    val missedTurns: Int = 0,
     val matchDiceRollCount: Int = 0,
     val matchSixCount: Int = 0,
     val operatorUserId: String? = null,
@@ -913,35 +920,21 @@ internal data class MissedTurnRegistration(
     val abandonOutcome: AbandonOutcome = AbandonOutcome(),
 )
 
-internal fun resetMissedTurns(
-    players: List<MatchPlayerState>,
-    playerIndex: Int,
-): List<MatchPlayerState> {
-    val player = players.getOrNull(playerIndex) ?: return players
-    if (player.consecutiveMissedTurns == 0) {
-        return players
-    }
-
-    return players.toMutableList().apply {
-        this[playerIndex] = player.copy(consecutiveMissedTurns = 0)
-    }
-}
-
 internal fun registerMissedTurn(
     players: List<MatchPlayerState>,
     playerIndex: Int,
-    maxConsecutiveMissedTurns: Int,
+    maxMissedTurns: Int,
     abandonedUserId: String,
 ): MissedTurnRegistration {
-    require(maxConsecutiveMissedTurns > 0) { "maxConsecutiveMissedTurns must be positive." }
+    require(maxMissedTurns > 0) { "maxMissedTurns must be positive." }
 
     val player = players[playerIndex]
-    val nextMissedTurns = player.consecutiveMissedTurns + 1
+    val nextMissedTurns = player.missedTurns + 1
     val playersWithMiss = players.toMutableList().apply {
-        this[playerIndex] = player.copy(consecutiveMissedTurns = nextMissedTurns)
+        this[playerIndex] = player.copy(missedTurns = nextMissedTurns)
     }
 
-    if (nextMissedTurns < maxConsecutiveMissedTurns) {
+    if (nextMissedTurns < maxMissedTurns) {
         return MissedTurnRegistration(
             players = playersWithMiss,
             autoLeft = false,
@@ -1243,7 +1236,7 @@ class MatchService(
 ) {
     private val log = LoggerFactory.getLogger(MatchService::class.java)
     private val turnTimeoutSeconds = appProperties.gameplay.turnTimeoutSeconds
-    private val maxConsecutiveMissedTurns = appProperties.gameplay.maxConsecutiveMissedTurns
+    private val maxMissedTurns = appProperties.gameplay.maxMissedTurns
     private val houseUserId = appProperties.wallet.houseUserId.trim()
     private val rollDelayMillis = appProperties.gameplay.rollDelayMillis
     private val botMoveDelayMillis = appProperties.gameplay.botMoveDelayMillis
@@ -1252,8 +1245,8 @@ class MatchService(
 
     init {
         require(turnTimeoutSeconds > 0) { "app.gameplay.turn-timeout-seconds must be positive." }
-        require(maxConsecutiveMissedTurns > 0) {
-            "app.gameplay.max-consecutive-missed-turns must be positive."
+        require(maxMissedTurns > 0) {
+            "app.gameplay.max-missed-turns must be positive."
         }
         require(houseUserId.isNotBlank()) { "app.wallet.house-user-id must not be blank." }
     }
@@ -1702,12 +1695,7 @@ class MatchService(
     ): MatchDocument {
         val botDiceSettings = BotDiceSettings.DEFAULT
         val playerIndex = match.currentPlayerIndex
-        val activePlayer = match.players[playerIndex]
-        val matchForRoll = if (!activePlayer.isBot) {
-            match.copy(players = resetMissedTurns(match.players, playerIndex))
-        } else {
-            match
-        }
+        val matchForRoll = match
         val rollingPlayer = matchForRoll.players[playerIndex]
         val diceContext = buildDiceRollContext(matchForRoll.players, playerIndex)
         val rollDecision = if (rollingPlayer.isBot) {
@@ -1800,12 +1788,7 @@ class MatchService(
     private fun applyTokenMove(match: MatchDocument, tokenIndex: Int, now: Instant): MatchDocument {
         val activePlayer = match.players[match.currentPlayerIndex]
         val diceValue = match.dice ?: 1
-        val playersWithResetMisses = if (!activePlayer.isBot) {
-            resetMissedTurns(match.players, match.currentPlayerIndex)
-        } else {
-            match.players
-        }
-        val mutablePlayers = playersWithResetMisses.map { player ->
+        val mutablePlayers = match.players.map { player ->
             player.copy(tokens = player.tokens.toMutableList())
         }.toMutableList()
         val activeTokens = mutablePlayers[match.currentPlayerIndex].tokens.toMutableList()
@@ -1889,10 +1872,7 @@ class MatchService(
         // If the player had multiple options and timed out, count a missed turn.
         if (forcedTokenIndex != null) {
             val activePlayer = match.players[match.currentPlayerIndex]
-            val resetMatch = match.copy(
-                players = resetMissedTurns(match.players, match.currentPlayerIndex),
-            )
-            val timedOutMove = applyTokenMove(resetMatch, forcedTokenIndex, now)
+            val timedOutMove = applyTokenMove(match, forcedTokenIndex, now)
 
             return persistMatchTransition(
                 timedOutMove.copy(
@@ -1916,7 +1896,7 @@ class MatchService(
         val registration = registerMissedTurn(
             players = match.players,
             playerIndex = playerIndex,
-            maxConsecutiveMissedTurns = maxConsecutiveMissedTurns,
+            maxMissedTurns = maxMissedTurns,
             abandonedUserId = abandonedId,
         )
         val nextMatch = applyMissedTurnRegistration(
@@ -1946,6 +1926,12 @@ class MatchService(
         val activePlayer = match.players[playerIndex]
 
         if (!registration.autoLeft) {
+            val missedTurns = registration.players[playerIndex].missedTurns
+            val warningDetail = if (missedTurns >= maxMissedTurns - 1) {
+                "ran out of time. One more miss and you will be removed from the match."
+            } else {
+                "ran out of time."
+            }
             return beginTurn(
                 match.copy(
                     players = registration.players,
@@ -1956,7 +1942,7 @@ class MatchService(
                     events = prependEvent(
                         match.events,
                         activePlayer.displayName,
-                        "ran out of time.",
+                        warningDetail,
                         now,
                     ),
                 ),
@@ -1976,7 +1962,7 @@ class MatchService(
             events = prependEvent(
                 match.events,
                 "System",
-                "${activePlayer.displayName} was removed after missing $maxConsecutiveMissedTurns turns.",
+                "${activePlayer.displayName} was removed after missing $maxMissedTurns turns.",
                 now,
             ),
         )

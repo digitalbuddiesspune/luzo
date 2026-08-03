@@ -1618,6 +1618,98 @@ function resolveForcedAutoMoveToken(selectableTokenIndexes) {
   return Number(selectableTokenIndexes[0]);
 }
 
+const MAX_MISSED_TURNS = 2;
+
+function applyLocalMissedTurn(match, playerIndex) {
+  const activePlayer = match.players[playerIndex];
+  const nextMissedTurns = (activePlayer.missedTurns ?? 0) + 1;
+  const playersWithMiss = match.players.map((player, index) =>
+    index === playerIndex
+      ? { ...player, missedTurns: nextMissedTurns }
+      : player,
+  );
+
+  if (nextMissedTurns < MAX_MISSED_TURNS) {
+    return startPlayerTurn(
+      {
+        ...match,
+        players: playersWithMiss,
+        dice: null,
+        selectableTokenIndexes: [],
+        events: prependMatchEvent(
+          match.events,
+          activePlayer.name,
+          "ran out of time. One more miss and you will be removed from the match.",
+        ),
+      },
+      (playerIndex + 1) % match.players.length,
+    );
+  }
+
+  const abandonedPlayers = playersWithMiss.map((player, index) =>
+    index === playerIndex
+      ? {
+          ...player,
+          id: `abandoned_${player.id}`,
+          isAbandoned: true,
+          tokens: [],
+        }
+      : player,
+  );
+  const remainingPlayers = abandonedPlayers.filter(
+    (player) => !player.isAbandoned,
+  );
+  const remainingHumans = remainingPlayers.filter((player) => !player.isBot);
+  const forfeitWinner =
+    match.players.length === 2 && remainingPlayers.length === 1
+      ? remainingPlayers[0]
+      : null;
+  const botWinner =
+    !forfeitWinner && remainingHumans.length === 0 && remainingPlayers.length > 0
+      ? remainingPlayers[0]
+      : null;
+  const winner = forfeitWinner || botWinner;
+
+  let events = prependMatchEvent(
+    match.events,
+    "System",
+    `${activePlayer.name} was removed after missing ${MAX_MISSED_TURNS} turns.`,
+  );
+
+  if (forfeitWinner) {
+    events = prependMatchEvent(
+      events,
+      "System",
+      `${forfeitWinner.name} won because the opponent left the 2-player match.`,
+    );
+  }
+
+  if (winner) {
+    return {
+      ...match,
+      players: abandonedPlayers,
+      dice: null,
+      selectableTokenIndexes: [],
+      pendingNextPlayerIndex: null,
+      phase: "finished",
+      winnerId: winner.id,
+      winnerDisplayName: winner.name,
+      events,
+    };
+  }
+
+  return startPlayerTurn(
+    {
+      ...match,
+      players: abandonedPlayers,
+      dice: null,
+      selectableTokenIndexes: [],
+      events,
+    },
+    (playerIndex + 1) % match.players.length,
+  );
+}
+
 function buildOptimisticTokenMove(match, tokenIndex, userId) {
   if (
     !match ||
@@ -4908,6 +5000,8 @@ function BoardScreen({
   const [isGameMenuOpen, setIsGameMenuOpen] = useState(false);
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
   const [isSoundOn, setIsSoundOn] = useSoundSetting();
+  const [showMissTurnWarning, setShowMissTurnWarning] = useState(false);
+  const warnedMissMatchIdRef = useRef(null);
   const [autoSpinExpiredTurnId, setAutoSpinExpiredTurnId] = useState(null);
   const [opponentDiceSpin, setOpponentDiceSpin] = useState(null);
   const [boardSyncMatch, setBoardSyncMatch] = useState(match);
@@ -4948,6 +5042,28 @@ function BoardScreen({
     potIntroMatchIdRef.current = match.id;
     setPotIntroPhase("visible");
   }, [match.id]);
+
+  useEffect(() => {
+    if (!userPlayerId || match.phase === "finished" || match.winnerId) {
+      return;
+    }
+
+    const userPlayer = match.players.find((player) => player.id === userPlayerId);
+    const missedTurns = Number(userPlayer?.missedTurns ?? 0);
+
+    if (
+      missedTurns >= 1 &&
+      !userPlayer?.isAbandoned &&
+      warnedMissMatchIdRef.current !== match.id
+    ) {
+      warnedMissMatchIdRef.current = match.id;
+      setShowMissTurnWarning(true);
+    }
+
+    if (missedTurns === 0) {
+      warnedMissMatchIdRef.current = null;
+    }
+  }, [match.id, match.phase, match.players, match.winnerId, userPlayerId]);
 
   useEffect(() => {
     if (potIntroPhase !== "visible") {
@@ -5434,6 +5550,11 @@ function BoardScreen({
         onHelp={() => setIsHistoryOpen(true)}
       />
 
+      <MissTurnWarningToast
+        isOpen={showMissTurnWarning}
+        onClose={() => setShowMissTurnWarning(false)}
+      />
+
       {statusMessage ? (
         <div className="board-status-banner">{statusMessage}</div>
       ) : null}
@@ -5778,6 +5899,39 @@ function ConfirmDialog({
           </button>
         </div>
       </aside>
+    </div>
+  );
+}
+
+function MissTurnWarningToast({ isOpen, onClose }) {
+  useEffect(() => {
+    if (!isOpen) {
+      return undefined;
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      onClose();
+    }, 4500);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [isOpen, onClose]);
+
+  if (!isOpen) {
+    return null;
+  }
+
+  return (
+    <div className="miss-turn-warning-toast" role="status" aria-live="polite">
+      <strong>Turn missed</strong>
+      <p>Miss one more turn and you will be removed from the match.</p>
+      <button
+        type="button"
+        className="miss-turn-warning-toast-close"
+        aria-label="Dismiss warning"
+        onClick={onClose}
+      >
+        ×
+      </button>
     </div>
   );
 }
@@ -8335,32 +8489,15 @@ function LocalBoardPageShell({ mode, appState }) {
           return applyTokenMove(currentMatch, forcedTokenIndex);
         }
 
-        // Multiple choices left unused: skip the turn instead of forcing a goti.
-        return startPlayerTurn(
-          {
-            ...currentMatch,
-            dice: null,
-            selectableTokenIndexes: [],
-            events: prependMatchEvent(
-              currentMatch.events,
-              activePlayer.name,
-              "ran out of time.",
-            ),
-          },
-          (currentMatch.currentPlayerIndex + 1) % currentMatch.players.length,
+        return applyLocalMissedTurn(
+          currentMatch,
+          currentMatch.currentPlayerIndex,
         );
       }
 
-      return startPlayerTurn(
-        {
-          ...currentMatch,
-          events: prependMatchEvent(
-            currentMatch.events,
-            activePlayer.name,
-            "ran out of time.",
-          ),
-        },
-        (currentMatch.currentPlayerIndex + 1) % currentMatch.players.length,
+      return applyLocalMissedTurn(
+        currentMatch,
+        currentMatch.currentPlayerIndex,
       );
     });
   }, [

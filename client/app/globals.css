@@ -2473,6 +2473,72 @@ img {
   gap: 0.65rem;
 }
 
+.miss-turn-warning-toast {
+  position: fixed;
+  top: calc(0.7rem + env(safe-area-inset-top));
+  left: 50%;
+  z-index: 120;
+  width: min(calc(100% - 1.4rem), 20rem);
+  transform: translateX(-50%);
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 0.1rem 0.45rem;
+  padding: 0.55rem 0.7rem 0.6rem;
+  border-radius: 0.85rem;
+  border: 0.06rem solid rgba(255, 196, 84, 0.55);
+  background: linear-gradient(
+    180deg,
+    rgba(58, 36, 8, 0.94),
+    rgba(34, 20, 4, 0.94)
+  );
+  box-shadow: 0 0.55rem 1.2rem rgba(0, 0, 0, 0.28);
+  pointer-events: auto;
+  animation: miss-turn-warning-in 280ms ease-out;
+}
+
+.miss-turn-warning-toast strong {
+  color: #ffe28a;
+  font-size: 0.78rem;
+  line-height: 1.2;
+}
+
+.miss-turn-warning-toast p {
+  grid-column: 1;
+  margin: 0;
+  color: rgba(255, 236, 196, 0.88);
+  font-size: 0.68rem;
+  line-height: 1.35;
+}
+
+.miss-turn-warning-toast-close {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  align-self: start;
+  width: 1.35rem;
+  height: 1.35rem;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+  color: rgba(255, 236, 196, 0.9);
+  font-size: 1rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+@keyframes miss-turn-warning-in {
+  from {
+    opacity: 0;
+    transform: translate(-50%, -0.45rem);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateX(-50%);
+  }
+}
+
 .dialog-button {
   padding: 0.76rem 0.9rem;
   border-radius: 0.85rem;

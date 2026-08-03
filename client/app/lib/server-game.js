@@ -467,6 +467,7 @@ export function normalizeMatchSnapshot(snapshot) {
         color: player.color,
         isBot,
         isAbandoned,
+        missedTurns: player.missedTurns ?? player.consecutiveMissedTurns ?? 0,
         tokens,
       };
     }),
