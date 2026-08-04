@@ -5749,6 +5749,14 @@ function WaitingLobbyScreen({
           when the lobby is ready.
         </p>
 
+        <aside className="lobby-miss-warning" role="note" aria-label="Turn warning">
+          <strong>Important</strong>
+          <p>
+            If you miss 2 turns in the match, you will be removed and your
+            opponent will win. Stay active and play on time.
+          </p>
+        </aside>
+
         <button
           type="button"
           className="waiting-leave-button"
@@ -6298,6 +6306,14 @@ function PrivateRoomLobbyScreen({
           Share this code with your friends. The host can start when the room
           has at least 2 players.
         </p>
+
+        <aside className="lobby-miss-warning" role="note" aria-label="Turn warning">
+          <strong>Important</strong>
+          <p>
+            If you miss 2 turns in the match, you will be removed and your
+            opponent will win. Stay active and play on time.
+          </p>
+        </aside>
 
         <div className="private-room-member-list">
           {room.members.map((member) => {
