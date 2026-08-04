@@ -33,9 +33,7 @@ function Pagination({ pagination, onPageChange, itemLabel = "items" }) {
   );
 }
 
-export function GamesTable({ games, pagination, onPageChange, onSelectGame, onDeleteGame, deletingRoundId }) {
-  const colSpan = onDeleteGame ? 9 : 8;
-
+export function GamesTable({ games, pagination, onPageChange, onSelectGame }) {
   return (
     <div className="overflow-hidden rounded-2xl border border-[var(--color-line)] bg-white shadow-[var(--shadow-card)]">
       <div className="overflow-x-auto">
@@ -66,17 +64,12 @@ export function GamesTable({ games, pagination, onPageChange, onSelectGame, onDe
               <th className="px-4 py-3 text-left text-[11px] font-bold uppercase tracking-[0.1em] text-[var(--color-muted)]">
                 Completed
               </th>
-              {onDeleteGame ? (
-                <th className="px-4 py-3 text-right text-[11px] font-bold uppercase tracking-[0.1em] text-[var(--color-muted)]">
-                  Actions
-                </th>
-              ) : null}
             </tr>
           </thead>
           <tbody>
             {games.length === 0 ? (
               <tr>
-                <td colSpan={colSpan} className="px-4 py-12 text-center text-[var(--color-muted)]">
+                <td colSpan={8} className="px-4 py-12 text-center text-[var(--color-muted)]">
                   No finished games found.
                 </td>
               </tr>
@@ -133,21 +126,6 @@ export function GamesTable({ games, pagination, onPageChange, onSelectGame, onDe
                     {formatProfitLoss(game.platformProfit, game.currency)}
                   </td>
                   <td className="px-4 py-3.5 text-[var(--color-muted)]">{formatDate(game.completedAt)}</td>
-                  {onDeleteGame ? (
-                    <td className="px-4 py-3.5 text-right">
-                      <button
-                        type="button"
-                        disabled={deletingRoundId === game.roundId}
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          onDeleteGame(game);
-                        }}
-                        className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-1.5 text-xs font-semibold text-rose-700 transition-colors hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-50"
-                      >
-                        {deletingRoundId === game.roundId ? "Deleting…" : "Delete"}
-                      </button>
-                    </td>
-                  ) : null}
                 </tr>
               ))
             )}

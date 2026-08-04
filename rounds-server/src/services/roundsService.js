@@ -14,10 +14,13 @@ const MATCH_PROJECTION = {
   "players.color": 1,
   "players.isBot": 1,
   "players.isAbandoned": 1,
+  "players.tokens": 1,
+  "players.finalTokens": 1,
   "players.operatorId": 1,
   "players.operatorUserId": 1,
   winnerUserId: 1,
   winnerDisplayName: 1,
+  winnerReason: 1,
   createdAt: 1,
   updatedAt: 1,
 };
@@ -43,6 +46,16 @@ const ROOM_PROJECTION = {
 
 function safeAmount(value) {
   return Number.isSafeInteger(value) && value >= 0 ? value : 0;
+}
+
+function resolvePlayerTokens(player) {
+  if (Array.isArray(player?.finalTokens) && player.finalTokens.length > 0) {
+    return player.finalTokens;
+  }
+  if (Array.isArray(player?.tokens) && player.tokens.length > 0) {
+    return player.tokens;
+  }
+  return [];
 }
 
 function escapeHtml(value) {
@@ -296,6 +309,7 @@ function buildRound(match, room, platformFeePerPlayer = config.platformFeePerPla
       color: player.color,
       isBot: Boolean(player.isBot),
       isAbandoned,
+      tokens: resolvePlayerTokens(player),
       betAmount,
       isWinner,
       winAmount: isWinner ? winnerAmount : 0,
@@ -319,6 +333,7 @@ function buildRound(match, room, platformFeePerPlayer = config.platformFeePerPla
     entryFee: safeAmount(match.entryFee ?? room?.entryFee),
     totalPotAmount,
     platformFeePerPlayer,
+    winnerReason: match.winnerReason || null,
     players,
     winner: match.winnerUserId
       ? {

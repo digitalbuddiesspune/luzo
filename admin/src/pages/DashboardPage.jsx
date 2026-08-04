@@ -27,8 +27,6 @@ export function DashboardPage({
   onOpenPlatforms,
   onSelectOperator,
   onSelectGame,
-  onDeleteGame,
-  deletingRoundId,
 }) {
   return (
     <div className="space-y-6 animate-fade-up">
@@ -212,16 +210,6 @@ export function DashboardPage({
                         <p className="text-[11px] text-[var(--color-muted)]">platform</p>
                       </div>
                     </button>
-                    {onDeleteGame ? (
-                      <button
-                        type="button"
-                        disabled={deletingRoundId === game.roundId}
-                        onClick={() => onDeleteGame(game)}
-                        className="shrink-0 rounded-lg border border-rose-200 bg-rose-50 px-2.5 py-1.5 text-xs font-semibold text-rose-700 transition-colors hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-50"
-                      >
-                        {deletingRoundId === game.roundId ? "…" : "Delete"}
-                      </button>
-                    ) : null}
                   </div>
                 );
               })

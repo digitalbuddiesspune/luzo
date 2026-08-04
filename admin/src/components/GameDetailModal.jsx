@@ -1,6 +1,7 @@
 import { formatAmount, formatDate, formatProfitLoss, profitLossClassName } from "../utils/format";
+import { FinalBoardPreview } from "./FinalBoardPreview";
 
-export function GameDetailModal({ game, onClose, onDeleteGame, deletingRoundId }) {
+export function GameDetailModal({ game, onClose }) {
   if (!game) {
     return null;
   }
@@ -32,16 +33,6 @@ export function GameDetailModal({ game, onClose, onDeleteGame, deletingRoundId }
             </p>
           </div>
           <div className="flex items-center gap-2">
-            {onDeleteGame ? (
-              <button
-                type="button"
-                disabled={deletingRoundId === game.roundId}
-                onClick={() => onDeleteGame(game)}
-                className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-1.5 text-sm font-semibold text-rose-700 transition-colors hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                {deletingRoundId === game.roundId ? "Deleting…" : "Delete game"}
-              </button>
-            ) : null}
             <button
               type="button"
               onClick={onClose}
@@ -80,6 +71,8 @@ export function GameDetailModal({ game, onClose, onDeleteGame, deletingRoundId }
           />
           <Metric label="Mode" value={game.mode || "—"} />
         </div>
+
+        <FinalBoardPreview game={game} />
 
         <div className="border-t border-[var(--color-line)] px-6 py-5">
           <h3 className="text-[11px] font-bold uppercase tracking-[0.14em] text-[var(--color-muted)]">

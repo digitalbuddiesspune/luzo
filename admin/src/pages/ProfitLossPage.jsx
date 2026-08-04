@@ -8,7 +8,6 @@ import {
 } from "../utils/dates";
 
 const SECTIONS = [
-  { id: "overview", label: "Overview" },
   { id: "games", label: "Games" },
   { id: "users", label: "Users" },
 ];
@@ -38,8 +37,6 @@ export function ProfitLossPage({
   usersPagination,
   onUsersPageChange,
   onSelectGame,
-  onDeleteGame,
-  deletingRoundId,
 }) {
   const operatorOptions = [
     { id: "all", label: "All Platforms" },
@@ -197,37 +194,12 @@ export function ProfitLossPage({
 
       {summary ? <SummaryCards summary={summary} /> : null}
 
-      {section === "overview" ? (
-        <>
-          <section className="space-y-3">
-            <div className="flex items-end justify-between gap-3">
-              <div>
-                <h3 className="text-lg font-bold tracking-tight text-[var(--color-ink)]">Recent Games</h3>
-                <p className="mt-0.5 text-sm text-[var(--color-muted)]">
-                  Click a game to see player-level profit and loss by platform.
-                </p>
-              </div>
-            </div>
-            <GamesTable
-              games={games.slice(0, 10)}
-              pagination={null}
-              onPageChange={onGamesPageChange}
-              onSelectGame={onSelectGame}
-              onDeleteGame={onDeleteGame}
-              deletingRoundId={deletingRoundId}
-            />
-          </section>
-        </>
-      ) : null}
-
       {section === "games" ? (
         <GamesTable
           games={games}
           pagination={gamesPagination}
           onPageChange={onGamesPageChange}
           onSelectGame={onSelectGame}
-          onDeleteGame={onDeleteGame}
-          deletingRoundId={deletingRoundId}
         />
       ) : null}
 

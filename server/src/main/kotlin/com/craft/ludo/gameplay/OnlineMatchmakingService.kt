@@ -889,7 +889,7 @@ class OnlineMatchmakingService(
                 phase = MatchPhase.FINISHED,
                 players = match.players.map { player ->
                     if (player.userId == userId && !player.isBot && !player.isEffectivelyAbandoned()) {
-                        player.copy(userId = abandonedId, isAbandoned = true, tokens = emptyList())
+                        player.asAbandoned(abandonedId)
                     } else {
                         player
                     }
@@ -902,7 +902,7 @@ class OnlineMatchmakingService(
                 turnDeadlineAt = null,
                 updatedAt = now,
                 sequence = match.sequence + 1,
-            )
+            ).withFinishedBoard(WinnerReason.FORFEIT)
             matchRepository.save(finishedMatch)
                 .flatMap { savedMatch -> settleAndMarkRoomFinished(savedRoom, savedMatch) }
         }

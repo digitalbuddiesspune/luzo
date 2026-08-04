@@ -142,6 +142,11 @@ data class MatchPlayerState(
     @get:JsonProperty("isAbandoned")
     val isAbandoned: Boolean = false,
     val tokens: List<Int>,
+    /**
+     * Board positions at the moment this seat left or was kicked. Kept when
+     * [tokens] are cleared so admin P&L can still show where pieces were.
+     */
+    val finalTokens: List<Int>? = null,
     // Total missed turns in this match (not consecutive). Kept under the legacy
     // Mongo field name so in-progress matches keep their counters.
     @Field("consecutiveMissedTurns")
@@ -191,6 +196,8 @@ data class MatchDocument(
     val turnDeadlineAt: Instant? = null,
     val winnerUserId: String? = null,
     val winnerDisplayName: String? = null,
+    /** How the match ended: HOME, FORFEIT, ABANDON_BOT, or HOUSE. */
+    val winnerReason: String? = null,
     val sequence: Long = 1,
     val events: List<MatchEvent> = emptyList(),
     val createdAt: Instant,
@@ -784,6 +791,13 @@ internal fun MatchDocument.toSnapshot(): MatchSnapshotResponse {
     )
 }
 
+internal object WinnerReason {
+    const val HOME = "HOME"
+    const val FORFEIT = "FORFEIT"
+    const val ABANDON_BOT = "ABANDON_BOT"
+    const val HOUSE = "HOUSE"
+}
+
 internal fun MatchPlayerState.isEffectivelyAbandoned(): Boolean {
     return isAbandoned || (!isBot && (userId.startsWith("abandoned_") || tokens.isEmpty()))
 }
@@ -794,6 +808,30 @@ internal fun MatchPlayerState.normalizedAbandonedState(): MatchPlayerState {
     } else {
         this
     }
+}
+
+/** Clear live tokens but keep [finalTokens] for admin board review. */
+internal fun MatchPlayerState.asAbandoned(abandonedUserId: String): MatchPlayerState {
+    return copy(
+        userId = abandonedUserId,
+        isAbandoned = true,
+        finalTokens = finalTokens ?: tokens.takeIf { it.isNotEmpty() },
+        tokens = emptyList(),
+    )
+}
+
+/** Stamp how the match ended and freeze remaining board positions. */
+internal fun MatchDocument.withFinishedBoard(reason: String): MatchDocument {
+    return copy(
+        winnerReason = reason,
+        players = players.map { player ->
+            when {
+                player.finalTokens != null -> player
+                player.tokens.isNotEmpty() -> player.copy(finalTokens = player.tokens)
+                else -> player
+            }
+        },
+    )
 }
 
 internal fun resolveTokenCell(color: String, progress: Int, tokenIndex: Int): BoardCell {
@@ -942,11 +980,7 @@ internal fun registerMissedTurn(
     }
 
     val abandonedPlayers = playersWithMiss.toMutableList().apply {
-        this[playerIndex] = this[playerIndex].copy(
-            userId = abandonedUserId,
-            isAbandoned = true,
-            tokens = emptyList(),
-        )
+        this[playerIndex] = this[playerIndex].asAbandoned(abandonedUserId)
     }
 
     return MissedTurnRegistration(
@@ -1507,11 +1541,7 @@ class MatchService(
                 val leavingPlayer = match.players[leavingIndex]
                 val abandonedId = newId("abandoned")
                 val updatedPlayers = match.players.toMutableList().apply {
-                    this[leavingIndex] = leavingPlayer.copy(
-                        userId = abandonedId,
-                        isAbandoned = true,
-                        tokens = emptyList(),
-                    )
+                    this[leavingIndex] = leavingPlayer.asAbandoned(abandonedId)
                 }
                 val updatedRoomSeats = room.seats.map { seat ->
                     if (seat.userId == userId && !seat.isBot && !seat.isAbandoned) {
@@ -1556,7 +1586,7 @@ class MatchService(
                                 "${winner.displayName} won because the opponent left the 2-player match.",
                                 now,
                             ),
-                        )
+                        ).withFinishedBoard(WinnerReason.FORFEIT)
                     }
 
                     abandonOutcome.botWinner != null -> {
@@ -1848,7 +1878,7 @@ class MatchService(
             nextPlayerIndex(match, diceValue)
         }
 
-        return match.copy(
+        val nextMatch = match.copy(
             status = if (hasWon) MatchStatus.FINISHED else MatchStatus.ACTIVE,
             phase = if (hasWon) MatchPhase.FINISHED else MatchPhase.ADVANCING,
             players = mutablePlayers.toList(),
@@ -1863,6 +1893,7 @@ class MatchService(
             sequence = match.sequence + 1,
             events = prependEvent(match.events, activePlayer.displayName, detail, now),
         )
+        return if (hasWon) nextMatch.withFinishedBoard(WinnerReason.HOME) else nextMatch
     }
 
     private fun handleHumanTimeout(match: MatchDocument, now: Instant): Mono<MatchDocument> {
@@ -1986,7 +2017,7 @@ class MatchService(
                         "${forfeitWinner.displayName} won because the opponent left the 2-player match.",
                         now,
                     ),
-                )
+                ).withFinishedBoard(WinnerReason.FORFEIT)
             }
 
             abandonOutcome.botWinner != null -> {
@@ -2024,7 +2055,7 @@ class MatchService(
                 "${winningBot.displayName} won because no real players remained.",
                 now,
             ),
-        )
+        ).withFinishedBoard(WinnerReason.ABANDON_BOT)
     }
 
     private fun finishMatchAsHouseWin(match: MatchDocument, now: Instant): MatchDocument {
@@ -2044,7 +2075,7 @@ class MatchService(
                 "Match ended because no real players remained. Entry fees went to the platform.",
                 now,
             ),
-        )
+        ).withFinishedBoard(WinnerReason.HOUSE)
     }
 
     private fun persistMatchWithSeatAbandon(

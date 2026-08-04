@@ -18,10 +18,13 @@ const MATCH_PROJECTION = {
   "players.color": 1,
   "players.isBot": 1,
   "players.isAbandoned": 1,
+  "players.tokens": 1,
+  "players.finalTokens": 1,
   "players.operatorId": 1,
   "players.operatorUserId": 1,
   winnerUserId: 1,
   winnerDisplayName: 1,
+  winnerReason: 1,
   createdAt: 1,
   updatedAt: 1,
 };
@@ -140,6 +143,7 @@ function buildGameProfitLoss(round) {
     platformProfit,
     winnerPayout,
     operatorIds,
+    winnerReason: round.winnerReason || null,
     winner: round.winner
       ? {
           ...round.winner,
