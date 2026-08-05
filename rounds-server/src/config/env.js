@@ -16,6 +16,20 @@ function integerFromEnv(name, defaultValue, { min, max }) {
   return value;
 }
 
+function listFromEnv(name, defaultValue = "") {
+  const rawValue = process.env[name];
+  const source = rawValue === undefined || rawValue === ""
+    ? defaultValue
+    : rawValue;
+
+  return [...new Set(
+    String(source)
+      .split(",")
+      .map((value) => value.trim())
+      .filter(Boolean),
+  )];
+}
+
 const mongodbUri = process.env.MONGODB_URI?.trim();
 
 if (!mongodbUri) {
@@ -37,6 +51,11 @@ const config = Object.freeze({
     "APP_WALLET_PAYOUT_RAKE_BASIS_POINTS",
     0,
     { min: 0, max: 10_000 },
+  ),
+  // Comma-separated browser origins allowed to call this API (admin UI).
+  corsOrigins: listFromEnv(
+    "CORS_ORIGINS",
+    "http://localhost:5174,http://127.0.0.1:5174",
   ),
 });
 

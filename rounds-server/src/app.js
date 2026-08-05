@@ -1,4 +1,5 @@
 const express = require("express");
+const { config } = require("./config/env");
 const {
   createAdminAuthController,
   createRequireAdminAuth,
@@ -6,6 +7,7 @@ const {
 const { createPlatformSettingsController } = require("./controllers/platformSettingsController");
 const { createProfitLossController } = require("./controllers/profitLossController");
 const { createRoundsController } = require("./controllers/roundsController");
+const { createCorsMiddleware } = require("./middleware/cors");
 const { errorHandler, notFoundHandler } = require("./middleware/errorHandler");
 const { healthRouter } = require("./routes/healthRoutes");
 const { createAdminAuthRouter } = require("./routes/adminAuthRoutes");
@@ -30,6 +32,7 @@ function createApp(database) {
   const requireAdminAuth = createRequireAdminAuth(adminAuthService);
 
   app.disable("x-powered-by");
+  app.use(createCorsMiddleware(config.corsOrigins));
   app.use(express.json({ limit: "32kb" }));
 
   app.use("/health", healthRouter);
