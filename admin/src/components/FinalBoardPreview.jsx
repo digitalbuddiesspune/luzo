@@ -1,8 +1,8 @@
 import { AdminLudoBoard, PlayerTokenLegend } from "./AdminLudoBoard";
-import { winnerReasonLabel } from "../utils/ludoBoard";
+import { buildHowItEndedSummary } from "../utils/ludoBoard";
 
 export function FinalBoardPreview({ game }) {
-  const reason = winnerReasonLabel(game.winnerReason);
+  const { headline, details } = buildHowItEndedSummary(game);
   const players = game.players || [];
   const hasAnyTokens = players.some(
     (player) => Array.isArray(player.tokens) && player.tokens.length > 0,
@@ -15,17 +15,13 @@ export function FinalBoardPreview({ game }) {
       </h3>
 
       <div className="mt-3 rounded-xl border border-[var(--color-line)] bg-[#f8faf9] px-4 py-3">
-        <p className="text-sm font-semibold text-[var(--color-ink)]">
-          {reason ||
-            (game.winner
-              ? "Result recorded (reason unavailable for older games)"
-              : "No winner recorded")}
-        </p>
-        {game.winner ? (
-          <p className="mt-1 text-sm text-[var(--color-muted)]">
-            Winner: {game.winner.displayName}
-            {game.winner.isHouse ? " (Platform)" : game.winner.isBot ? " (Bot)" : ""}
-          </p>
+        <p className="text-sm font-semibold text-[var(--color-ink)]">{headline}</p>
+        {details.length > 0 ? (
+          <ul className="mt-2 space-y-1.5 text-sm leading-relaxed text-[var(--color-muted)]">
+            {details.map((line) => (
+              <li key={line}>{line}</li>
+            ))}
+          </ul>
         ) : null}
       </div>
 

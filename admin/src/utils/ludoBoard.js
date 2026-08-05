@@ -62,15 +62,191 @@ export const HOME_LANE_LOOKUP = new Map(
 );
 
 export const WINNER_REASON_LABELS = {
-  HOME: "All tokens home",
-  FORFEIT: "Opponent left (forfeit)",
-  ABANDON_BOT: "Real players left — bot won",
-  HOUSE: "Real players left — platform kept pot",
+  HOME: "Finished normally — all tokens home",
+  FORFEIT: "Won by forfeit — opponent left",
+  ABANDON_BOT: "Bot won after real players left",
+  HOUSE: "Platform kept the pot — no real players left",
 };
 
 export function winnerReasonLabel(reason) {
   if (!reason) return null;
   return WINNER_REASON_LABELS[reason] || reason;
+}
+
+function formatPlayerName(player, { house = false } = {}) {
+  if (!player) return "Unknown";
+  const name = player.displayName || "Unknown";
+  if (house || player.isHouse) return `${name} (Platform)`;
+  if (player.isBot) return `${name} (Bot)`;
+  return name;
+}
+
+function summarizeTokenPositions(tokens) {
+  if (!Array.isArray(tokens) || tokens.length === 0) return null;
+
+  const counts = { finished: 0, home: 0, path: 0, yard: 0, unknown: 0 };
+  for (const progress of tokens) {
+    const label = tokenProgressLabel(progress);
+    if (label === "Finished") counts.finished += 1;
+    else if (label === "Yard") counts.yard += 1;
+    else if (label.startsWith("Home lane")) counts.home += 1;
+    else if (label.startsWith("Path")) counts.path += 1;
+    else counts.unknown += 1;
+  }
+
+  const parts = [];
+  if (counts.finished) parts.push(`${counts.finished} finished`);
+  if (counts.home) parts.push(`${counts.home} in home lane`);
+  if (counts.path) parts.push(`${counts.path} on path`);
+  if (counts.yard) parts.push(`${counts.yard} in yard`);
+  if (counts.unknown) parts.push(`${counts.unknown} unknown`);
+  return parts.join(", ");
+}
+
+function listNames(players) {
+  return players.map((player) => formatPlayerName(player)).join(", ");
+}
+
+function inferWinnerReason(game) {
+  if (game?.winnerReason) return game.winnerReason;
+
+  const players = game?.players || [];
+  const leavers = players.filter((player) => player.isAbandoned);
+  const winnerPlayer = players.find((player) => player.isWinner);
+
+  if (game?.winner?.isHouse) return "HOUSE";
+  if (game?.winner?.isBot && leavers.length > 0) return "ABANDON_BOT";
+
+  const activePlayers = players.filter((player) => !player.isAbandoned);
+  if (leavers.length === 1 && activePlayers.length === 1 && game?.winner) {
+    return "FORFEIT";
+  }
+
+  const winnerTokens = winnerPlayer?.tokens;
+  if (
+    Array.isArray(winnerTokens) &&
+    winnerTokens.length > 0 &&
+    winnerTokens.every((progress) => Number(progress) >= 56)
+  ) {
+    return "HOME";
+  }
+
+  return null;
+}
+
+/**
+ * Build a detailed "How it ended" narrative for the admin game modal.
+ * @returns {{ headline: string, details: string[], reasonCode: string|null, inferred: boolean }}
+ */
+export function buildHowItEndedSummary(game) {
+  const players = game?.players || [];
+  const leavers = players.filter((player) => player.isAbandoned);
+  const reasonCode = inferWinnerReason(game);
+  const inferred = Boolean(!game?.winnerReason && reasonCode);
+  const winnerName = game?.winner
+    ? formatPlayerName(game.winner, { house: game.winner.isHouse })
+    : null;
+  const winnerPlayer =
+    players.find((player) => player.isWinner) ||
+    players.find((player) => player.userId === game?.winner?.userId);
+
+  const details = [];
+  let headline = winnerReasonLabel(reasonCode);
+
+  switch (reasonCode) {
+    case "HOME":
+      details.push(
+        winnerName
+          ? `${winnerName} won by getting all four tokens home.`
+          : "A player won by getting all four tokens home.",
+      );
+      break;
+    case "FORFEIT": {
+      const leaverText = leavers.length
+        ? listNames(leavers)
+        : "the opponent";
+      details.push(
+        winnerName
+          ? `${winnerName} won because ${leaverText} left the 2-player match.`
+          : `Match ended after ${leaverText} left the 2-player match.`,
+      );
+      break;
+    }
+    case "ABANDON_BOT":
+      details.push(
+        winnerName
+          ? `${winnerName} won because no real players remained.`
+          : "A bot won because no real players remained.",
+      );
+      if (leavers.length) {
+        details.push(`Players who left: ${listNames(leavers)}.`);
+      }
+      details.push("No real-player payout — the platform kept the real pot.");
+      break;
+    case "HOUSE":
+      details.push(
+        "Match ended because no real players remained. Entry fees went to the platform.",
+      );
+      if (leavers.length) {
+        details.push(`Players who left: ${listNames(leavers)}.`);
+      }
+      break;
+    default:
+      if (winnerName) {
+        headline = "Result recorded";
+        details.push(`Winner: ${winnerName}.`);
+        if (leavers.length) {
+          details.push(`Players who left: ${listNames(leavers)}.`);
+        }
+        details.push("Exact end reason was not stored for this match.");
+      } else {
+        headline = "No winner recorded";
+        if (leavers.length) {
+          details.push(`Players who left: ${listNames(leavers)}.`);
+        } else {
+          details.push("This match has no winner or leave details saved.");
+        }
+      }
+  }
+
+  if (game?.endMessage) {
+    const alreadyCovered = details.some(
+      (line) => line === game.endMessage || line.includes(game.endMessage),
+    );
+    if (!alreadyCovered) {
+      details.unshift(game.endMessage);
+    }
+  }
+
+  if (winnerPlayer) {
+    const winnerTokens = summarizeTokenPositions(winnerPlayer.tokens);
+    if (winnerTokens) {
+      details.push(`Winner tokens at end: ${winnerTokens}.`);
+    } else if (reasonCode && reasonCode !== "HOUSE") {
+      details.push("Winner token positions were not saved.");
+    }
+  }
+
+  for (const leaver of leavers) {
+    if (winnerPlayer && leaver.userId === winnerPlayer.userId) continue;
+    const leaverTokens = summarizeTokenPositions(leaver.tokens);
+    if (leaverTokens) {
+      details.push(`${formatPlayerName(leaver)} left with tokens: ${leaverTokens}.`);
+    } else {
+      details.push(`${formatPlayerName(leaver)} left (token positions not saved).`);
+    }
+  }
+
+  if (inferred) {
+    details.push("End reason inferred from final player state (not stamped on the match).");
+  }
+
+  return {
+    headline: headline || "No winner recorded",
+    details,
+    reasonCode,
+    inferred,
+  };
 }
 
 export function tokenProgressLabel(progress) {

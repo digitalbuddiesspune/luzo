@@ -21,6 +21,8 @@ const MATCH_PROJECTION = {
   winnerUserId: 1,
   winnerDisplayName: 1,
   winnerReason: 1,
+  "events.actor": 1,
+  "events.detail": 1,
   createdAt: 1,
   updatedAt: 1,
 };
@@ -56,6 +58,19 @@ function resolvePlayerTokens(player) {
     return player.tokens;
   }
   return [];
+}
+
+function resolveEndMessage(match) {
+  const events = Array.isArray(match?.events) ? match.events : [];
+  const endEvent = events.find((event) => {
+    if (event?.actor !== "System" || typeof event.detail !== "string") {
+      return false;
+    }
+    return /won because|match ended|no real players|entry fees went/i.test(
+      event.detail,
+    );
+  });
+  return endEvent?.detail || null;
 }
 
 function escapeHtml(value) {
@@ -334,6 +349,7 @@ function buildRound(match, room, platformFeePerPlayer = config.platformFeePerPla
     totalPotAmount,
     platformFeePerPlayer,
     winnerReason: match.winnerReason || null,
+    endMessage: resolveEndMessage(match),
     players,
     winner: match.winnerUserId
       ? {

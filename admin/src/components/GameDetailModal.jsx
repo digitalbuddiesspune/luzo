@@ -72,8 +72,6 @@ export function GameDetailModal({ game, onClose }) {
           <Metric label="Mode" value={game.mode || "—"} />
         </div>
 
-        <FinalBoardPreview game={game} />
-
         <div className="border-t border-[var(--color-line)] px-6 py-5">
           <h3 className="text-[11px] font-bold uppercase tracking-[0.14em] text-[var(--color-muted)]">
             Player Breakdown
@@ -156,8 +154,12 @@ export function GameDetailModal({ game, onClose }) {
               </table>
             </div>
           </div>
+        </div>
 
-          <div className="mt-5 rounded-xl border border-[var(--color-line)] bg-[#f4f7f5] p-4 text-sm leading-relaxed text-[var(--color-muted)]">
+        <FinalBoardPreview game={game} />
+
+        <div className="border-t border-[var(--color-line)] px-6 py-5">
+          <div className="rounded-xl border border-[var(--color-line)] bg-[#f4f7f5] p-4 text-sm leading-relaxed text-[var(--color-muted)]">
             <p>
               Example: 2 real players × {formatAmount(game.entryFee, game.currency)} bet ={" "}
               {formatAmount(game.entryFee * 2, game.currency)} total income. Platform fee is deducted per

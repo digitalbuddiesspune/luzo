@@ -25,6 +25,8 @@ const MATCH_PROJECTION = {
   winnerUserId: 1,
   winnerDisplayName: 1,
   winnerReason: 1,
+  "events.actor": 1,
+  "events.detail": 1,
   createdAt: 1,
   updatedAt: 1,
 };
@@ -144,6 +146,7 @@ function buildGameProfitLoss(round) {
     winnerPayout,
     operatorIds,
     winnerReason: round.winnerReason || null,
+    endMessage: round.endMessage || null,
     winner: round.winner
       ? {
           ...round.winner,
