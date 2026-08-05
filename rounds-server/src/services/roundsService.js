@@ -62,15 +62,58 @@ function resolvePlayerTokens(player) {
 
 function resolveEndMessage(match) {
   const events = Array.isArray(match?.events) ? match.events : [];
-  const endEvent = events.find((event) => {
-    if (event?.actor !== "System" || typeof event.detail !== "string") {
-      return false;
-    }
-    return /won because|match ended|no real players|entry fees went/i.test(
-      event.detail,
-    );
-  });
-  return endEvent?.detail || null;
+  const systemDetails = events
+    .filter((event) => event?.actor === "System" && typeof event.detail === "string")
+    .map((event) => event.detail);
+
+  const missedLeave = systemDetails.find((detail) =>
+    /was removed after missing \d+ turns/i.test(detail),
+  );
+  const voluntaryLeave = systemDetails.find((detail) =>
+    /abandoned the game/i.test(detail),
+  );
+  const winEvent = systemDetails.find((detail) =>
+    /won because|match ended|no real players|entry fees went|auto-removed after missing/i.test(
+      detail,
+    ),
+  );
+
+  return winEvent || missedLeave || voluntaryLeave || null;
+}
+
+function resolveLeaveMessage(match) {
+  const events = Array.isArray(match?.events) ? match.events : [];
+  const systemDetails = events
+    .filter((event) => event?.actor === "System" && typeof event.detail === "string")
+    .map((event) => event.detail);
+
+  return (
+    systemDetails.find((detail) => /was removed after missing \d+ turns/i.test(detail)) ||
+    systemDetails.find((detail) => /abandoned the game/i.test(detail)) ||
+    null
+  );
+}
+
+function resolveMissedTurnsCount(match) {
+  const leaveMessage = resolveLeaveMessage(match);
+  if (!leaveMessage) {
+    return null;
+  }
+  const matchResult = leaveMessage.match(/missing (\d+) turns/i);
+  if (!matchResult) {
+    return null;
+  }
+  const count = Number(matchResult[1]);
+  return Number.isFinite(count) ? count : null;
+}
+
+function resolveWinnerReason(match) {
+  const stored = match?.winnerReason || null;
+  const missedTurns = resolveMissedTurnsCount(match);
+  if (missedTurns != null && (stored === "FORFEIT" || stored === "FORFEIT_MISSED_TURNS")) {
+    return "FORFEIT_MISSED_TURNS";
+  }
+  return stored;
 }
 
 function escapeHtml(value) {
@@ -348,8 +391,10 @@ function buildRound(match, room, platformFeePerPlayer = config.platformFeePerPla
     entryFee: safeAmount(match.entryFee ?? room?.entryFee),
     totalPotAmount,
     platformFeePerPlayer,
-    winnerReason: match.winnerReason || null,
+    winnerReason: resolveWinnerReason(match),
     endMessage: resolveEndMessage(match),
+    leaveMessage: resolveLeaveMessage(match),
+    missedTurnsLimit: resolveMissedTurnsCount(match),
     players,
     winner: match.winnerUserId
       ? {

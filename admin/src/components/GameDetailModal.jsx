@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { formatAmount, formatDate, formatProfitLoss, profitLossClassName } from "../utils/format";
 import { FinalBoardPreview } from "./FinalBoardPreview";
 
@@ -44,7 +45,16 @@ export function GameDetailModal({ game, onClose }) {
         </div>
 
         <div className="grid gap-3 px-6 py-5 sm:grid-cols-2 xl:grid-cols-4">
-          <Metric label="Players" value={`${game.realPlayerCount} real · ${game.botPlayerCount} bot`} />
+          <Metric
+            label="Players"
+            value={
+              <span>
+                <span className="text-[var(--accent)]">{game.realPlayerCount} Real</span>
+                {" · "}
+                <span className="text-[#2563eb]">{game.botPlayerCount} Real</span>
+              </span>
+            }
+          />
           <Metric label="Entry Fee" value={formatAmount(game.entryFee, game.currency)} />
           <Metric label="Total Real Income" value={formatAmount(game.totalRealIncome, game.currency)} />
           <Metric
@@ -59,13 +69,7 @@ export function GameDetailModal({ game, onClose }) {
             label="Winner"
             value={
               game.winner
-                ? `${game.winner.displayName}${
-                    game.winner.isHouse
-                      ? " (Platform)"
-                      : game.winner.isReal
-                        ? ""
-                        : " (Bot)"
-                  }`
+                ? `${game.winner.displayName}${game.winner.isHouse ? " (Platform)" : ""}`
                 : "—"
             }
           />
@@ -112,7 +116,7 @@ export function GameDetailModal({ game, onClose }) {
                     >
                       <td className="px-3 py-2.5">
                         <div className="font-semibold text-[var(--color-ink)]">{player.displayName}</div>
-                        <div className="text-xs text-[var(--color-muted)]">{player.userId}</div>
+                        <MaskedPlayerId userId={player.userId} />
                       </td>
                       <td className="px-3 py-2.5">
                         {player.isBot ? (
@@ -127,13 +131,13 @@ export function GameDetailModal({ game, onClose }) {
                         <span
                           className={`inline-flex rounded-md px-2 py-0.5 text-xs font-semibold ${
                             player.isBot
-                              ? "bg-[#f0f4f1] text-[var(--color-muted)]"
+                              ? "bg-[#eef4ff] text-[#2563eb]"
                               : player.isAbandoned
                                 ? "bg-[#fff1f0] text-[#c0392b]"
                                 : "bg-[var(--accent-soft)] text-[var(--accent)]"
                           }`}
                         >
-                          {player.isBot ? "Bot" : player.isAbandoned ? "Left" : "Real"}
+                          {player.isAbandoned && !player.isBot ? "Left" : "Real"}
                         </span>
                       </td>
                       <td className="px-3 py-2.5 tabular-nums">
@@ -161,7 +165,7 @@ export function GameDetailModal({ game, onClose }) {
         <div className="border-t border-[var(--color-line)] px-6 py-5">
           <div className="rounded-xl border border-[var(--color-line)] bg-[#f4f7f5] p-4 text-sm leading-relaxed text-[var(--color-muted)]">
             <p>
-              Example: 2 real players × {formatAmount(game.entryFee, game.currency)} bet ={" "}
+              Example: 2 Real players × {formatAmount(game.entryFee, game.currency)} bet ={" "}
               {formatAmount(game.entryFee * 2, game.currency)} total income. Platform fee is deducted per
               player before payout. Winner receives total real income minus platform profit.
             </p>
@@ -172,13 +176,63 @@ export function GameDetailModal({ game, onClose }) {
                 {formatAmount(game.platformProfit, game.currency)}
               </span>
               {game.winner?.isHouse
-                ? ". When only bots remain after all real players leave, the platform keeps the full real pot."
+                ? ". When only real remain after all Real players leave, the platform keeps the full Real pot."
                 : "."}
             </p>
           </div>
         </div>
       </div>
     </div>
+  );
+}
+
+function MaskedPlayerId({ userId }) {
+  const [visible, setVisible] = useState(false);
+  if (!userId) return null;
+
+  return (
+    <div className="mt-0.5 flex items-center gap-1.5">
+      <span className="max-w-[14rem] truncate font-mono text-xs text-[var(--color-muted)]">
+        {visible ? userId : "•".repeat(Math.min(String(userId).length, 24))}
+      </span>
+      <button
+        type="button"
+        onClick={() => setVisible((prev) => !prev)}
+        className="inline-flex shrink-0 rounded p-0.5 text-[var(--color-muted)] transition-colors hover:bg-[#f0f4f1] hover:text-[var(--color-ink)]"
+        aria-label={visible ? "Hide player ID" : "Show player ID"}
+        title={visible ? "Hide ID" : "Show ID"}
+      >
+        {visible ? <EyeOffIcon /> : <EyeIcon />}
+      </button>
+    </div>
+  );
+}
+
+function EyeIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <path
+        d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z"
+        stroke="currentColor"
+        strokeWidth="1.8"
+        strokeLinejoin="round"
+      />
+      <circle cx="12" cy="12" r="3" stroke="currentColor" strokeWidth="1.8" />
+    </svg>
+  );
+}
+
+function EyeOffIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <path
+        d="M3 3l18 18M10.6 10.6A3 3 0 0 0 12 15a3 3 0 0 0 2.4-1.2M9.9 5.2A10.5 10.5 0 0 1 12 5c6.5 0 10 7 10 7a17.6 17.6 0 0 1-4.2 4.8M6.1 6.1A17.5 17.5 0 0 0 2 12s3.5 7 10 7c1.4 0 2.7-.3 3.9-.8"
+        stroke="currentColor"
+        strokeWidth="1.8"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
   );
 }
 

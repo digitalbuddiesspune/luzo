@@ -105,11 +105,11 @@ export function GamesTable({ games, pagination, onPageChange, onSelectGame }) {
                   <td className="px-4 py-3.5">
                     <span className="font-semibold text-[var(--color-ink)]">{game.playerCount}</span>
                     <span className="ml-1.5 inline-flex items-center gap-1 text-xs text-[var(--color-muted)]">
-                      <span className="rounded-md bg-[var(--accent-soft)] px-1.5 py-0.5 font-medium text-[var(--accent)]">
-                        {game.realPlayerCount}r
+                      <span className="rounded-md bg-[#f0f4f1] px-1.5 py-0.5 font-medium text-[var(--color-ink)]">
+                        {game.realPlayerCount} Real
                       </span>
                       <span className="rounded-md bg-[#f0f4f1] px-1.5 py-0.5 font-medium">
-                        {game.botPlayerCount}b
+                        {game.botPlayerCount} Real
                       </span>
                     </span>
                   </td>

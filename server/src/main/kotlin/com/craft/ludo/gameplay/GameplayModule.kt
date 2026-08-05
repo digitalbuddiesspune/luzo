@@ -196,7 +196,7 @@ data class MatchDocument(
     val turnDeadlineAt: Instant? = null,
     val winnerUserId: String? = null,
     val winnerDisplayName: String? = null,
-    /** How the match ended: HOME, FORFEIT, ABANDON_BOT, or HOUSE. */
+    /** How the match ended: HOME, FORFEIT, FORFEIT_MISSED_TURNS, ABANDON_BOT, or HOUSE. */
     val winnerReason: String? = null,
     val sequence: Long = 1,
     val events: List<MatchEvent> = emptyList(),
@@ -253,6 +253,7 @@ data class MatchSnapshotResponse(
     val turnDeadlineAt: Instant?,
     val winnerUserId: String?,
     val winnerDisplayName: String?,
+    val winnerReason: String? = null,
     val sequence: Long,
     val events: List<MatchEvent>,
     val createdAt: Instant? = null,
@@ -784,6 +785,7 @@ internal fun MatchDocument.toSnapshot(): MatchSnapshotResponse {
         turnDeadlineAt = turnDeadlineAt,
         winnerUserId = winnerUserId,
         winnerDisplayName = winnerDisplayName,
+        winnerReason = winnerReason,
         sequence = sequence,
         events = events,
         createdAt = createdAt,
@@ -794,6 +796,8 @@ internal fun MatchDocument.toSnapshot(): MatchSnapshotResponse {
 internal object WinnerReason {
     const val HOME = "HOME"
     const val FORFEIT = "FORFEIT"
+    /** Opponent auto-removed after missing too many turns (AFK / timeout). */
+    const val FORFEIT_MISSED_TURNS = "FORFEIT_MISSED_TURNS"
     const val ABANDON_BOT = "ABANDON_BOT"
     const val HOUSE = "HOUSE"
 }
@@ -2014,10 +2018,10 @@ class MatchService(
                     events = prependEvent(
                         abandonedMatch.events,
                         "System",
-                        "${forfeitWinner.displayName} won because the opponent left the 2-player match.",
+                        "${forfeitWinner.displayName} won because ${activePlayer.displayName} was auto-removed after missing $maxMissedTurns turns.",
                         now,
                     ),
-                ).withFinishedBoard(WinnerReason.FORFEIT)
+                ).withFinishedBoard(WinnerReason.FORFEIT_MISSED_TURNS)
             }
 
             abandonOutcome.botWinner != null -> {

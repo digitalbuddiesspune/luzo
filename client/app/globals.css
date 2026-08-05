@@ -787,6 +787,15 @@ img {
   color: rgba(255, 246, 207, 0.82);
 }
 
+.history-drawer-reason {
+  display: block;
+  margin-top: 0.12rem;
+  color: #ffb347;
+  font-size: 0.62rem;
+  font-weight: 800;
+  line-height: 1.35;
+}
+
 .history-drawer-result {
   flex: 0 0 auto;
   text-align: right;

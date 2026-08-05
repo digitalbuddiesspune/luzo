@@ -293,21 +293,108 @@ function normalizeWalletHistoryItem(transaction) {
   const outcome =
     WALLET_HISTORY_OUTCOMES[normalizedTransaction.type] ?? "Wallet";
   const roomId = normalizedTransaction.meta || null;
+  const endNote = readMatchEndNote(roomId);
 
   return {
     id: normalizedTransaction.id,
     room: roomId,
     roomId,
     roomLabel: formatRoomIdLabel(roomId),
-    title: outcome,
+    title: endNote?.title || outcome,
     type: normalizedTransaction.type,
-    outcome,
+    outcome: endNote?.outcome || outcome,
+    reason: endNote?.reason || null,
     delta: normalizedTransaction.amount,
     amount: normalizedTransaction.absoluteAmount,
     when: formatTransactionAge(normalizedTransaction.createdAt),
     date: formatTransactionDate(normalizedTransaction.createdAt),
     createdAt: normalizedTransaction.createdAt,
   };
+}
+
+const MATCH_END_NOTES_KEY = "ludo.match-end-notes";
+
+function readMatchEndNotesMap() {
+  if (typeof window === "undefined") {
+    return {};
+  }
+
+  try {
+    const raw = window.sessionStorage.getItem(MATCH_END_NOTES_KEY);
+    if (!raw) {
+      return {};
+    }
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function readMatchEndNote(roomId) {
+  if (!roomId) {
+    return null;
+  }
+
+  const notes = readMatchEndNotesMap();
+  const direct = notes[String(roomId)];
+  if (direct) {
+    return direct;
+  }
+
+  const shortLabel = formatRoomIdLabel(roomId);
+  if (!shortLabel) {
+    return null;
+  }
+
+  return (
+    Object.values(notes).find(
+      (note) =>
+        note?.roomLabel === shortLabel ||
+        note?.roomCode === shortLabel ||
+        formatRoomIdLabel(note?.roomId) === shortLabel,
+    ) || null
+  );
+}
+
+export function rememberMatchEndNote({
+  roomId,
+  roomCode,
+  title,
+  outcome,
+  reason,
+}) {
+  if (typeof window === "undefined" || (!roomId && !roomCode)) {
+    return;
+  }
+
+  const notes = readMatchEndNotesMap();
+  const payload = {
+    roomId: roomId || null,
+    roomCode: roomCode || null,
+    roomLabel: formatRoomIdLabel(roomCode || roomId),
+    title: title || outcome || null,
+    outcome: outcome || null,
+    reason: reason || null,
+    at: Date.now(),
+  };
+
+  if (roomId) {
+    notes[String(roomId)] = payload;
+  }
+  if (roomCode) {
+    notes[String(roomCode)] = payload;
+  }
+
+  try {
+    window.sessionStorage.setItem(MATCH_END_NOTES_KEY, JSON.stringify(notes));
+  } catch {
+    // Ignore quota / private mode failures — history reason is best-effort.
+  }
+}
+
+export function getMatchEndNoteForRoom(roomId) {
+  return readMatchEndNote(roomId);
 }
 
 function readOperatorLaunchParams() {
@@ -452,6 +539,7 @@ export function normalizeMatchSnapshot(snapshot) {
       .filter((index) => Number.isInteger(index) && index >= 0),
     winnerId: snapshot.winnerUserId,
     winnerDisplayName: snapshot.winnerDisplayName,
+    winnerReason: snapshot.winnerReason ?? null,
     players: snapshot.players.map((player) => {
       const isBot = player.isBot ?? player.bot ?? false;
       const tokens = player.tokens ?? [];

@@ -64,8 +64,9 @@ export const HOME_LANE_LOOKUP = new Map(
 export const WINNER_REASON_LABELS = {
   HOME: "Finished normally — all tokens home",
   FORFEIT: "Won by forfeit — opponent left",
-  ABANDON_BOT: "Bot won after real players left",
-  HOUSE: "Platform kept the pot — no real players left",
+  FORFEIT_MISSED_TURNS: "Won by forfeit — opponent missed turns (auto-leave)",
+  ABANDON_BOT: "real won after Real players left",
+  HOUSE: "Platform kept the pot — no Real players left",
 };
 
 export function winnerReasonLabel(reason) {
@@ -77,7 +78,6 @@ function formatPlayerName(player, { house = false } = {}) {
   if (!player) return "Unknown";
   const name = player.displayName || "Unknown";
   if (house || player.isHouse) return `${name} (Platform)`;
-  if (player.isBot) return `${name} (Bot)`;
   return name;
 }
 
@@ -107,7 +107,33 @@ function listNames(players) {
   return players.map((player) => formatPlayerName(player)).join(", ");
 }
 
+function parseMissedTurnsLimit(game) {
+  if (game?.missedTurnsLimit != null && Number.isFinite(Number(game.missedTurnsLimit))) {
+    return Number(game.missedTurnsLimit);
+  }
+  const sources = [game?.leaveMessage, game?.endMessage].filter(Boolean);
+  for (const text of sources) {
+    const match = String(text).match(/missing (\d+) turns/i);
+    if (match) {
+      const count = Number(match[1]);
+      if (Number.isFinite(count)) return count;
+    }
+  }
+  return null;
+}
+
+function hasMissedTurnsLeave(game) {
+  if (game?.winnerReason === "FORFEIT_MISSED_TURNS") return true;
+  if (parseMissedTurnsLimit(game) != null) return true;
+  const sources = [game?.leaveMessage, game?.endMessage].filter(Boolean);
+  return sources.some((text) => /auto-removed after missing|was removed after missing/i.test(text));
+}
+
 function inferWinnerReason(game) {
+  if (game?.winnerReason === "FORFEIT_MISSED_TURNS") return "FORFEIT_MISSED_TURNS";
+  if (game?.winnerReason === "FORFEIT" && hasMissedTurnsLeave(game)) {
+    return "FORFEIT_MISSED_TURNS";
+  }
   if (game?.winnerReason) return game.winnerReason;
 
   const players = game?.players || [];
@@ -119,7 +145,7 @@ function inferWinnerReason(game) {
 
   const activePlayers = players.filter((player) => !player.isAbandoned);
   if (leavers.length === 1 && activePlayers.length === 1 && game?.winner) {
-    return "FORFEIT";
+    return hasMissedTurnsLeave(game) ? "FORFEIT_MISSED_TURNS" : "FORFEIT";
   }
 
   const winnerTokens = winnerPlayer?.tokens;
@@ -142,13 +168,19 @@ export function buildHowItEndedSummary(game) {
   const players = game?.players || [];
   const leavers = players.filter((player) => player.isAbandoned);
   const reasonCode = inferWinnerReason(game);
-  const inferred = Boolean(!game?.winnerReason && reasonCode);
+  const inferred = Boolean(
+    (!game?.winnerReason || game.winnerReason === "FORFEIT") &&
+      reasonCode === "FORFEIT_MISSED_TURNS",
+  ) || Boolean(!game?.winnerReason && reasonCode && reasonCode !== "FORFEIT_MISSED_TURNS");
   const winnerName = game?.winner
     ? formatPlayerName(game.winner, { house: game.winner.isHouse })
     : null;
   const winnerPlayer =
     players.find((player) => player.isWinner) ||
     players.find((player) => player.userId === game?.winner?.userId);
+  const missedTurns = parseMissedTurnsLimit(game);
+  const turnWord = missedTurns === 1 ? "turn" : "turns";
+  const roundWord = missedTurns === 1 ? "round" : "rounds";
 
   const details = [];
   let headline = winnerReasonLabel(reasonCode);
@@ -161,6 +193,24 @@ export function buildHowItEndedSummary(game) {
           : "A player won by getting all four tokens home.",
       );
       break;
+    case "FORFEIT_MISSED_TURNS": {
+      const leaverText = leavers.length ? listNames(leavers) : "the opponent";
+      const limitText =
+        missedTurns != null
+          ? `missing ${missedTurns} ${turnWord}`
+          : "missing too many turns";
+      details.push(
+        winnerName
+          ? `${winnerName} won because ${leaverText} was auto-removed after ${limitText}.`
+          : `Match ended after ${leaverText} was auto-removed after ${limitText}.`,
+      );
+      details.push(
+        missedTurns != null
+          ? `${leaverText} missed ${missedTurns} ${roundWord} (timeouts) — auto game leave + loss.`
+          : `${leaverText} was auto-left for missed rounds — loss applied.`,
+      );
+      break;
+    }
     case "FORFEIT": {
       const leaverText = leavers.length
         ? listNames(leavers)
@@ -175,20 +225,34 @@ export function buildHowItEndedSummary(game) {
     case "ABANDON_BOT":
       details.push(
         winnerName
-          ? `${winnerName} won because no real players remained.`
-          : "A bot won because no real players remained.",
+          ? `${winnerName} won because no Real players remained.`
+          : "A real won because no Real players remained.",
       );
       if (leavers.length) {
         details.push(`Players who left: ${listNames(leavers)}.`);
       }
-      details.push("No real-player payout — the platform kept the real pot.");
+      if (hasMissedTurnsLeave(game)) {
+        const limitText =
+          missedTurns != null
+            ? `after missing ${missedTurns} ${turnWord}`
+            : "after missing turns";
+        details.push(`At least one Real player was auto-removed ${limitText}.`);
+      }
+      details.push("No Real-player payout — the platform kept the Real pot.");
       break;
     case "HOUSE":
       details.push(
-        "Match ended because no real players remained. Entry fees went to the platform.",
+        "Match ended because no Real players remained. Entry fees went to the platform.",
       );
       if (leavers.length) {
         details.push(`Players who left: ${listNames(leavers)}.`);
+      }
+      if (hasMissedTurnsLeave(game)) {
+        const limitText =
+          missedTurns != null
+            ? `after missing ${missedTurns} ${turnWord}`
+            : "after missing turns";
+        details.push(`At least one Real player was auto-removed ${limitText}.`);
       }
       break;
     default:
@@ -209,11 +273,29 @@ export function buildHowItEndedSummary(game) {
       }
   }
 
-  if (game?.endMessage) {
+  if (game?.leaveMessage) {
     const alreadyCovered = details.some(
-      (line) => line === game.endMessage || line.includes(game.endMessage),
+      (line) =>
+        line === game.leaveMessage ||
+        line.includes(game.leaveMessage) ||
+        game.leaveMessage.includes(line),
     );
     if (!alreadyCovered) {
+      details.unshift(game.leaveMessage);
+    }
+  }
+
+  if (game?.endMessage) {
+    const genericForfeit =
+      reasonCode === "FORFEIT_MISSED_TURNS" &&
+      /won because the opponent left/i.test(game.endMessage);
+    const alreadyCovered = details.some(
+      (line) =>
+        line === game.endMessage ||
+        line.includes(game.endMessage) ||
+        game.endMessage.includes(line),
+    );
+    if (!genericForfeit && !alreadyCovered) {
       details.unshift(game.endMessage);
     }
   }
@@ -237,7 +319,7 @@ export function buildHowItEndedSummary(game) {
     }
   }
 
-  if (inferred) {
+  if (inferred && reasonCode !== "FORFEIT_MISSED_TURNS") {
     details.push("End reason inferred from final player state (not stamped on the match).");
   }
 

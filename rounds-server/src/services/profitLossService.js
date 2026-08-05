@@ -147,6 +147,8 @@ function buildGameProfitLoss(round) {
     operatorIds,
     winnerReason: round.winnerReason || null,
     endMessage: round.endMessage || null,
+    leaveMessage: round.leaveMessage || null,
+    missedTurnsLimit: round.missedTurnsLimit ?? null,
     winner: round.winner
       ? {
           ...round.winner,

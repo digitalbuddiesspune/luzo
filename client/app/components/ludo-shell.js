@@ -20,6 +20,7 @@ import {
   fetchPrivateRoomState,
   fetchWalletOverview,
   formatRoomIdLabel,
+  getMatchEndNoteForRoom,
   isOperatorPlatformEnabled,
   OPERATOR_PLATFORM_ACCESS_MESSAGE,
   joinPrivateRoom as joinPrivateRoomRequest,
@@ -28,6 +29,7 @@ import {
   leaveOnlineRoom,
   normalizeMatchSnapshot,
   normalizeWalletResponse,
+  rememberMatchEndNote,
   rollMatchDice,
   startPrivateRoom as startPrivateRoomRequest,
   isInsufficientBalanceError,
@@ -1656,7 +1658,7 @@ function applyLocalMissedTurn(match, playerIndex) {
     events = prependMatchEvent(
       events,
       "System",
-      `${forfeitWinner.name} won because the opponent left the 2-player match.`,
+      `${forfeitWinner.name} won because ${activePlayer.name} was auto-removed after missing ${MAX_MISSED_TURNS} turns.`,
     );
   }
 
@@ -1670,6 +1672,11 @@ function applyLocalMissedTurn(match, playerIndex) {
       phase: "finished",
       winnerId: winner.id,
       winnerDisplayName: winner.name,
+      winnerReason: forfeitWinner
+        ? "FORFEIT_MISSED_TURNS"
+        : botWinner
+          ? "ABANDON_BOT"
+          : match.winnerReason,
       events,
     };
   }
@@ -4073,11 +4080,22 @@ function HistorySideDrawer({ isOpen, history = [], onClose }) {
             history.map((item) => {
               const roomLabel =
                 item.roomLabel || formatRoomIdLabel(item.roomId || item.room);
+              const endNote =
+                item.reason
+                  ? null
+                  : getMatchEndNoteForRoom(item.roomId || item.room) ||
+                    (roomLabel ? getMatchEndNoteForRoom(roomLabel) : null);
+              const title = endNote?.title || item.title || item.outcome;
+              const outcome = endNote?.outcome || item.outcome;
+              const reason = item.reason || endNote?.reason || null;
 
               return (
                 <article key={item.id} className="history-drawer-card">
                   <div className="history-drawer-copy">
-                    <strong>{item.title || item.outcome}</strong>
+                    <strong>{title}</strong>
+                    {reason ? (
+                      <span className="history-drawer-reason">{reason}</span>
+                    ) : null}
                     {roomLabel ? (
                       <span className="history-drawer-room">
                         Room ID {roomLabel}
@@ -4088,7 +4106,7 @@ function HistorySideDrawer({ isOpen, history = [], onClose }) {
                     </span>
                   </div>
                   <div className="history-drawer-result">
-                    <span>{item.outcome}</span>
+                    <span>{outcome}</span>
                     <strong
                       className={
                         item.delta >= 0 ? "delta-positive" : "delta-negative"
@@ -5920,21 +5938,64 @@ function MissTurnWarningToast({ isOpen, onClose }) {
   );
 }
 
-function computeMatchResultSummary(match, winnerId) {
+function parseMissedTurnsFromEvents(events = []) {
+  for (const event of events) {
+    const detail = event?.detail || "";
+    const match = detail.match(
+      /^(.+?) was removed after missing (\d+) turns\.?$/i,
+    );
+    if (match) {
+      return {
+        playerName: match[1].trim(),
+        missedTurns: Number(match[2]),
+      };
+    }
+  }
+  return null;
+}
+
+function computeMatchResultSummary(match, winnerId, userPlayerId, userDisplayName) {
   const winner = match.players.find((player) => player.id === winnerId);
-  const isForfeitWin = (match.events || []).some((event) =>
-    /opponent left the 2-player match|won because the opponent left/i.test(
-      event.detail || "",
-    ),
+  const missedLeave = parseMissedTurnsFromEvents(match.events);
+  const winnerReason = match.winnerReason || null;
+  const isMissedTurnsForfeit =
+    winnerReason === "FORFEIT_MISSED_TURNS" || Boolean(missedLeave);
+  const isVoluntaryForfeit =
+    !isMissedTurnsForfeit &&
+    (winnerReason === "FORFEIT" ||
+      (match.events || []).some((event) =>
+        /opponent left the 2-player match|won because the opponent left/i.test(
+          event.detail || "",
+        ),
+      ));
+
+  const didWin = Boolean(userPlayerId && winnerId === userPlayerId);
+  const removedName = missedLeave?.playerName || null;
+  const namesMatch = Boolean(
+    removedName &&
+      userDisplayName &&
+      removedName.toLowerCase() === String(userDisplayName).toLowerCase(),
+  );
+  const abandonedHumans = match.players.filter(
+    (player) => player.isAbandoned && !player.isBot,
+  );
+  const lostByMissedTurns = Boolean(
+    isMissedTurnsForfeit &&
+      !didWin &&
+      (namesMatch ||
+        (match.players.length === 2 && abandonedHumans.length >= 1)),
   );
 
   return {
     winner,
-    winnerName:
-      winner?.name || match.winnerDisplayName || "Winner",
+    winnerName: winner?.name || match.winnerDisplayName || "Winner",
     winnerColor: winner?.color || "blue",
     potAmount: match.pot ?? 0,
-    isForfeitWin,
+    isForfeitWin: isVoluntaryForfeit,
+    isMissedTurnsForfeit,
+    lostByMissedTurns,
+    missedTurns: missedLeave?.missedTurns ?? 2,
+    removedPlayerName: removedName,
   };
 }
 
@@ -5960,16 +6021,63 @@ function MatchPotIntroOverlay({ potAmount, phase }) {
 function MatchResultDialog({
   match,
   userPlayerId,
+  userDisplayName,
   onGoHome,
   onStartNewGame,
   newGameLabel = "Play Again",
 }) {
-  if (!match || match.phase !== "finished" || !match.winnerId) {
+  const isFinished = Boolean(
+    match && match.phase === "finished" && match.winnerId,
+  );
+  const didWin = isFinished && match.winnerId === userPlayerId;
+  const summary = isFinished
+    ? computeMatchResultSummary(
+        match,
+        match.winnerId,
+        userPlayerId,
+        userDisplayName,
+      )
+    : null;
+
+  useEffect(() => {
+    if (!isFinished || !summary?.lostByMissedTurns) {
+      return;
+    }
+
+    const turns = summary.missedTurns || 2;
+    rememberMatchEndNote({
+      roomId: match.roomId,
+      roomCode: match.roomTitle,
+      title: "Lost",
+      outcome: "Lost",
+      reason: `Missed ${turns} turns — auto leave`,
+    });
+  }, [
+    isFinished,
+    match?.roomId,
+    match?.roomTitle,
+    summary?.lostByMissedTurns,
+    summary?.missedTurns,
+  ]);
+
+  if (!isFinished || !summary) {
     return null;
   }
 
-  const didWin = match.winnerId === userPlayerId;
-  const summary = computeMatchResultSummary(match, match.winnerId);
+  let subtitle;
+  if (didWin) {
+    if (summary.isMissedTurnsForfeit) {
+      subtitle = `Opponent missed ${summary.missedTurns} turns — you are the winner!`;
+    } else if (summary.isForfeitWin) {
+      subtitle = "Opponent left — you are the winner!";
+    } else {
+      subtitle = "You claimed the pot.";
+    }
+  } else if (summary.lostByMissedTurns) {
+    subtitle = `You lost — removed after missing ${summary.missedTurns} turns`;
+  } else {
+    subtitle = `${summary.winnerName} won the match`;
+  }
 
   return (
     <div
@@ -5980,7 +6088,13 @@ function MatchResultDialog({
         className={`match-result-panel ${didWin ? "is-win" : "is-loss"}`}
         role="dialog"
         aria-modal="true"
-        aria-label={didWin ? "You won the match" : "Match finished"}
+        aria-label={
+          didWin
+            ? "You won the match"
+            : summary.lostByMissedTurns
+              ? "You lost after missing turns"
+              : "Match finished"
+        }
       >
         {didWin ? (
           <div className="match-result-confetti" aria-hidden="true">
@@ -5998,18 +6112,22 @@ function MatchResultDialog({
             {didWin ? "♛" : "✦"}
           </div>
           <div className="match-result-ribbon">
-            <strong>{didWin ? "YOU WON!" : "GAME OVER"}</strong>
+            <strong>
+              {didWin
+                ? "YOU WON!"
+                : summary.lostByMissedTurns
+                  ? "YOU LOST"
+                  : "GAME OVER"}
+            </strong>
           </div>
           <p className="match-result-congrats">
-            {didWin ? "Congratulations!" : "Better luck next time"}
-          </p>
-          <p className="match-result-subtitle">
             {didWin
-              ? summary.isForfeitWin
-                ? "Opponent left — you are the winner!"
-                : "You claimed the pot."
-              : `${summary.winnerName} won the match`}
+              ? "Congratulations!"
+              : summary.lostByMissedTurns
+                ? "Auto-removed from match"
+                : "Better luck next time"}
           </p>
+          <p className="match-result-subtitle">{subtitle}</p>
         </div>
 
         <div className="match-result-winner-card">
@@ -7482,6 +7600,12 @@ function PrivateRoomPageShell({ appState }) {
       <MatchResultDialog
         match={match}
         userPlayerId={privateMatchUserId}
+        userDisplayName={
+          displayName ||
+          session?.displayName ||
+          composedAppState?.profile?.displayName ||
+          appState.profile.displayName
+        }
         onGoHome={returnToMenu}
         onStartNewGame={startNewPrivateRoom}
         newGameLabel="New Room"
@@ -8254,6 +8378,11 @@ function OnlineBoardPageShell({ appState, configuredMaxPlayers }) {
       <MatchResultDialog
         match={match}
         userPlayerId={onlineUserPlayerId}
+        userDisplayName={
+          session?.displayName ||
+          composedAppState?.profile?.displayName ||
+          appState.profile.displayName
+        }
         onGoHome={returnToMenu}
         onStartNewGame={startNewOnlineGame}
         newGameLabel="New Game"

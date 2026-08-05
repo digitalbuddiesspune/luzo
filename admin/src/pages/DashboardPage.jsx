@@ -200,7 +200,7 @@ export function DashboardPage({
                       <div className="min-w-0 flex-1">
                         <p className="truncate font-semibold text-[var(--color-ink)]">{code}</p>
                         <p className="mt-0.5 truncate text-xs text-[var(--color-muted)]">
-                          {game.realPlayerCount} real · {game.botPlayerCount} bot · {formatDate(game.completedAt)}
+                          {game.realPlayerCount} Real · {game.botPlayerCount} Real · {formatDate(game.completedAt)}
                         </p>
                       </div>
                       <div className="text-right">

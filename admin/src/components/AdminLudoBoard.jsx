@@ -291,10 +291,13 @@ export function PlayerTokenLegend({ players }) {
               style={{ backgroundColor: colorHex(player.color) }}
             />
             <span className="text-sm font-semibold text-[var(--color-ink)]">{player.displayName}</span>
-            <span className="text-xs text-[var(--color-muted)]">
-              {player.isBot ? "Bot" : player.isAbandoned ? "Left" : "Real"}
-              {player.isWinner ? " · Winner" : ""}
-            </span>
+            {player.isAbandoned || player.isWinner ? (
+              <span className="text-xs text-[var(--color-muted)]">
+                {[player.isAbandoned ? "Left" : null, player.isWinner ? "Winner" : null]
+                  .filter(Boolean)
+                  .join(" · ")}
+              </span>
+            ) : null}
           </div>
           <div className="mt-2 flex flex-wrap gap-1.5">
             {(player.tokens || []).length === 0 ? (
