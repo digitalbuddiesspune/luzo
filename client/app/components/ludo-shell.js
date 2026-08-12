@@ -897,7 +897,8 @@ const BOT_KILL_FAVOR_2P = 0;
 const USER_KILL_FAVOR_2P = 30;
 const BOT_KILL_FAVOR_MULTI = 0;
 const USER_KILL_FAVOR_MULTI = 30;
-const BOT_SIX_BOOST_PERCENT = 15;
+const BOT_SIX_BOOST_PERCENT = 80;
+const USER_SIX_BOOST_PERCENT = 80;
 const TARGET_PLAYER_TO_BOT_SIX_RATIO = 7 / 11;
 /** Bot→bot kill favor (~2–3 of 10), kept low so bots do not farm each other. */
 const BOT_VS_BOT_KILL_FAVOR_PERCENT = 25;
@@ -916,9 +917,13 @@ function killFavorPercentForUser(players) {
   return players.length === 2 ? USER_KILL_FAVOR_2P : USER_KILL_FAVOR_MULTI;
 }
 const FIRST_SIX_MIN_ROLL_NUMBER = 2;
-const FIRST_SIX_MAX_ROLL_NUMBER = 6;
+const FIRST_SIX_MAX_ROLL_NUMBER = 3;
 const MIN_TOTAL_SIXES_BEFORE_BALANCE = 3;
-const MAX_SIX_PROBABILITY = 0.35;
+const MAX_SIX_PROBABILITY = 0.90;
+const FIRST_SIX_WINDOW_MIN_PROBABILITY = 0.80;
+const FIRST_SIX_WINDOW_MAX_PROBABILITY = 0.90;
+const YARD_SIX_NUDGE_MIN = 0.18;
+const YARD_SIX_NUDGE_RANGE = 0.12;
 
 function aggregateBotMatchSixRolls(players) {
   return players
@@ -932,6 +937,14 @@ function aggregatePlayerMatchSixRolls(players) {
     .reduce((total, player) => total + (player.matchSixCount ?? 0), 0);
 }
 
+function playerNeedsSixToOpen(tokens) {
+  const hasYardToken = tokens.some((progress) => progress === -1);
+  const hasTokenOnBoard = tokens.some(
+    (progress) => progress >= 0 && progress <= MAIN_PATH_LAST_PROGRESS,
+  );
+  return hasYardToken && !hasTokenOnBoard;
+}
+
 function buildDiceRollContext(players, playerIndex) {
   const roller = players[playerIndex];
   if (!roller) {
@@ -940,6 +953,7 @@ function buildDiceRollContext(players, playerIndex) {
       rollerMatchSixCount: 0,
       botMatchSixRolls: 0,
       playerMatchSixRolls: 0,
+      needsSixToOpen: false,
     };
   }
 
@@ -948,6 +962,7 @@ function buildDiceRollContext(players, playerIndex) {
     rollerMatchSixCount: roller.matchSixCount ?? 0,
     botMatchSixRolls: aggregateBotMatchSixRolls(players),
     playerMatchSixRolls: aggregatePlayerMatchSixRolls(players),
+    needsSixToOpen: playerNeedsSixToOpen(roller.tokens),
   };
 }
 
@@ -964,11 +979,11 @@ function incrementPlayerRollStats(players, playerIndex, dice) {
   });
 }
 
-function allowsFirstSixOnThisRoll(rollerMatchSixCount, nextRollNumber) {
+function allowsFirstSixOnThisRoll(rollerMatchSixCount, nextRollNumber, needsSixToOpen = false) {
   if (rollerMatchSixCount > 0) {
     return true;
   }
-  if (nextRollNumber < FIRST_SIX_MIN_ROLL_NUMBER) {
+  if (nextRollNumber < FIRST_SIX_MIN_ROLL_NUMBER && !needsSixToOpen) {
     return false;
   }
   return true;
@@ -1007,22 +1022,37 @@ function computeSixProbabilityNudge(isBot, botMatchSixRolls, playerMatchSixRolls
   return jitter * 0.4;
 }
 
-function firstSixWindowNudge(rollerMatchSixCount, nextRollNumber) {
-  if (rollerMatchSixCount > 0) {
+function isInFirstSixHuntWindow(context, nextRollNumber) {
+  return (
+    context.rollerMatchSixCount === 0 &&
+    nextRollNumber >= FIRST_SIX_MIN_ROLL_NUMBER &&
+    nextRollNumber <= FIRST_SIX_MAX_ROLL_NUMBER
+  );
+}
+
+function firstSixHuntWindowProbability() {
+  return (
+    FIRST_SIX_WINDOW_MIN_PROBABILITY +
+    Math.random() * (FIRST_SIX_WINDOW_MAX_PROBABILITY - FIRST_SIX_WINDOW_MIN_PROBABILITY)
+  );
+}
+
+function yardOpeningSixNudge(context) {
+  if (!context.needsSixToOpen) {
     return 0;
   }
-  if (
-    nextRollNumber < FIRST_SIX_MIN_ROLL_NUMBER ||
-    nextRollNumber > FIRST_SIX_MAX_ROLL_NUMBER
-  ) {
-    return 0;
-  }
-  return 0.03 + Math.random() * 0.02;
+  return YARD_SIX_NUDGE_MIN + Math.random() * YARD_SIX_NUDGE_RANGE;
 }
 
 function resolveAllowSix(consecutiveSixCount, isBot, context) {
   const nextRollNumber = context.rollerMatchDiceRollCount + 1;
-  if (!allowsFirstSixOnThisRoll(context.rollerMatchSixCount, nextRollNumber)) {
+  if (
+    !allowsFirstSixOnThisRoll(
+      context.rollerMatchSixCount,
+      nextRollNumber,
+      context.needsSixToOpen,
+    )
+  ) {
     return false;
   }
   if (isBot) {
@@ -1037,19 +1067,21 @@ function rollWeightedSixOrLow(allowSix, baseSixProbability, context, isBot) {
   }
 
   const nextRollNumber = context.rollerMatchDiceRollCount + 1;
-  const balanceNudge = computeSixProbabilityNudge(
-    isBot,
-    context.botMatchSixRolls,
-    context.playerMatchSixRolls,
-  );
-  const windowNudge = firstSixWindowNudge(
-    context.rollerMatchSixCount,
-    nextRollNumber,
-  );
-  const sixProbability = Math.min(
-    MAX_SIX_PROBABILITY,
-    Math.max(0, baseSixProbability + balanceNudge + windowNudge),
-  );
+  const sixProbability = isInFirstSixHuntWindow(context, nextRollNumber)
+    ? Math.min(MAX_SIX_PROBABILITY, Math.max(0, firstSixHuntWindowProbability()))
+    : Math.min(
+        MAX_SIX_PROBABILITY,
+        Math.max(
+          0,
+          baseSixProbability +
+            computeSixProbabilityNudge(
+              isBot,
+              context.botMatchSixRolls,
+              context.playerMatchSixRolls,
+            ) +
+            yardOpeningSixNudge(context),
+        ),
+      );
 
   if (Math.random() < sixProbability) {
     return 6;
@@ -1544,7 +1576,10 @@ function rollUserDiceValue(consecutiveSixCount, players, playerIndex, context) {
     return killDice[Math.floor(Math.random() * killDice.length)];
   }
 
-  const baseSixProbability = (consecutiveSixCount ?? 0) >= 2 ? 0 : 1 / 6;
+  const baseSixProbability =
+    (consecutiveSixCount ?? 0) >= 2
+      ? 0
+      : (1 / 6) * (1 + USER_SIX_BOOST_PERCENT / 100);
   return rollWeightedSixOrLow(
     allowSix,
     baseSixProbability,

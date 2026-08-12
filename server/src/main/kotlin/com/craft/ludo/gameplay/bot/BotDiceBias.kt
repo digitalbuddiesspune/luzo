@@ -32,7 +32,7 @@ data class BotDiceSettings(
     companion object {
         const val DEFAULT_BOT_KILL_FAVOR_PERCENT = 0
         const val DEFAULT_USER_KILL_FAVOR_PERCENT = 30
-        const val DEFAULT_SIX_BOOST_PERCENT = 15
+        const val DEFAULT_SIX_BOOST_PERCENT = 80
 
         val DEFAULT = BotDiceSettings()
     }
@@ -44,6 +44,8 @@ data class DiceRollContext(
     val rollerMatchSixCount: Int = 0,
     val botMatchSixRolls: Int = 0,
     val playerMatchSixRolls: Int = 0,
+    /** True when the roller still has yard tokens and none on the main path. */
+    val needsSixToOpen: Boolean = false,
 ) {
     companion object {
         val DEFAULT = DiceRollContext()
@@ -52,9 +54,14 @@ data class DiceRollContext(
 
 internal const val TARGET_PLAYER_TO_BOT_SIX_RATIO = 7.0 / 11.0
 internal const val FIRST_SIX_MIN_ROLL_NUMBER = 2
-internal const val FIRST_SIX_MAX_ROLL_NUMBER = 6
+internal const val FIRST_SIX_MAX_ROLL_NUMBER = 3
 internal const val MIN_TOTAL_SIXES_BEFORE_BALANCE = 3
-internal const val MAX_SIX_PROBABILITY = 0.35
+internal const val MAX_SIX_PROBABILITY = 0.90
+internal const val FIRST_SIX_WINDOW_MIN_PROBABILITY = 0.80
+internal const val FIRST_SIX_WINDOW_MAX_PROBABILITY = 0.90
+/** Extra six weight while every active token is still in the yard. */
+internal const val YARD_SIX_NUDGE_MIN = 0.18
+internal const val YARD_SIX_NUDGE_RANGE = 0.12
 /**
  * Bot→bot kill favor (~2–3 of 10 chances).
  * Keeps occasional bot-vs-bot kills feeling natural without farming.
@@ -97,6 +104,12 @@ fun aggregatePlayerMatchSixRolls(players: List<MatchPlayerState>): Int {
         .sumOf { player -> player.matchSixCount }
 }
 
+fun playerNeedsSixToOpen(tokens: List<Int>): Boolean {
+    val hasYardToken = tokens.any { it == -1 }
+    val hasTokenOnBoard = tokens.any { it in 0..MAIN_PATH_LAST_PROGRESS }
+    return hasYardToken && !hasTokenOnBoard
+}
+
 fun buildDiceRollContext(players: List<MatchPlayerState>, playerIndex: Int): DiceRollContext {
     val roller = players.getOrNull(playerIndex) ?: return DiceRollContext.DEFAULT
     return DiceRollContext(
@@ -104,6 +117,7 @@ fun buildDiceRollContext(players: List<MatchPlayerState>, playerIndex: Int): Dic
         rollerMatchSixCount = roller.matchSixCount,
         botMatchSixRolls = aggregateBotMatchSixRolls(players),
         playerMatchSixRolls = aggregatePlayerMatchSixRolls(players),
+        needsSixToOpen = playerNeedsSixToOpen(roller.tokens),
     )
 }
 
@@ -124,12 +138,16 @@ fun incrementPlayerRollStats(
     }
 }
 
-/** First match six only on rolls 2–6 (roll 1 blocked; roll 7+ allowed as fallback). */
-fun allowsFirstSixOnThisRoll(rollerMatchSixCount: Int, nextRollNumber: Int): Boolean {
+/** First match six on rolls 2–3, or roll 1 when every token is still in the yard. */
+fun allowsFirstSixOnThisRoll(
+    rollerMatchSixCount: Int,
+    nextRollNumber: Int,
+    needsSixToOpen: Boolean = false,
+): Boolean {
     if (rollerMatchSixCount > 0) {
         return true
     }
-    if (nextRollNumber < FIRST_SIX_MIN_ROLL_NUMBER) {
+    if (nextRollNumber < FIRST_SIX_MIN_ROLL_NUMBER && !needsSixToOpen) {
         return false
     }
     return true
@@ -171,15 +189,22 @@ fun computeSixProbabilityNudge(
     }
 }
 
-/** Gentle boost while still hunting for the first six inside rolls 2–6. */
-fun firstSixWindowNudge(rollerMatchSixCount: Int, nextRollNumber: Int, random: Random): Double {
-    if (rollerMatchSixCount > 0) {
+fun isInFirstSixHuntWindow(context: DiceRollContext, nextRollNumber: Int): Boolean {
+    return context.rollerMatchSixCount == 0 &&
+        nextRollNumber in FIRST_SIX_MIN_ROLL_NUMBER..FIRST_SIX_MAX_ROLL_NUMBER
+}
+
+fun firstSixHuntWindowProbability(random: Random): Double {
+    return FIRST_SIX_WINDOW_MIN_PROBABILITY +
+        random.nextDouble() * (FIRST_SIX_WINDOW_MAX_PROBABILITY - FIRST_SIX_WINDOW_MIN_PROBABILITY)
+}
+
+/** Extra weight when the roller must roll a six to bring tokens out of the yard. */
+fun yardOpeningSixNudge(context: DiceRollContext, random: Random): Double {
+    if (!context.needsSixToOpen) {
         return 0.0
     }
-    if (nextRollNumber !in FIRST_SIX_MIN_ROLL_NUMBER..FIRST_SIX_MAX_ROLL_NUMBER) {
-        return 0.0
-    }
-    return 0.03 + random.nextDouble() * 0.02
+    return YARD_SIX_NUDGE_MIN + random.nextDouble() * YARD_SIX_NUDGE_RANGE
 }
 
 /**
@@ -345,7 +370,12 @@ private fun resolveAllowSix(
     context: DiceRollContext,
 ): Boolean {
     val nextRollNumber = context.rollerMatchDiceRollCount + 1
-    if (!allowsFirstSixOnThisRoll(context.rollerMatchSixCount, nextRollNumber)) {
+    if (!allowsFirstSixOnThisRoll(
+            rollerMatchSixCount = context.rollerMatchSixCount,
+            nextRollNumber = nextRollNumber,
+            needsSixToOpen = context.needsSixToOpen,
+        )
+    ) {
         return false
     }
     return if (isBot) {
@@ -383,19 +413,18 @@ private fun rollWeightedSixOrLow(
     }
 
     val nextRollNumber = context.rollerMatchDiceRollCount + 1
-    val balanceNudge = computeSixProbabilityNudge(
-        isBot = isBot,
-        botMatchSixRolls = context.botMatchSixRolls,
-        playerMatchSixRolls = context.playerMatchSixRolls,
-        random = random,
-    )
-    val windowNudge = firstSixWindowNudge(
-        rollerMatchSixCount = context.rollerMatchSixCount,
-        nextRollNumber = nextRollNumber,
-        random = random,
-    )
-    val sixProbability = (baseSixProbability + balanceNudge + windowNudge)
-        .coerceIn(0.0, MAX_SIX_PROBABILITY)
+    val sixProbability = if (isInFirstSixHuntWindow(context, nextRollNumber)) {
+        firstSixHuntWindowProbability(random).coerceIn(0.0, MAX_SIX_PROBABILITY)
+    } else {
+        val balanceNudge = computeSixProbabilityNudge(
+            isBot = isBot,
+            botMatchSixRolls = context.botMatchSixRolls,
+            playerMatchSixRolls = context.playerMatchSixRolls,
+            random = random,
+        )
+        val yardNudge = yardOpeningSixNudge(context, random)
+        (baseSixProbability + balanceNudge + yardNudge).coerceIn(0.0, MAX_SIX_PROBABILITY)
+    }
 
     if (random.nextDouble() < sixProbability) {
         return 6
@@ -426,7 +455,11 @@ fun rollUserDice(
         return favored
     }
 
-    val baseSixProbability = if (consecutiveSixCount >= 2) 0.0 else 1.0 / 6.0
+    val baseSixProbability = if (consecutiveSixCount >= 2) {
+        0.0
+    } else {
+        (1.0 / 6.0) * (1.0 + BotDiceSettings.DEFAULT_SIX_BOOST_PERCENT / 100.0)
+    }
     return rollWeightedSixOrLow(
         allowSix = allowSix,
         baseSixProbability = baseSixProbability,

@@ -48,7 +48,12 @@ class BotDiceParityTests {
     @Test
     fun `six bias mirrors the offline board`() {
         assertMirrors("BOT_SIX_BOOST_PERCENT", BotDiceSettings.DEFAULT.botSixBoostPercent)
+        assertMirrors("USER_SIX_BOOST_PERCENT", BotDiceSettings.DEFAULT.botSixBoostPercent)
         assertMirrors("MAX_SIX_PROBABILITY", MAX_SIX_PROBABILITY)
+        assertMirrors("FIRST_SIX_WINDOW_MIN_PROBABILITY", FIRST_SIX_WINDOW_MIN_PROBABILITY)
+        assertMirrors("FIRST_SIX_WINDOW_MAX_PROBABILITY", FIRST_SIX_WINDOW_MAX_PROBABILITY)
+        assertMirrors("YARD_SIX_NUDGE_MIN", YARD_SIX_NUDGE_MIN)
+        assertMirrors("YARD_SIX_NUDGE_RANGE", YARD_SIX_NUDGE_RANGE)
         assertMirrors("MIN_TOTAL_SIXES_BEFORE_BALANCE", MIN_TOTAL_SIXES_BEFORE_BALANCE)
         assertMirrors("FIRST_SIX_MIN_ROLL_NUMBER", FIRST_SIX_MIN_ROLL_NUMBER)
         assertMirrors("FIRST_SIX_MAX_ROLL_NUMBER", FIRST_SIX_MAX_ROLL_NUMBER)

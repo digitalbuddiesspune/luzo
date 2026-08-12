@@ -205,31 +205,123 @@ class BotDiceBiasTests {
     }
 
     @Test
-    fun `first six is blocked on opening roll`() {
+    fun `opening roll can be six when all tokens are in the yard`() {
         val players = listOf(
             player("red", listOf(-1, -1, -1, -1), isBot = true),
             player("green", listOf(-1, -1, -1, -1)),
         )
-        val settings = BotDiceSettings(botKillFavor2Player = 0, botSixBoostPercent = 100)
+        val settings = BotDiceSettings(botKillFavor2Player = 0, botSixBoostPercent = 80)
+        var sixes = 0
+        repeat(500) { seed ->
+            val roll = rollBotDice(
+                consecutiveSixCount = 0,
+                players = players,
+                playerIndex = 0,
+                settings = settings,
+                context = buildDiceRollContext(players, 0),
+                random = Random(seed),
+            ).dice
+            if (roll == 6) {
+                sixes += 1
+            }
+        }
+        assertTrue(sixes > 100, "yard opening should produce many sixes, got $sixes/500")
+    }
+
+    @Test
+    fun `opening roll stays blocked once a token is on the board`() {
+        val players = listOf(
+            player("red", listOf(0, -1, -1, -1), isBot = true),
+            player("green", listOf(-1, -1, -1, -1)),
+        )
+        val settings = BotDiceSettings(botKillFavor2Player = 0, botSixBoostPercent = 80)
         repeat(200) { seed ->
             val roll = rollBotDice(
                 consecutiveSixCount = 0,
                 players = players,
                 playerIndex = 0,
                 settings = settings,
-                context = DiceRollContext(rollerMatchDiceRollCount = 0, rollerMatchSixCount = 0),
+                context = buildDiceRollContext(players, 0),
                 random = Random(seed),
             ).dice
-            assertTrue(roll in 1..5, "opening roll should not be six, got $roll")
+            assertTrue(roll in 1..5, "opening roll should not be six once on board, got $roll")
         }
     }
 
     @Test
-    fun `first six can appear between rolls 2 and 6`() {
+    fun `first six hunt window is rolls 2 and 3`() {
         assertFalse(allowsFirstSixOnThisRoll(rollerMatchSixCount = 0, nextRollNumber = 1))
+        assertTrue(
+            allowsFirstSixOnThisRoll(
+                rollerMatchSixCount = 0,
+                nextRollNumber = 1,
+                needsSixToOpen = true,
+            ),
+        )
         assertTrue(allowsFirstSixOnThisRoll(rollerMatchSixCount = 0, nextRollNumber = 2))
-        assertTrue(allowsFirstSixOnThisRoll(rollerMatchSixCount = 0, nextRollNumber = 6))
+        assertTrue(allowsFirstSixOnThisRoll(rollerMatchSixCount = 0, nextRollNumber = 3))
+        assertTrue(isInFirstSixHuntWindow(DiceRollContext(rollerMatchSixCount = 0), 2))
+        assertTrue(isInFirstSixHuntWindow(DiceRollContext(rollerMatchSixCount = 0), 3))
+        assertFalse(isInFirstSixHuntWindow(DiceRollContext(rollerMatchSixCount = 0), 4))
         assertTrue(allowsFirstSixOnThisRoll(rollerMatchSixCount = 0, nextRollNumber = 7))
+    }
+
+    @Test
+    fun `first six hunt window rolls 2 to 3 land six about 80 to 90 percent for bots and humans`() {
+        val botPlayers = listOf(
+            player("red", listOf(0, -1, -1, -1), isBot = true, matchDiceRollCount = 1, matchSixCount = 0),
+            player("green", listOf(-1, -1, -1, -1)),
+        )
+        val humanPlayers = listOf(
+            player("red", listOf(0, -1, -1, -1), matchDiceRollCount = 1, matchSixCount = 0),
+            player("green", listOf(-1, -1, -1, -1), isBot = true),
+        )
+        val settings = BotDiceSettings(botKillFavor2Player = 0, botSixBoostPercent = 80)
+        val trials = 8_000
+
+        fun botRate(): Double {
+            var sixes = 0
+            repeat(trials) { seed ->
+                val roll = rollBotDice(
+                    consecutiveSixCount = 0,
+                    players = botPlayers,
+                    playerIndex = 0,
+                    settings = settings,
+                    context = buildDiceRollContext(botPlayers, 0),
+                    random = Random(seed),
+                ).dice
+                if (roll == 6) sixes += 1
+            }
+            return sixes.toDouble() / trials
+        }
+
+        fun humanRate(): Double {
+            var sixes = 0
+            repeat(trials) { seed ->
+                val roll = rollUserDice(
+                    consecutiveSixCount = 0,
+                    players = humanPlayers,
+                    playerIndex = 0,
+                    killFavorPercent = 0,
+                    context = buildDiceRollContext(humanPlayers, 0),
+                    random = Random(seed),
+                )
+                if (roll == 6) sixes += 1
+            }
+            return sixes.toDouble() / trials
+        }
+
+        val botSixRate = botRate()
+        val humanSixRate = humanRate()
+        assertTrue(botSixRate in 0.76..0.94, "bot hunt-window rate $botSixRate expected ~80-90%")
+        assertTrue(humanSixRate in 0.76..0.94, "human hunt-window rate $humanSixRate expected ~80-90%")
+    }
+
+    @Test
+    fun `playerNeedsSixToOpen is true only before any token leaves the yard`() {
+        assertTrue(playerNeedsSixToOpen(listOf(-1, -1, -1, -1)))
+        assertFalse(playerNeedsSixToOpen(listOf(0, -1, -1, -1)))
+        assertFalse(playerNeedsSixToOpen(listOf(5, 10, 15, 20)))
     }
 
     @Test
@@ -489,10 +581,10 @@ class BotDiceBiasTests {
     @Test
     fun `bot six boost increases six rate over fair`() {
         val players = listOf(
-            player("red", listOf(-1, -1, -1, -1), isBot = true, matchDiceRollCount = 2, matchSixCount = 1),
+            player("red", listOf(5, 10, 15, 20), isBot = true, matchDiceRollCount = 2, matchSixCount = 1),
             player("green", listOf(-1, -1, -1, -1)),
         )
-        val settings = BotDiceSettings(botKillFavor2Player = 0, botSixBoostPercent = 15)
+        val settings = BotDiceSettings(botKillFavor2Player = 0, botSixBoostPercent = 80)
         val trials = 12_000
         var sixes = 0
         repeat(trials) { seed ->
@@ -508,11 +600,46 @@ class BotDiceBiasTests {
         }
         val rate = sixes.toDouble() / trials
         val fair = 1.0 / 6.0
-        val expected = fair * 1.15
+        val expected = fair * 1.80
         assertTrue(rate > fair, "boosted rate $rate should exceed fair $fair")
         assertTrue(
-            kotlin.math.abs(rate - expected) < 0.03,
+            kotlin.math.abs(rate - expected) < 0.04,
             "boosted rate $rate should be near $expected",
+        )
+    }
+
+    @Test
+    fun `human dice boost increases six rate over fair`() {
+        val players = listOf(
+            player("red", listOf(5, 10, 15, 20)),
+            player("green", listOf(-1, -1, -1, -1), isBot = true),
+        )
+        val trials = 12_000
+        var sixes = 0
+        repeat(trials) { seed ->
+            val roll = rollUserDice(
+                consecutiveSixCount = 0,
+                players = players,
+                playerIndex = 0,
+                killFavorPercent = 0,
+                context = DiceRollContext(
+                    rollerMatchDiceRollCount = 2,
+                    rollerMatchSixCount = 1,
+                    botMatchSixRolls = 0,
+                    playerMatchSixRolls = 1,
+                    needsSixToOpen = false,
+                ),
+                random = Random(seed),
+            )
+            if (roll == 6) sixes += 1
+        }
+        val rate = sixes.toDouble() / trials
+        val fair = 1.0 / 6.0
+        val expected = fair * 1.80
+        assertTrue(rate > fair, "human boosted rate $rate should exceed fair $fair")
+        assertTrue(
+            kotlin.math.abs(rate - expected) < 0.04,
+            "human boosted rate $rate should be near $expected",
         )
     }
 
