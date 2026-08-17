@@ -893,9 +893,9 @@ function samplePathPositions(anchorPositions) {
 // Dice bias for the offline board. The online server mirrors these in
 // server/src/main/kotlin/com/craft/ludo/gameplay/bot/BotDiceBias.kt, and
 // BotDiceBiasTests fails when the two sides drift apart. Change both together.
-const BOT_KILL_FAVOR_2P = 0;
+const BOT_KILL_FAVOR_2P = 55;
 const USER_KILL_FAVOR_2P = 30;
-const BOT_KILL_FAVOR_MULTI = 0;
+const BOT_KILL_FAVOR_MULTI = 55;
 const USER_KILL_FAVOR_MULTI = 30;
 const BOT_SIX_BOOST_PERCENT = 80;
 const USER_SIX_BOOST_PERCENT = 80;
@@ -1054,9 +1054,6 @@ function resolveAllowSix(consecutiveSixCount, isBot, context) {
     )
   ) {
     return false;
-  }
-  if (isBot) {
-    return (consecutiveSixCount ?? 0) <= 0;
   }
   return (consecutiveSixCount ?? 0) < 2;
 }
@@ -1541,8 +1538,8 @@ function rollWithBotVsBotKillFavor(players, playerIndex, allowSix) {
 }
 
 /**
- * Bot rolls without kill-face / stalk manipulation — captures only on a natural
- * roll. Home-finish favor and a mild six boost still apply.
+ * Bot rolls with kill favor and staged hunts on human tokens. Home finish is
+ * prioritized over hunts. Uses the same triple-six rule as human players.
  */
 function rollBotDiceValue(
   consecutiveSixCount,
@@ -1559,7 +1556,26 @@ function rollBotDiceValue(
     return finishing;
   }
 
-  const baseSixProbability = (1 / 6) * (1 + BOT_SIX_BOOST_PERCENT / 100);
+  const stalked = resolveStalkDice(
+    players,
+    playerIndex,
+    allowSix,
+    killFavorPercentForBot(players),
+    stalkPlan,
+  );
+  if (stalked) {
+    return stalked;
+  }
+
+  const botVsBot = rollWithBotVsBotKillFavor(players, playerIndex, allowSix);
+  if (botVsBot != null) {
+    return botDiceDecision(botVsBot);
+  }
+
+  const baseSixProbability =
+    (consecutiveSixCount ?? 0) >= 2
+      ? 0
+      : (1 / 6) * (1 + BOT_SIX_BOOST_PERCENT / 100);
   return botDiceDecision(
     rollWeightedSixOrLow(allowSix, baseSixProbability, diceContext, true),
   );
@@ -2416,12 +2432,15 @@ function scoreBotMove(players, playerIndex, tokenIndex, diceValue) {
     const landingKey = getBoardCellKey(player.color, nextProgress, tokenIndex);
 
     if (!SAFE_CELL_KEYS.has(landingKey)) {
-      players.forEach((opponent, opponentIndex) => {
-        if (opponentIndex === playerIndex || opponent.isAbandoned) {
-          return;
+      let capturedInEval = false;
+      for (let opponentIndex = 0; opponentIndex < players.length; opponentIndex++) {
+        if (opponentIndex === playerIndex || players[opponentIndex].isAbandoned || capturedInEval) {
+          continue;
         }
 
-        opponent.tokens.forEach((opponentProgress, opponentTokenIndex) => {
+        const opponent = players[opponentIndex];
+        for (let opponentTokenIndex = 0; opponentTokenIndex < opponent.tokens.length; opponentTokenIndex++) {
+          const opponentProgress = opponent.tokens[opponentTokenIndex];
           if (
             opponentProgress >= 0 &&
             opponentProgress <= MAIN_PATH_LAST_PROGRESS &&
@@ -2443,9 +2462,11 @@ function scoreBotMove(players, playerIndex, tokenIndex, diceValue) {
               captureValue *= 1.32;
             }
             attack += captureValue;
+            capturedInEval = true;
+            break;
           }
-        });
-      });
+        }
+      }
 
       const attackers = countAttackersOnCell(players, playerIndex, landingKey);
       if (attackers >= 2) {
@@ -2604,27 +2625,32 @@ function applyTokenMove(match, tokenIndex) {
     );
 
     if (!SAFE_CELL_KEYS.has(landingCellKey)) {
-      players.forEach((player, playerIndex) => {
-        if (playerIndex === match.currentPlayerIndex) {
-          return;
+      let captured = false;
+      for (let pIdx = 0; pIdx < players.length; pIdx++) {
+        if (pIdx === match.currentPlayerIndex || captured) {
+          continue;
         }
 
-        player.tokens = player.tokens.map((progress, otherTokenIndex) => {
-          if (progress < 0 || progress > MAIN_PATH_LAST_PROGRESS) {
-            return progress;
+        const player = players[pIdx];
+        const tokens = [...player.tokens];
+        for (let otherTokenIndex = 0; otherTokenIndex < tokens.length; otherTokenIndex++) {
+          const progress = tokens[otherTokenIndex];
+          if (progress >= 0 && progress <= MAIN_PATH_LAST_PROGRESS) {
+            if (
+              getBoardCellKey(player.color, progress, otherTokenIndex) ===
+              landingCellKey
+            ) {
+              tokens[otherTokenIndex] = -1;
+              capturedPlayers.push(player.name);
+              captured = true;
+              break;
+            }
           }
-
-          if (
-            getBoardCellKey(player.color, progress, otherTokenIndex) ===
-            landingCellKey
-          ) {
-            capturedPlayers.push(player.name);
-            return -1;
-          }
-
-          return progress;
-        });
-      });
+        }
+        if (captured) {
+          player.tokens = tokens;
+        }
+      }
     }
   }
 
@@ -2647,7 +2673,7 @@ function applyTokenMove(match, tokenIndex) {
   }
 
   const nextPlayerIndex =
-    diceValue === 6 || capturedPlayers.length > 0
+    diceValue === 6 || capturedPlayers.length > 0 || reachedHome
       ? match.currentPlayerIndex
       : (match.currentPlayerIndex + 1) % players.length;
 
@@ -5060,7 +5086,7 @@ function BoardScreen({
   const turnTimeoutSeconds =
     match.turnTimeoutSeconds ?? match.turnTimer ?? 30;
   const turnSecondsLeft = isPotIntroBlocking
-    ? 0
+    ? turnTimeoutSeconds
     : Math.max(0, Math.ceil(turnProgress * turnTimeoutSeconds));
 
   useEffect(() => {
@@ -6095,7 +6121,22 @@ function MatchResultDialog({
     summary?.missedTurns,
   ]);
 
-  if (!isFinished || !summary) {
+  const [showOverlay, setShowOverlay] = useState(false);
+
+  useEffect(() => {
+    if (!isFinished) {
+      setShowOverlay(false);
+      return undefined;
+    }
+
+    const timerId = window.setTimeout(() => {
+      setShowOverlay(true);
+    }, 1800);
+
+    return () => window.clearTimeout(timerId);
+  }, [isFinished, match?.id]);
+
+  if (!isFinished || !showOverlay || !summary) {
     return null;
   }
 

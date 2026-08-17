@@ -185,13 +185,14 @@ class BotDiceBiasTests {
     }
 
     @Test
-    fun `rollBotDice never returns consecutive six`() {
+    fun `rollBotDice allows back to back six but not a third consecutive six`() {
         val players = listOf(
-            player("red", listOf(-1, -1, -1, -1), isBot = true, matchDiceRollCount = 2, matchSixCount = 1),
+            player("red", listOf(5, 10, 15, 20), isBot = true, matchDiceRollCount = 2, matchSixCount = 1),
             player("green", listOf(-1, -1, -1, -1)),
         )
-        val settings = BotDiceSettings(botKillFavor2Player = 0, botSixBoostPercent = 100)
-        repeat(200) {
+        val settings = BotDiceSettings(botKillFavor2Player = 0, botSixBoostPercent = 80)
+        var sixesAfterOne = 0
+        repeat(400) {
             val roll = rollBotDice(
                 consecutiveSixCount = 1,
                 players = players,
@@ -200,7 +201,22 @@ class BotDiceBiasTests {
                 context = buildDiceRollContext(players, 0),
                 random = Random(it),
             ).dice
-            assertTrue(roll in 1..5, "got $roll after a six")
+            if (roll == 6) {
+                sixesAfterOne += 1
+            }
+        }
+        assertTrue(sixesAfterOne > 80, "bot should roll six after one six, got $sixesAfterOne/400")
+
+        repeat(200) {
+            val roll = rollBotDice(
+                consecutiveSixCount = 2,
+                players = players,
+                playerIndex = 0,
+                settings = settings,
+                context = buildDiceRollContext(players, 0),
+                random = Random(it),
+            ).dice
+            assertTrue(roll in 1..5, "third consecutive six should be blocked, got $roll")
         }
     }
 

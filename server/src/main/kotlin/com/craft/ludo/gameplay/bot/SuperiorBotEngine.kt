@@ -303,21 +303,27 @@ object SuperiorBotEngine {
         if (move.toProgress in 0..MAIN_PATH_LAST_PROGRESS) {
             val landingKey = boardCellKey(active.color, move.toProgress, move.tokenIndex)
             if (!ludoSafeCellKeys.contains(landingKey)) {
-                mutable.forEachIndexed { opponentIndex, opponent ->
-                    if (opponentIndex == playerIndex || opponent.isEffectivelyAbandoned()) {
-                        return@forEachIndexed
+                var captured = false
+                for (opponentIndex in mutable.indices) {
+                    if (opponentIndex == playerIndex || mutable[opponentIndex].isEffectivelyAbandoned() || captured) {
+                        continue
                     }
-                    val adjusted = opponent.tokens.mapIndexed { tokenIndex, progress ->
+                    val opponent = mutable[opponentIndex]
+                    val adjusted = opponent.tokens.toMutableList()
+                    for (tIdx in adjusted.indices) {
+                        val progress = adjusted[tIdx]
                         if (
                             progress in 0..MAIN_PATH_LAST_PROGRESS &&
-                            boardCellKey(opponent.color, progress, tokenIndex) == landingKey
+                            boardCellKey(opponent.color, progress, tIdx) == landingKey
                         ) {
-                            -1
-                        } else {
-                            progress
+                            adjusted[tIdx] = -1
+                            captured = true
+                            break
                         }
                     }
-                    mutable[opponentIndex] = opponent.copy(tokens = adjusted)
+                    if (captured) {
+                        mutable[opponentIndex] = opponent.copy(tokens = adjusted)
+                    }
                 }
             }
         }
@@ -784,16 +790,19 @@ object SuperiorBotEngine {
             return emptyList()
         }
         val targets = mutableListOf<Pair<Int, Int>>()
-        players.forEachIndexed { opponentIndex, opponent ->
-            if (opponentIndex == playerIndex || opponent.isEffectivelyAbandoned()) {
-                return@forEachIndexed
+        for (opponentIndex in players.indices) {
+            if (opponentIndex == playerIndex || players[opponentIndex].isEffectivelyAbandoned()) {
+                continue
             }
-            opponent.tokens.forEachIndexed { tokenIndex, progress ->
+            val opponent = players[opponentIndex]
+            for (tokenIndex in opponent.tokens.indices) {
+                val progress = opponent.tokens[tokenIndex]
                 if (
                     progress in 0..MAIN_PATH_LAST_PROGRESS &&
                     boardCellKey(opponent.color, progress, tokenIndex) == landingKey
                 ) {
                     targets += opponentIndex to progress
+                    return targets
                 }
             }
         }

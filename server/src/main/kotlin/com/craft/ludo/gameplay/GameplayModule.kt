@@ -1327,6 +1327,7 @@ class MatchService(
             }
             .sortedBy { player -> clockwiseColorIndex(player.color) }
         val openingPlayer = players.first()
+        val potIntroDelayMillis = 3800L
         val match = MatchDocument(
             id = matchId,
             roomId = room.id,
@@ -1342,8 +1343,8 @@ class MatchService(
             currentTurnDisplayName = openingPlayer.displayName,
             consecutiveSixCount = 0,
             players = players,
-            phaseDeadlineAt = if (openingPlayer.isBot) now.plusMillis(rollDelayMillis) else null,
-            turnDeadlineAt = now.plusSeconds(turnTimeoutSeconds),
+            phaseDeadlineAt = if (openingPlayer.isBot) now.plusMillis(potIntroDelayMillis + rollDelayMillis) else null,
+            turnDeadlineAt = now.plusMillis(potIntroDelayMillis + turnTimeoutSeconds * 1000L),
             events = listOf(
                 MatchEvent(
                     actor = "System",
@@ -1819,7 +1820,7 @@ class MatchService(
         return applyTokenMove(rolledMatch, forcedTokenIndex, now)
     }
 
-    private fun applyTokenMove(match: MatchDocument, tokenIndex: Int, now: Instant): MatchDocument {
+    internal fun applyTokenMove(match: MatchDocument, tokenIndex: Int, now: Instant): MatchDocument {
         val activePlayer = match.players[match.currentPlayerIndex]
         val diceValue = match.dice ?: 1
         val mutablePlayers = match.players.map { player ->
@@ -1836,23 +1837,29 @@ class MatchService(
         if (nextProgress in 0..MAIN_PATH_LAST_PROGRESS) {
             val landingCellKey = boardCellKey(activePlayer.color, nextProgress, tokenIndex)
             if (!safeCellKeys.contains(landingCellKey)) {
-                mutablePlayers.forEachIndexed { playerIndex, player ->
-                    if (playerIndex == match.currentPlayerIndex) {
-                        return@forEachIndexed
+                var captured = false
+                for (playerIndex in mutablePlayers.indices) {
+                    if (playerIndex == match.currentPlayerIndex || captured) {
+                        continue
                     }
 
-                    val adjustedTokens = player.tokens.mapIndexed { otherTokenIndex, progress ->
-                        if (progress !in 0..MAIN_PATH_LAST_PROGRESS) {
-                            progress
-                        } else if (boardCellKey(player.color, progress, otherTokenIndex) == landingCellKey) {
+                    val player = mutablePlayers[playerIndex]
+                    val adjustedTokens = player.tokens.toMutableList()
+                    for (otherTokenIndex in adjustedTokens.indices) {
+                        val progress = adjustedTokens[otherTokenIndex]
+                        if (progress in 0..MAIN_PATH_LAST_PROGRESS &&
+                            boardCellKey(player.color, progress, otherTokenIndex) == landingCellKey
+                        ) {
+                            adjustedTokens[otherTokenIndex] = -1
                             capturedPlayers.add(player.displayName)
-                            -1
-                        } else {
-                            progress
+                            captured = true
+                            break
                         }
                     }
 
-                    mutablePlayers[playerIndex] = player.copy(tokens = adjustedTokens)
+                    if (captured) {
+                        mutablePlayers[playerIndex] = player.copy(tokens = adjustedTokens)
+                    }
                 }
             }
         }
@@ -1875,8 +1882,8 @@ class MatchService(
             detail += " Token ${tokenIndex + 1} reached home."
         }
 
-        val capturedToken = capturedPlayers.isNotEmpty()
-        val nextPlayerIndex = if (capturedToken) {
+        val extraTurn = capturedPlayers.isNotEmpty() || reachedHome
+        val nextPlayerIndex = if (extraTurn) {
             match.currentPlayerIndex
         } else {
             nextPlayerIndex(match, diceValue)

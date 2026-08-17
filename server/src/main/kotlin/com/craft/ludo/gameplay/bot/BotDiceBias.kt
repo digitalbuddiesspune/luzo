@@ -378,11 +378,7 @@ private fun resolveAllowSix(
     ) {
         return false
     }
-    return if (isBot) {
-        consecutiveSixCount <= 0
-    } else {
-        consecutiveSixCount < 2
-    }
+    return consecutiveSixCount < 2
 }
 
 private fun rollWithKillFavor(
@@ -469,10 +465,10 @@ fun rollUserDice(
     )
 }
 
-/**
+ /**
  * Roll dice for a bot. Kill faces are not forced — captures only happen on a
  * natural roll. Still allows home-finish favor and a mild six boost.
- * Never returns 6 when [consecutiveSixCount] >= 1 (no back-to-back sixes).
+ * Allows back-to-back sixes up to 2 (consecutiveSixCount < 2).
  */
 fun rollBotDice(
     consecutiveSixCount: Int,
@@ -496,7 +492,11 @@ fun rollBotDice(
         return finishing
     }
     // No kill-face / stalk manipulation — natural weighted roll only.
-    val baseSixProbability = (1.0 / 6.0) * (1.0 + settings.botSixBoostPercent / 100.0)
+    val baseSixProbability = if (consecutiveSixCount >= 2) {
+        0.0
+    } else {
+        (1.0 / 6.0) * (1.0 + settings.botSixBoostPercent / 100.0)
+    }
     return BotDiceDecision(
         dice = rollWeightedSixOrLow(
             allowSix = allowSix,
