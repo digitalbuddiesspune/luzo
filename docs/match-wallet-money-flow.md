@@ -23,7 +23,7 @@ It is **not** used to credit the platform fee or bot-win amount to the platform.
 | Action | Channel |
 |---|---|
 | Take entry fee from player | HTTP **`APP_OPERATOR_BALANCE_PATH`** (debit) |
-| Credit winner (operator user) | RabbitMQ **`games_cashout`** |
+| Credit winner (operator user) | HTTP **`APP_OPERATOR_CREDIT_URL`** |
 | Platform fee / bot win accounting | Local Ludo ledger only (`HOUSE_RAKE` / `HOUSE_WIN`) |
 
 ### Example: entry `100`, 2 real players, platform fee `10` / seat
@@ -37,7 +37,7 @@ It is **not** used to credit the platform fee or bot-win amount to the platform.
 
 | Step | Channel | Amount |
 |---|---|---|
-| Winner credit | RabbitMQ `games_cashout` (**not** balance path) | **180** back to winner |
+| Winner credit | HTTP credit API (**not** balance path) | **180** back to winner |
 | Platform fee `20` | Local Ludo ledger only (`HOUSE_RAKE`) | No HTTP / no RabbitMQ to “credit platform” |
 
 Platform keeps **20** because it already took **200** and only sends **180** back.
@@ -55,7 +55,7 @@ Platform keeps the **200** because it was already debited at start and **nothing
 ### Summary
 
 - `APP_OPERATOR_BALANCE_PATH` → **debit only** (take entry fee)
-- Winner credit → **RabbitMQ `games_cashout`**
+- Winner credit → **HTTP `APP_OPERATOR_CREDIT_URL`**
 - Platform fee / bot win → platform keeps money by **not refunding**; Ludo only writes `HOUSE_RAKE` / `HOUSE_WIN` in its own DB — it does **not** push +20 or +200 through the balance API
 
 ---
@@ -66,7 +66,7 @@ Platform keeps the **200** because it was already debited at start and **nothing
 Join lobby        → balance check only (no debit)
 Match starts      → debit / reserve entry fee → pot
                     (operator: APP_OPERATOR_BALANCE_PATH debit)
-Human wins        → MATCH_PAYOUT + RabbitMQ games_cashout (+ HOUSE_RAKE local)
+Human wins        → MATCH_PAYOUT + HTTP credit API (+ HOUSE_RAKE local)
 Bot / house wins  → HOUSE_WIN local only (keep already-debited fees; no cashout)
 ```
 
@@ -158,7 +158,7 @@ Triggered when match status becomes `FINISHED`:
 4. Credit house + ledger **`HOUSE_RAKE`**
 5. If winner is an operator user with confirmed external debit:
    - `enqueueWinnerExternalCreditIfNeeded`
-   - RabbitMQ publish to `games_cashout`
+   - HTTP POST to `APP_OPERATOR_CREDIT_URL`
 6. Guest winners: local ledger only (no AMQP)
 
 ### Example
@@ -219,8 +219,8 @@ Entry fees are **not** returned on leave/AFK; they stay in the pot for the winne
 | Balance check | Local `wallet_accounts` | Refresh from operator user detail |
 | Debit at start | Local reserve (`available` → `reserved`) | HTTP debit; ledger reservation only |
 | During match | Reserved held locally | Cash already at operator |
-| Win | `MATCH_PAYOUT` local credit | `MATCH_PAYOUT` local **+** RabbitMQ `games_cashout` |
-| Refund (cancel / failed start) | Unreserve + `ROOM_REFUND` | AMQP credit of entry fee + `ROOM_REFUND` |
+| Win | `MATCH_PAYOUT` local credit | `MATCH_PAYOUT` local **+** HTTP credit API |
+| Refund (cancel / failed start) | Unreserve + `ROOM_REFUND` | HTTP credit of entry fee + `ROOM_REFUND` |
 | House / bot win | Reserved released; `HOUSE_WIN` to house | No refund; `HOUSE_WIN` accounting |
 
 Detection: active guest session with operator credentials (`operatorSessionForUser`).
@@ -236,7 +236,8 @@ Detection: active guest session with operator credentials (`operatorSessionForUs
 | House user | `APP_WALLET_HOUSE_USER_ID` | `house` |
 | Guest starting balance | `APP_WALLET_GUEST_STARTING_BALANCE` | `100000` |
 | Operator debit HTTP | `APP_OPERATOR_BASE_URL` + `APP_OPERATOR_BALANCE_PATH` | balance API |
-| Cashout AMQP | `AMQP_URI`, `APP_OPERATOR_CREDIT_*` | exchange `/games/admin`, queue/key `games_cashout` |
+| Operator credit HTTP | `APP_OPERATOR_CREDIT_URL` (or `APP_OPERATOR_CREDIT_PATH`) | winner/refund credit |
+| Cashout AMQP (legacy, unused for credits) | `AMQP_URI`, `APP_OPERATOR_CREDIT_*` | exchange `/games/admin`, queue/key `games_cashout` |
 | AFK miss limit | `APP_GAMEPLAY_MAX_MISSED_TURNS` | `2` |
 
 Source: `server/src/main/resources/application.yml`

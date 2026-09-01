@@ -72,6 +72,10 @@ data class OperatorProperties(
     val loginPath: String = "/operator/user/login",
     val userDetailPath: String = "/service/user/detail",
     val balancePath: String = "/service/operator/user/balance/v2",
+    /** Full URL for winner/refund credit HTTP API. Takes precedence over [creditPath]. */
+    val creditUrl: String = "",
+    /** Relative or absolute credit path when [creditUrl] is blank. */
+    val creditPath: String = "",
     /** Delayed exchange used to publish winner/refund cashout messages. */
     val creditExchange: String = "/games/admin",
     val creditQueueName: String = "games_cashout",

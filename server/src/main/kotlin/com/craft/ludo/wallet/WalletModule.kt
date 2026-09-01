@@ -653,6 +653,7 @@ class WalletService(
             amount = reservation.amount,
             txnId = newId("txn"),
             description = ludoCreditStatement(reservation.amount, roomId, "refund", roomId),
+            roundId = roomId,
         )
             .then(releaseReservedBalance)
             .then(
@@ -765,8 +766,8 @@ class WalletService(
             )
             .then(persistHouseRake(matchId, rakeAmount))
 
-        // The operator credit is published only once the ledger has committed. While the
-        // publish lived inside the transaction, an unreachable broker rolled the whole
+        // The operator credit runs only once the ledger has committed. While the
+        // credit lived inside the transaction, an unreachable operator API rolled the whole
         // settlement back, so a genuine win never reached wallet history.
         return transactionalOperator.transactional(workflow.then())
             .then(
@@ -782,7 +783,7 @@ class WalletService(
                         externallyDebitedReservations,
                     ).onErrorResume { error ->
                         log.error(
-                            "Operator winner credit publish failed after the payout was recorded; " +
+                            "Operator winner credit API failed after the payout was recorded; " +
                                 "manual replay required matchId={} winnerUserId={} amount={} reason={}",
                             matchId,
                             winnerUserId,
@@ -1032,6 +1033,7 @@ class WalletService(
             amount = winnerPayoutAmount,
             txnId = newId("txn"),
             description = ludoCreditStatement(winnerPayoutAmount, matchId, "winner payout"),
+            roundId = matchId,
         )
     }
 
@@ -1040,6 +1042,7 @@ class WalletService(
         amount: Long,
         txnId: String,
         description: String,
+        roundId: String? = null,
     ): Mono<Void> {
         val debitTransactionId = reservation.externalDebitTransactionId ?: return Mono.empty()
         if (!reservation.externalDebitConfirmed) return Mono.empty()
@@ -1059,6 +1062,7 @@ class WalletService(
                 ip = reservation.ipAddress ?: "0.0.0.0",
                 operatorId = operatorId,
                 token = operatorToken,
+                round_id = roundId,
             ),
         )
     }

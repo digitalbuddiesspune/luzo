@@ -108,11 +108,11 @@ For production, prefer **environment variables** or a secrets manager instead of
 | `APP_OPERATOR_USER_DETAIL_PATH` | User detail path |
 | `APP_OPERATOR_BALANCE_PATH` | **Debit** path — entry fee HTTP debit at match start |
 | `APP_OPERATOR_GAME_ID` | Game id sent to operator (e.g. `2`) |
-| `APP_OPERATOR_CREDIT_EXCHANGE` | RabbitMQ exchange for cashouts (default `/games/admin`) |
-| `APP_OPERATOR_CREDIT_QUEUE_NAME` | Queue name (default `games_cashout`) |
-| `APP_OPERATOR_CREDIT_ROUTING_KEY` | Routing key (default `games_cashout`) |
+| `APP_OPERATOR_BALANCE_PATH` | Debit path (entry fee) |
+| `APP_OPERATOR_CREDIT_URL` | **Required** — full URL for winner/refund credit HTTP API |
+| `APP_OPERATOR_CREDIT_PATH` | Optional fallback if credit URL empty: `{BASE_URL}{PATH}` |
 
-**Important:** Winner credits go through **RabbitMQ**, not `APP_OPERATOR_BALANCE_PATH`. The balance path is **debit only**.
+**Important:** Winner credits go through **HTTP `APP_OPERATOR_CREDIT_URL`**, not RabbitMQ. The balance path is **debit only**. RabbitMQ settings remain for legacy/infra compatibility but are not used for credits.
 
 Optional RabbitMQ tuning (see `application.yml`): `APP_OPERATOR_CREDIT_DECLARE_TOPOLOGY`, DLQ settings, retry delays.
 

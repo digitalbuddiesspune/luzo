@@ -102,6 +102,8 @@ app:
     login-path: ${APP_OPERATOR_LOGIN_PATH:/operator/user/login}
     user-detail-path: ${APP_OPERATOR_USER_DETAIL_PATH:/service/user/detail}
     balance-path: ${APP_OPERATOR_BALANCE_PATH:/service/operator/user/balance/v2}
+    credit-url: ${APP_OPERATOR_CREDIT_URL:}
+    credit-path: ${APP_OPERATOR_CREDIT_PATH:}
     credit-exchange: ${APP_OPERATOR_CREDIT_EXCHANGE:/games/admin}
     credit-queue-name: ${APP_OPERATOR_CREDIT_QUEUE_NAME:games_cashout}
     credit-routing-key: ${APP_OPERATOR_CREDIT_ROUTING_KEY:games_cashout}
