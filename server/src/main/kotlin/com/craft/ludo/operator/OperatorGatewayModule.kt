@@ -369,7 +369,10 @@ class OperatorGatewayClient(
 
     private fun creditViaHttp(creditUrl: String, message: OperatorCreditQueueMessage): Mono<Void> {
         val amountDecimal = message.amount.toBigDecimalOrNull() ?: BigDecimal.ZERO
-        val amountText = amountDecimal.toGuideAmountString()
+        val creditAmount = amountDecimal
+            .setScale(0, RoundingMode.HALF_UP)
+            .longValueExact()
+        val gameName = operatorProperties.creditGameName.trim().ifBlank { "Ludo" }
 
         operatorGatewayLogStream.publish(
             OperatorGatewayLogEvent(
@@ -391,29 +394,26 @@ class OperatorGatewayClient(
             ),
         )
         log.info(
-            "Operator wallet credit api called userId={} operatorId={} txnId={} txnRefId={} amount={} gameId={} roundId={} url={}",
+            "Operator wallet credit api called userId={} operatorId={} txnId={} amount={} gameName={} url={}",
             message.user_id,
             message.operatorId,
             message.txn_id,
-            message.txn_ref_id,
-            amountText,
-            message.game_id,
-            message.round_id,
+            creditAmount,
+            gameName,
             creditUrl,
         )
 
         return webClientBuilder.build()
             .post()
             .uri(creditUrl)
-            .header("token", message.token)
+            .header("Authorization", "Bearer ${message.token}")
             .contentType(MediaType.APPLICATION_JSON)
             .bodyValue(
                 mapOf(
                     "userId" to message.user_id,
-                    "amount" to amountDecimal,
-                    "transactionId" to message.txn_id,
-                    "gameId" to message.game_id,
-                    "roundId" to (message.round_id ?: ""),
+                    "gameName" to gameName,
+                    "amount" to creditAmount,
+                    "description" to message.description,
                 ),
             )
             .retrieve()
@@ -421,14 +421,12 @@ class OperatorGatewayClient(
             .timeout(Duration.ofSeconds(5))
             .doOnError { error ->
                 log.error(
-                    "Operator wallet credit api failed userId={} operatorId={} txnId={} txnRefId={} amount={} gameId={} roundId={} url={} reason={}",
+                    "Operator wallet credit api failed userId={} operatorId={} txnId={} amount={} gameName={} url={} reason={}",
                     message.user_id,
                     message.operatorId,
                     message.txn_id,
-                    message.txn_ref_id,
-                    amountText,
-                    message.game_id,
-                    message.round_id,
+                    creditAmount,
+                    gameName,
                     creditUrl,
                     error.message ?: error.javaClass.simpleName,
                     error,
@@ -439,13 +437,12 @@ class OperatorGatewayClient(
                     throw DomainException(HttpStatus.BAD_GATEWAY, body.path("msg").asText("Operator credit failed."))
                 }
                 log.info(
-                    "Operator wallet credit api accepted userId={} operatorId={} txnId={} txnRefId={} amount={} roundId={} msg={}",
+                    "Operator wallet credit api accepted userId={} operatorId={} txnId={} amount={} gameName={} msg={}",
                     message.user_id,
                     message.operatorId,
                     message.txn_id,
-                    message.txn_ref_id,
-                    amountText,
-                    message.round_id,
+                    creditAmount,
+                    gameName,
                     body.path("msg").asText(""),
                 )
                 operatorGatewayLogStream.publish(

@@ -76,6 +76,8 @@ data class OperatorProperties(
     val creditUrl: String = "",
     /** Relative or absolute credit path when [creditUrl] is blank. */
     val creditPath: String = "",
+    /** Game name sent in credit API requests. */
+    val creditGameName: String = "Ludo",
     /** Delayed exchange used to publish winner/refund cashout messages. */
     val creditExchange: String = "/games/admin",
     val creditQueueName: String = "games_cashout",
