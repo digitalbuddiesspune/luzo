@@ -403,16 +403,19 @@ function readOperatorLaunchParams() {
   }
 
   const params = new URLSearchParams(window.location.search);
-  const id = params.get("id")?.trim();
+  const sessionToken =
+    params.get("sessionToken")?.trim() ||
+    params.get("session_token")?.trim() ||
+    params.get("id")?.trim();
   const rawGameId = params.get("game_id") ?? params.get("gameId");
   const gameId = Number(rawGameId ?? 2);
 
-  if (!id) {
+  if (!sessionToken) {
     return null;
   }
 
   return {
-    id,
+    sessionToken,
     gameId: Number.isFinite(gameId) && gameId > 0 ? gameId : 2,
   };
 }
@@ -441,15 +444,28 @@ export async function ensureGuestSession(defaultDisplayName) {
   if (operatorLaunch) {
     let operatorSession;
     try {
-      operatorSession = await requestJson("/api/v1/identity/operator/session", {
+      operatorSession = await requestJson("/api/v1/identity/session/validate", {
         method: "POST",
-        body: operatorLaunch,
+        body: {
+          sessionToken: operatorLaunch.sessionToken,
+          gameId: operatorLaunch.gameId,
+        },
       });
     } catch (error) {
-      if (OPERATOR_PLATFORM_ENABLED) {
-        throw new Error(OPERATOR_PLATFORM_ACCESS_MESSAGE);
+      try {
+        operatorSession = await requestJson("/api/v1/identity/operator/session", {
+          method: "POST",
+          body: {
+            id: operatorLaunch.sessionToken,
+            gameId: operatorLaunch.gameId,
+          },
+        });
+      } catch (fallbackError) {
+        if (OPERATOR_PLATFORM_ENABLED) {
+          throw new Error(OPERATOR_PLATFORM_ACCESS_MESSAGE);
+        }
+        throw fallbackError;
       }
-      throw error;
     }
 
     const normalizedSession = normalizeSession(operatorSession, {

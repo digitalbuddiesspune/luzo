@@ -260,6 +260,7 @@ class OnlineMatchmakingService(
                 ipAddress = principal.ipAddress,
                 operatorUserId = principal.operatorUserId,
                 operatorId = principal.operatorId,
+                sessionToken = principal.sessionToken,
             ),
         )
 
@@ -322,6 +323,7 @@ class OnlineMatchmakingService(
                         ipAddress = principal.ipAddress,
                         operatorUserId = principal.operatorUserId,
                         operatorId = principal.operatorId,
+                        sessionToken = principal.sessionToken,
                     ),
                 ),
             ),

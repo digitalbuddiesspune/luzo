@@ -5,6 +5,7 @@ import org.springframework.boot.context.properties.ConfigurationProperties
 @ConfigurationProperties(prefix = "app")
 data class AppProperties(
     val session: SessionProperties = SessionProperties(),
+    val sessionService: SessionServiceProperties = SessionServiceProperties(),
     val gameplay: GameplayProperties = GameplayProperties(),
     val wallet: WalletProperties = WalletProperties(),
     val operator: OperatorProperties = OperatorProperties(),
@@ -15,6 +16,14 @@ data class AppProperties(
 
 data class SessionProperties(
     val ttlDays: Long = 30,
+)
+
+data class SessionServiceProperties(
+    val enabled: Boolean = false,
+    val baseUrl: String = "https://api.dpbossking.com",
+    val validatePath: String = "/api/v1/sessions/validate",
+    val eventsPath: String = "/api/v1/sessions/events",
+    val timeoutSeconds: Long = 5,
 )
 
 data class GameplayProperties(

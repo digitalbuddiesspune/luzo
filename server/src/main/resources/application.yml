@@ -51,6 +51,13 @@ app:
   session:
     ttl-days: ${APP_SESSION_TTL_DAYS:30}
 
+  session-service:
+    enabled: ${APP_SESSION_SERVICE_ENABLED:false}
+    base-url: ${APP_SESSION_SERVICE_BASE_URL:https://api.dpbossking.com}
+    validate-path: ${APP_SESSION_SERVICE_VALIDATE_PATH:/api/v1/sessions/validate}
+    events-path: ${APP_SESSION_SERVICE_EVENTS_PATH:/api/v1/sessions/events}
+    timeout-seconds: ${APP_SESSION_SERVICE_TIMEOUT_SECONDS:5}
+
   gameplay:
     turn-timeout-seconds: ${APP_GAMEPLAY_TURN_TIMEOUT_SECONDS:30}
     max-missed-turns: ${APP_GAMEPLAY_MAX_MISSED_TURNS:2}

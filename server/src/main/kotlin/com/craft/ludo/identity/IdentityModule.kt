@@ -2,6 +2,7 @@ package com.craft.ludo.identity
 
 import com.craft.ludo.shared.api.DomainException
 import com.craft.ludo.operator.OperatorGatewayClient
+import com.craft.ludo.session.SessionBindingService
 import com.craft.ludo.shared.config.AppProperties
 import com.craft.ludo.shared.support.newId
 import com.craft.ludo.wallet.WalletService
@@ -81,15 +82,22 @@ data class OperatorTokenSessionRequest(
     val gameId: Int? = null,
 )
 
+data class ValidateSessionRequest(
+    val sessionToken: String,
+    val gameId: Int? = null,
+)
+
 @Service
 class IdentityService(
     private val guestSessionRepository: GuestSessionRepository,
     private val walletService: WalletService,
     private val operatorGatewayClient: OperatorGatewayClient,
+    private val sessionBindingService: SessionBindingService,
     private val clock: Clock,
     appProperties: AppProperties,
 ) {
     private val sessionTtlDays = appProperties.session.ttlDays
+    private val externalSessionServiceEnabled = appProperties.sessionService.enabled
 
     init {
         require(sessionTtlDays > 0) { "app.session.ttl-days must be positive." }
@@ -157,6 +165,10 @@ class IdentityService(
             return Mono.error(DomainException(HttpStatus.BAD_REQUEST, "game_id must be positive."))
         }
 
+        if (externalSessionServiceEnabled) {
+            return validateExternalSession(operatorToken, gameId)
+        }
+
         val now = Instant.now(clock)
 
         return operatorGatewayClient.fetchUserDetail(operatorToken)
@@ -186,6 +198,32 @@ class IdentityService(
             .map(::toResponse)
     }
 
+    fun validateExternalSession(sessionToken: String, gameId: Int? = null): Mono<GuestSessionResponse> {
+        val normalizedToken = sessionToken.trim()
+        if (normalizedToken.isBlank()) {
+            return Mono.error(DomainException(HttpStatus.BAD_REQUEST, "sessionToken is required."))
+        }
+
+        val resolvedGameId = gameId ?: operatorGatewayClient.gameId()
+        return sessionBindingService.validateAndBind(normalizedToken, resolvedGameId)
+            .flatMap { validated ->
+                walletService.initializeOperatorWallet(
+                    userId = validated.userId,
+                    balance = validated.balance,
+                    currency = validated.currency,
+                ).thenReturn(validated)
+            }
+            .map { validated ->
+                GuestSessionResponse(
+                    userId = validated.userId,
+                    sessionToken = validated.sessionToken,
+                    displayName = validated.displayName,
+                    expiresAt = Instant.now(clock).plus(16, ChronoUnit.HOURS),
+                    isOperatorSession = true,
+                )
+            }
+    }
+
     fun getCurrentSession(sessionToken: String): Mono<GuestSessionResponse> {
         return findActiveSession(sessionToken)
             .map(::toResponse)
@@ -213,6 +251,25 @@ class IdentityService(
         val trimmedToken = sessionToken.trim()
         if (trimmedToken.isEmpty()) {
             return Mono.error(DomainException(HttpStatus.UNAUTHORIZED, "Missing session token."))
+        }
+
+        if (externalSessionServiceEnabled) {
+            return sessionBindingService.validateAndBind(trimmedToken)
+                .map { validated ->
+                    GuestSessionDocument(
+                        userId = validated.userId,
+                        sessionToken = validated.sessionToken,
+                        displayName = validated.displayName,
+                        operatorToken = validated.sessionToken,
+                        operatorUserId = validated.operatorUserId ?: validated.userId,
+                        operatorId = validated.operatorId,
+                        operatorCurrency = validated.currency,
+                        operatorGameId = validated.gameId,
+                        createdAt = Instant.now(clock),
+                        updatedAt = Instant.now(clock),
+                        expiresAt = Instant.now(clock).plus(16, ChronoUnit.HOURS),
+                    )
+                }
         }
 
         return guestSessionRepository.findBySessionToken(trimmedToken)
@@ -305,6 +362,13 @@ class IdentityController(
         @RequestBody request: OperatorTokenSessionRequest,
     ): Mono<GuestSessionResponse> {
         return identityService.createOperatorSessionFromToken(request)
+    }
+
+    @PostMapping("/session/validate")
+    fun validateSession(
+        @RequestBody request: ValidateSessionRequest,
+    ): Mono<GuestSessionResponse> {
+        return identityService.validateExternalSession(request.sessionToken, request.gameId)
     }
 
     @GetMapping("/me")

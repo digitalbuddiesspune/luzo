@@ -6,6 +6,7 @@ import com.craft.ludo.identity.GuestSessionRepository
 import com.craft.ludo.operator.OperatorCreditQueueMessage
 import com.craft.ludo.operator.OperatorDebitRequest
 import com.craft.ludo.operator.OperatorGatewayClient
+import com.craft.ludo.session.SessionBindingService
 import com.craft.ludo.shared.api.DomainException
 import com.craft.ludo.shared.config.AppProperties
 import com.craft.ludo.shared.support.newId
@@ -37,6 +38,7 @@ import java.math.BigDecimal
 import java.time.Clock
 import java.time.Duration
 import java.time.Instant
+import java.time.temporal.ChronoUnit
 
 enum class WalletTransactionType {
     GUEST_STARTING_BALANCE,
@@ -220,6 +222,7 @@ class WalletService(
     private val walletEntryRepository: WalletEntryRepository,
     private val idempotencyKeyRepository: IdempotencyKeyRepository,
     private val guestSessionRepository: GuestSessionRepository,
+    private val sessionBindingService: SessionBindingService,
     private val operatorGatewayClient: OperatorGatewayClient,
     private val mongoTemplate: ReactiveMongoTemplate,
     private val transactionalOperator: TransactionalOperator,
@@ -1002,6 +1005,24 @@ class WalletService(
     }
 
     private fun operatorSessionForUser(userId: String): Mono<GuestSessionDocument> {
+        if (sessionBindingService.isEnabled()) {
+            return sessionBindingService.findBindingByUserId(userId)
+                .map { binding ->
+                    GuestSessionDocument(
+                        userId = binding.userId,
+                        sessionToken = binding.sessionToken,
+                        displayName = binding.displayName,
+                        operatorToken = binding.sessionToken,
+                        operatorUserId = binding.operatorUserId ?: binding.userId,
+                        operatorId = binding.operatorId ?: binding.userId,
+                        operatorGameId = binding.operatorGameId,
+                        createdAt = Instant.now(clock),
+                        updatedAt = Instant.now(clock),
+                        expiresAt = Instant.now(clock).plus(16, ChronoUnit.HOURS),
+                    )
+                }
+        }
+
         return guestSessionRepository.findFirstByUserIdOrderByUpdatedAtDesc(userId)
             .filter { session ->
                 session.expiresAt.isAfter(Instant.now(clock)) &&

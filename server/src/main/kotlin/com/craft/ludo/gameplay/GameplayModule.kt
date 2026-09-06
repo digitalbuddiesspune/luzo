@@ -14,7 +14,8 @@ import com.craft.ludo.gameplay.bot.rollBotDice
 import com.craft.ludo.gameplay.bot.rollUserDice
 import com.craft.ludo.gameplay.bot.stalkPlanFor
 import com.craft.ludo.gameplay.bot.upsertStalkPlan
-import com.craft.ludo.wallet.WalletReservation
+import com.craft.ludo.session.SessionLifecyclePublisher
+import com.craft.ludo.session.humanSessionTokens
 import com.craft.ludo.wallet.WalletService
 import com.fasterxml.jackson.annotation.JsonAlias
 import com.fasterxml.jackson.annotation.JsonProperty
@@ -107,6 +108,7 @@ data class RoomSeat(
     val ipAddress: String? = null,
     val operatorUserId: String? = null,
     val operatorId: String? = null,
+    val sessionToken: String? = null,
 )
 
 @Document("rooms")
@@ -1269,6 +1271,7 @@ class MatchService(
     private val walletService: WalletService,
     private val realtimeService: MatchRealtimeService,
     private val instanceCoordinator: AppInstanceCoordinator,
+    private val sessionLifecyclePublisher: SessionLifecyclePublisher,
     private val clock: Clock,
     appProperties: AppProperties,
 ) {
@@ -1423,6 +1426,19 @@ class MatchService(
                     saved.potAmount,
                     saved.currentTurnUserId,
                 )
+                roomRepository.findById(saved.roomId)
+                    .flatMap { activeRoom ->
+                        sessionLifecyclePublisher.publishRoundStarted(
+                            matchId = saved.id,
+                            entryFee = activeRoom.entryFee,
+                            roomId = activeRoom.id,
+                            roomCode = activeRoom.code,
+                            sessionTokens = humanSessionTokens(activeRoom),
+                        ).thenReturn(saved)
+                    }
+                    .switchIfEmpty(Mono.just(saved))
+            }
+            .flatMap { saved ->
                 realtimeService.publishMatchSnapshot(saved).thenReturn(saved)
             }
     }
@@ -2248,6 +2264,17 @@ class MatchService(
                             }
 
                             settlement.then(
+                                sessionLifecyclePublisher.publishRoundFinished(
+                                    matchId = saved.id,
+                                    entryFee = room.entryFee,
+                                    potAmount = saved.potAmount,
+                                    winnerUserId = saved.winnerUserId,
+                                    winnerDisplayName = saved.winnerDisplayName,
+                                    roomId = room.id,
+                                    roomCode = room.code,
+                                    sessionTokens = humanSessionTokens(room),
+                                ),
+                            ).then(
                                 if (room.status == RoomStatus.FINISHED) {
                                     Mono.just(room)
                                 } else {
@@ -2389,6 +2416,7 @@ class LobbyService(
                                                 ipAddress = principal.ipAddress,
                                                 operatorUserId = principal.operatorUserId,
                                                 operatorId = principal.operatorId,
+                                                sessionToken = principal.sessionToken,
                                             ),
                                         ),
                                     ),
@@ -2465,6 +2493,7 @@ class LobbyService(
                                                 ipAddress = principal.ipAddress,
                                                 operatorUserId = principal.operatorUserId,
                                                 operatorId = principal.operatorId,
+                                                sessionToken = principal.sessionToken,
                                             ),
                                         )
                                     }
