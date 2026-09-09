@@ -1004,19 +1004,15 @@ class WalletService(
                 }
 
                 val sessionToken = session.operatorToken!!
-                val operatorId = session.operatorId?.trim().orEmpty()
-                if (operatorId.isBlank()) {
-                    return@flatMap sessionBindingService.validateAndBind(sessionToken)
+
+                val balanceMono = if (providerGameSdkClient.hasWalletAccess()) {
+                    providerGameSdkClient.getBalance(sessionToken)
+                } else {
+                    sessionBindingService.validateAndBind(sessionToken)
                         .flatMap { validated ->
                             providerGameSdkClient.enrichWithPlatformBalance(validated, sessionToken)
                         }
-                        .flatMap { validated -> persistOperatorWalletBalance(userId, validated.balance, validated.currency) }
-                }
-
-                val balanceMono = if (providerGameSdkClient.hasWalletAccess()) {
-                    providerGameSdkClient.getBalance(operatorId, sessionToken)
-                } else {
-                    sessionBindingService.validateAndBind(sessionToken).map { it.balance }
+                        .map { it.balance }
                 }
 
                 balanceMono.flatMap { balance ->

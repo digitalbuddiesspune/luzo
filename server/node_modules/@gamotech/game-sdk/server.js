@@ -4,8 +4,7 @@ const DEFAULT_API_BASE = "https://api.dpbossking.com/api/v1";
 
 /**
  * Optional Node server SDK — wallet operations (balance, debit, credit).
- * For Python, Java, Go, etc. use the REST contract in doc/game-sdk.md instead.
- * Requires GAME_SERVER_API_KEY (must match operatorAdapter env).
+ * operatorId is resolved from sessionToken server-side — do not pass it.
  */
 export class ProviderGameServerSDK {
   #apiBase;
@@ -22,23 +21,23 @@ export class ProviderGameServerSDK {
     }
   }
 
-  async getBalance({ sessionToken, operatorId }) {
-    this.#requireFields({ sessionToken, operatorId }, ["sessionToken", "operatorId"]);
-    return this.#walletCall(operatorId, "balance", { sessionToken });
+  async getBalance({ sessionToken }) {
+    this.#requireFields({ sessionToken }, ["sessionToken"]);
+    return this.#walletCall("balance", { sessionToken });
   }
 
-  async getPlayerProfile({ sessionToken, operatorId }) {
-    this.#requireFields({ sessionToken, operatorId }, ["sessionToken", "operatorId"]);
-    return this.#walletCall(operatorId, "player-profile", { sessionToken });
+  async getPlayerProfile({ sessionToken }) {
+    this.#requireFields({ sessionToken }, ["sessionToken"]);
+    return this.#walletCall("player-profile", { sessionToken });
   }
 
-  async debit({ sessionToken, operatorId, amount, transactionId, roundId, tableId, ...extra }) {
+  async debit({ sessionToken, amount, transactionId, roundId, tableId, ...extra }) {
     this.#requireFields(
-      { sessionToken, operatorId, amount, transactionId },
-      ["sessionToken", "operatorId", "amount", "transactionId"]
+      { sessionToken, amount, transactionId },
+      ["sessionToken", "amount", "transactionId"]
     );
 
-    return this.#walletCall(operatorId, "debit", {
+    return this.#walletCall("debit", {
       sessionToken,
       amount,
       transactionId,
@@ -48,13 +47,13 @@ export class ProviderGameServerSDK {
     });
   }
 
-  async credit({ sessionToken, operatorId, amount, transactionId, roundId, tableId, ...extra }) {
+  async credit({ sessionToken, amount, transactionId, roundId, tableId, ...extra }) {
     this.#requireFields(
-      { sessionToken, operatorId, amount, transactionId },
-      ["sessionToken", "operatorId", "amount", "transactionId"]
+      { sessionToken, amount, transactionId },
+      ["sessionToken", "amount", "transactionId"]
     );
 
-    return this.#walletCall(operatorId, "credit", {
+    return this.#walletCall("credit", {
       sessionToken,
       amount,
       transactionId,
@@ -64,8 +63,8 @@ export class ProviderGameServerSDK {
     });
   }
 
-  async #walletCall(operatorId, operation, body) {
-    const data = await this.#request(`/adapters/${operatorId}/${operation}`, {
+  async #walletCall(operation, body) {
+    const data = await this.#request(`/adapters/${operation}`, {
       method: "POST",
       body,
     });

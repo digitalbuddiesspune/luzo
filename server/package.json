@@ -1,5 +1,5 @@
 {
   "dependencies": {
-    "@gamotech/game-sdk": "^1.1.0"
+    "@gamotech/game-sdk": "^1.2.0"
   }
 }

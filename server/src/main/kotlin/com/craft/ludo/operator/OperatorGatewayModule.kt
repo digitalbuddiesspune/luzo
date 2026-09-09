@@ -439,7 +439,7 @@ class OperatorGatewayClient(
     fun gameId(): Int = operatorProperties.gameId
 
     private fun debitViaProviderSdk(request: OperatorDebitRequest, debitAmount: Long): Mono<String> {
-        val target = "provider-sdk:/adapters/${request.operatorId}/debit"
+        val target = "provider-sdk:/adapters/debit"
         operatorGatewayLogStream.publish(
             OperatorGatewayLogEvent(
                 id = "operator_debit:${request.txnId}",
@@ -460,7 +460,6 @@ class OperatorGatewayClient(
         )
 
         return providerGameSdkClient.debit(
-            operatorId = request.operatorId,
             sessionToken = request.token,
             amount = debitAmount,
             transactionId = request.txnId,
@@ -505,7 +504,7 @@ class OperatorGatewayClient(
         val creditAmount = amountDecimal
             .setScale(0, RoundingMode.HALF_UP)
             .longValueExact()
-        val target = "provider-sdk:/adapters/${message.operatorId}/credit"
+        val target = "provider-sdk:/adapters/credit"
 
         operatorGatewayLogStream.publish(
             OperatorGatewayLogEvent(
@@ -528,7 +527,6 @@ class OperatorGatewayClient(
         )
 
         return providerGameSdkClient.credit(
-            operatorId = message.operatorId,
             sessionToken = message.token,
             amount = creditAmount,
             transactionId = message.txn_id,

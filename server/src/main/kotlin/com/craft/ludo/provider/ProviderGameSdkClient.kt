@@ -14,13 +14,13 @@ import reactor.core.publisher.Mono
 import java.math.BigDecimal
 import java.time.Duration
 
-/** REST paths from @gamotech/game-sdk (client.js / server.js). */
+/** REST paths from @gamotech/game-sdk v1.2.0 (client.js / server.js). */
 object ProviderSdkPaths {
     const val SESSION_VALIDATE = "/sessions/validate"
     const val SESSION_EVENTS = "/sessions/events"
 
-    fun adapterWallet(operatorId: String, operation: String): String =
-        "/adapters/${operatorId.trim()}/$operation"
+    /** v1.2.0: operatorId is resolved from sessionToken server-side. */
+    fun adapterWallet(operation: String): String = "/adapters/${operation.trim()}"
 }
 
 @Service
@@ -140,7 +140,6 @@ class ProviderGameSdkClient(
     }
 
     fun debit(
-        operatorId: String,
         sessionToken: String,
         amount: Long,
         transactionId: String,
@@ -159,11 +158,10 @@ class ProviderGameSdkClient(
             putAll(extra)
         }
 
-        return walletCall(operatorId, "debit", sessionToken, body)
+        return walletCall("debit", sessionToken, body)
     }
 
     fun credit(
-        operatorId: String,
         sessionToken: String,
         amount: Long,
         transactionId: String,
@@ -182,14 +180,13 @@ class ProviderGameSdkClient(
             putAll(extra)
         }
 
-        return walletCall(operatorId, "credit", sessionToken, body)
+        return walletCall("credit", sessionToken, body)
     }
 
-    fun getBalance(operatorId: String, sessionToken: String): Mono<BigDecimal> {
+    fun getBalance(sessionToken: String): Mono<BigDecimal> {
         requireWalletAccess()
 
         return walletCall(
-            operatorId = operatorId,
             operation = "balance",
             sessionToken = sessionToken,
             body = mapOf("sessionToken" to sessionToken),
@@ -198,7 +195,7 @@ class ProviderGameSdkClient(
                 if (balance > BigDecimal.ZERO) {
                     Mono.just(balance)
                 } else {
-                    getPlayerProfileBalance(operatorId, sessionToken)
+                    getPlayerProfileBalance(sessionToken)
                         .map { profileBalance ->
                             if (profileBalance > BigDecimal.ZERO) profileBalance else balance
                         }
@@ -210,11 +207,11 @@ class ProviderGameSdkClient(
         validated: ValidatedSession,
         sessionToken: String,
     ): Mono<ValidatedSession> {
-        if (!hasWalletAccess() || validated.operatorId.isNullOrBlank()) {
+        if (!hasWalletAccess()) {
             return Mono.just(validated)
         }
 
-        return getBalance(validated.operatorId!!, sessionToken)
+        return getBalance(sessionToken)
             .map { balance -> validated.copy(balance = balance) }
             .onErrorResume { error ->
                 log.warn(
@@ -227,9 +224,8 @@ class ProviderGameSdkClient(
             }
     }
 
-    private fun getPlayerProfileBalance(operatorId: String, sessionToken: String): Mono<BigDecimal> {
+    private fun getPlayerProfileBalance(sessionToken: String): Mono<BigDecimal> {
         return walletCall(
-            operatorId = operatorId,
             operation = "player-profile",
             sessionToken = sessionToken,
             body = mapOf("sessionToken" to sessionToken),
@@ -238,21 +234,14 @@ class ProviderGameSdkClient(
     }
 
     private fun walletCall(
-        operatorId: String,
         operation: String,
         sessionToken: String,
         body: Map<String, Any?>,
     ): Mono<JsonNode> {
-        val normalizedOperatorId = operatorId.trim()
-        if (normalizedOperatorId.isBlank()) {
-            return Mono.error(DomainException(HttpStatus.BAD_REQUEST, "operatorId is required."))
-        }
-
-        val path = ProviderSdkPaths.adapterWallet(normalizedOperatorId, operation)
+        val path = ProviderSdkPaths.adapterWallet(operation)
         log.info(
-            "Provider SDK wallet {} operatorId={} sessionToken={} path={}",
+            "Provider SDK wallet {} sessionToken={} path={}",
             operation,
-            normalizedOperatorId,
             maskToken(sessionToken),
             path,
         )
