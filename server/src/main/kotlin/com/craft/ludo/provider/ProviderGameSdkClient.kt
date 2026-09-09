@@ -65,17 +65,7 @@ class ProviderGameSdkClient(
             useGameServerKey = false,
         )
             .map { body -> parseValidatedSession(body, normalizedToken) }
-            .flatMap { validated ->
-                if (validated.balance > BigDecimal.ZERO || !hasWalletAccess() || validated.operatorId.isNullOrBlank()) {
-                    Mono.just(validated)
-                } else {
-                    getBalance(validated.operatorId!!, normalizedToken)
-                        .map { balance ->
-                            validated.copy(balance = balance)
-                        }
-                        .onErrorReturn(validated)
-                }
-            }
+            .flatMap { validated -> enrichWithPlatformBalance(validated, normalizedToken) }
             .timeout(Duration.ofSeconds(properties.timeoutSeconds))
             .doOnSuccess { validated ->
                 log.info(
@@ -203,10 +193,48 @@ class ProviderGameSdkClient(
             operation = "balance",
             sessionToken = sessionToken,
             body = mapOf("sessionToken" to sessionToken),
-        ).map { body ->
-            val data = body.path("data").takeUnless { it.isMissingNode || it.isNull } ?: body
-            firstDecimal(data, "balance", "availableBalance", "available_balance")
+        ).map(::parseWalletBalance)
+            .flatMap { balance ->
+                if (balance > BigDecimal.ZERO) {
+                    Mono.just(balance)
+                } else {
+                    getPlayerProfileBalance(operatorId, sessionToken)
+                        .map { profileBalance ->
+                            if (profileBalance > BigDecimal.ZERO) profileBalance else balance
+                        }
+                }
+            }
+    }
+
+    fun enrichWithPlatformBalance(
+        validated: ValidatedSession,
+        sessionToken: String,
+    ): Mono<ValidatedSession> {
+        if (!hasWalletAccess() || validated.operatorId.isNullOrBlank()) {
+            return Mono.just(validated)
         }
+
+        return getBalance(validated.operatorId!!, sessionToken)
+            .map { balance -> validated.copy(balance = balance) }
+            .onErrorResume { error ->
+                log.warn(
+                    "Provider SDK balance fetch failed userId={} operatorId={} reason={}",
+                    validated.userId,
+                    validated.operatorId,
+                    error.message ?: error.javaClass.simpleName,
+                )
+                Mono.just(validated)
+            }
+    }
+
+    private fun getPlayerProfileBalance(operatorId: String, sessionToken: String): Mono<BigDecimal> {
+        return walletCall(
+            operatorId = operatorId,
+            operation = "player-profile",
+            sessionToken = sessionToken,
+            body = mapOf("sessionToken" to sessionToken),
+        ).map(::parseWalletBalance)
+            .onErrorReturn(BigDecimal.ZERO)
     }
 
     private fun walletCall(
@@ -318,9 +346,37 @@ class ProviderGameSdkClient(
         }.orEmpty()
     }
 
+    private fun parseWalletBalance(body: JsonNode): BigDecimal {
+        val payload = unwrapWalletPayload(body)
+        return firstDecimal(
+            payload,
+            "balance",
+            "availableBalance",
+            "available_balance",
+            "walletBalance",
+            "wallet_balance",
+            "amount",
+        )
+    }
+
+    private fun unwrapWalletPayload(body: JsonNode): JsonNode {
+        val level1 = body.path("data").takeUnless { it.isMissingNode || it.isNull } ?: return body
+        val level2 = level1.path("data").takeUnless { it.isMissingNode || it.isNull }
+        return level2 ?: level1
+    }
+
     private fun firstDecimal(node: JsonNode, vararg names: String): BigDecimal {
-        val raw = firstText(node, *names)
-        return raw.toBigDecimalOrNull() ?: BigDecimal.ZERO
+        for (name in names) {
+            val value = node.path(name)
+            if (value.isMissingNode || value.isNull) {
+                continue
+            }
+            when {
+                value.isNumber -> return value.decimalValue()
+                else -> value.asText()?.trim()?.toBigDecimalOrNull()?.let { return it }
+            }
+        }
+        return BigDecimal.ZERO
     }
 
     private fun toGatewayError(error: WebClientResponseException): DomainException {

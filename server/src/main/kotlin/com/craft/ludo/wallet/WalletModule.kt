@@ -320,10 +320,10 @@ class WalletService(
         )
     }
 
-    fun getOverview(userId: String): Mono<WalletOverviewResponse> {
-        return refreshOperatorWalletBalance(userId)
-            .onErrorResume { ensureGuestWalletBalance(userId) }
-            .switchIfEmpty(ensureGuestWalletBalance(userId))
+    fun getOverview(userId: String, platformSessionToken: String? = null): Mono<WalletOverviewResponse> {
+        return refreshOperatorWalletBalance(userId, platformSessionToken)
+            .onErrorResume { error -> recoverWalletOverviewAccount(userId, error) }
+            .switchIfEmpty(recoverWalletOverviewAccount(userId))
             .flatMap { account ->
             walletTransactionRepository.findByUserId(
                 userId,
@@ -350,8 +350,8 @@ class WalletService(
         require(amount > 0) { "Required balance amount must be positive." }
 
         return refreshOperatorWalletBalance(userId)
-            .onErrorResume { ensureGuestWalletBalance(userId) }
-            .switchIfEmpty(ensureGuestWalletBalance(userId))
+            .onErrorResume { error -> recoverWalletOverviewAccount(userId, error) }
+            .switchIfEmpty(recoverWalletOverviewAccount(userId))
             .flatMap { account ->
                 if (account.availableBalance < amount) {
                     Mono.error(
@@ -985,7 +985,18 @@ class WalletService(
             }
     }
 
-    private fun refreshOperatorWalletBalance(userId: String): Mono<WalletAccountDocument> {
+    private fun refreshOperatorWalletBalance(
+        userId: String,
+        platformSessionToken: String? = null,
+    ): Mono<WalletAccountDocument> {
+        if (sessionBindingService.isEnabled() && !platformSessionToken.isNullOrBlank()) {
+            return sessionBindingService.validateAndBind(platformSessionToken.trim())
+                .flatMap { validated ->
+                    providerGameSdkClient.enrichWithPlatformBalance(validated, platformSessionToken.trim())
+                }
+                .flatMap { validated -> persistOperatorWalletBalance(userId, validated.balance, validated.currency) }
+        }
+
         return operatorSessionForUser(userId)
             .flatMap { session ->
                 if (!sessionBindingService.isEnabled()) {
@@ -994,30 +1005,66 @@ class WalletService(
 
                 val sessionToken = session.operatorToken!!
                 val operatorId = session.operatorId?.trim().orEmpty()
-                val balanceMono = if (providerGameSdkClient.hasWalletAccess() && operatorId.isNotBlank()) {
+                if (operatorId.isBlank()) {
+                    return@flatMap sessionBindingService.validateAndBind(sessionToken)
+                        .flatMap { validated ->
+                            providerGameSdkClient.enrichWithPlatformBalance(validated, sessionToken)
+                        }
+                        .flatMap { validated -> persistOperatorWalletBalance(userId, validated.balance, validated.currency) }
+                }
+
+                val balanceMono = if (providerGameSdkClient.hasWalletAccess()) {
                     providerGameSdkClient.getBalance(operatorId, sessionToken)
                 } else {
                     sessionBindingService.validateAndBind(sessionToken).map { it.balance }
                 }
 
                 balanceMono.flatMap { balance ->
-                    val currency = session.operatorCurrency?.trim()?.uppercase()?.ifBlank { null } ?: walletCurrency
-                    val query = Query.query(Criteria.where("userId").`is`(userId))
-                    val update = Update()
-                        .setOnInsert("id", newId("wal"))
-                        .setOnInsert("userId", userId)
-                        .set("currency", currency)
-                        .set("availableBalance", balance.toWalletAmount())
-                        .set("updatedAt", Instant.now(clock))
-
-                    mongoTemplate.findAndModify(
-                        query,
-                        update,
-                        FindAndModifyOptions.options().upsert(true).returnNew(true),
-                        WalletAccountDocument::class.java,
+                    persistOperatorWalletBalance(
+                        userId,
+                        balance,
+                        session.operatorCurrency ?: walletCurrency,
                     )
                 }
             }
+    }
+
+    private fun persistOperatorWalletBalance(
+        userId: String,
+        balance: BigDecimal,
+        currency: String,
+    ): Mono<WalletAccountDocument> {
+        val query = Query.query(Criteria.where("userId").`is`(userId))
+        val update = Update()
+            .setOnInsert("id", newId("wal"))
+            .setOnInsert("userId", userId)
+            .set("currency", currency.trim().uppercase().ifBlank { walletCurrency })
+            .set("availableBalance", balance.toWalletAmount())
+            .set("updatedAt", Instant.now(clock))
+
+        return mongoTemplate.findAndModify(
+            query,
+            update,
+            FindAndModifyOptions.options().upsert(true).returnNew(true),
+            WalletAccountDocument::class.java,
+        )
+    }
+
+    private fun recoverWalletOverviewAccount(
+        userId: String,
+        error: Throwable? = null,
+    ): Mono<WalletAccountDocument> {
+        if (error != null) {
+            log.warn(
+                "Wallet refresh failed userId={} reason={}",
+                userId,
+                error.message ?: error.javaClass.simpleName,
+            )
+        }
+
+        return sessionBindingService.findBindingByUserId(userId)
+            .flatMap { walletAccountRepository.findByUserId(userId) }
+            .switchIfEmpty(ensureGuestWalletBalance(userId))
     }
 
     private fun operatorSessionForUser(userId: String): Mono<GuestSessionDocument> {
@@ -1030,7 +1077,8 @@ class WalletService(
                         displayName = binding.displayName,
                         operatorToken = binding.sessionToken,
                         operatorUserId = binding.operatorUserId ?: binding.userId,
-                        operatorId = binding.operatorId ?: binding.userId,
+                        operatorId = binding.operatorId,
+                        operatorCurrency = null,
                         operatorGameId = binding.operatorGameId,
                         createdAt = Instant.now(clock),
                         updatedAt = Instant.now(clock),
@@ -1128,7 +1176,7 @@ class WalletController(
         @RequestHeader("X-Session-Token") sessionToken: String,
     ): Mono<WalletOverviewResponse> {
         return sessionPrincipalResolver.requireUser(sessionToken)
-            .flatMap { walletService.getOverview(it.id) }
+            .flatMap { walletService.getOverview(it.id, sessionToken) }
     }
 }
 
