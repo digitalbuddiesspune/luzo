@@ -20,9 +20,10 @@ data class SessionProperties(
 
 data class SessionServiceProperties(
     val enabled: Boolean = false,
-    val baseUrl: String = "https://api.dpbossking.com",
-    val validatePath: String = "/api/v1/sessions/validate",
-    val eventsPath: String = "/api/v1/sessions/events",
+    /** Provider API base — matches @gamotech/game-sdk default. */
+    val apiBaseUrl: String = "https://api.dpbossking.com/api/v1",
+    /** Required for server-side wallet adapter calls (debit/credit/balance). */
+    val gameServerApiKey: String = "",
     val timeoutSeconds: Long = 5,
 )
 
@@ -77,17 +78,17 @@ data class WalletProperties(
 )
 
 data class OperatorProperties(
-    val baseUrl: String = "https://sp.adminsportal.com",
-    val loginPath: String = "/operator/user/login",
-    val userDetailPath: String = "/service/user/detail",
-    val balancePath: String = "/service/operator/user/balance/v2",
-    /** Full URL for winner/refund credit HTTP API. Takes precedence over [creditPath]. */
+    /** Full URL for entry-fee debit HTTP API. */
+    val debitUrl: String = "",
+    /** Full URL for winner/refund credit HTTP API. */
     val creditUrl: String = "",
-    /** Relative or absolute credit path when [creditUrl] is blank. */
-    val creditPath: String = "",
-    /** Game name sent in credit API requests. */
-    val creditGameName: String = "Ludo",
-    /** Delayed exchange used to publish winner/refund cashout messages. */
+    /** Game name/code sent in wallet debit/credit requests. */
+    val creditGameName: String = "POTLUDO",
+    /** Legacy numeric game id (RabbitMQ / operator payloads). */
+    val gameId: Int = 2,
+    /** Platform game code from launch URL / session (e.g. POTLUDO). */
+    val gameCode: String = "POTLUDO",
+    /** Delayed exchange used to publish winner/refund cashout messages (legacy). */
     val creditExchange: String = "/games/admin",
     val creditQueueName: String = "games_cashout",
     val creditRoutingKey: String = "games_cashout",
@@ -98,7 +99,6 @@ data class OperatorProperties(
     val creditDeadLetterRoutingKey: String = "games_cashout.dlq",
     val creditMaxRetries: Int = 5,
     val creditRetryDelayMillis: Long = 5_000,
-    val gameId: Int = 2,
 )
 
 data class InstanceProperties(

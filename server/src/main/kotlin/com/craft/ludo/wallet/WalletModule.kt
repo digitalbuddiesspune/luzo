@@ -6,6 +6,7 @@ import com.craft.ludo.identity.GuestSessionRepository
 import com.craft.ludo.operator.OperatorCreditQueueMessage
 import com.craft.ludo.operator.OperatorDebitRequest
 import com.craft.ludo.operator.OperatorGatewayClient
+import com.craft.ludo.provider.ProviderGameSdkClient
 import com.craft.ludo.session.SessionBindingService
 import com.craft.ludo.shared.api.DomainException
 import com.craft.ludo.shared.config.AppProperties
@@ -223,6 +224,7 @@ class WalletService(
     private val idempotencyKeyRepository: IdempotencyKeyRepository,
     private val guestSessionRepository: GuestSessionRepository,
     private val sessionBindingService: SessionBindingService,
+    private val providerGameSdkClient: ProviderGameSdkClient,
     private val operatorGatewayClient: OperatorGatewayClient,
     private val mongoTemplate: ReactiveMongoTemplate,
     private val transactionalOperator: TransactionalOperator,
@@ -496,6 +498,8 @@ class WalletService(
                         operatorId = operatorSession.operatorId!!,
                         token = operatorSession.operatorToken!!,
                         betId = "BT:$debitTransactionId:${operatorSession.operatorUserId}:${operatorSession.operatorId}",
+                        roundId = roomId,
+                        tableId = roomId,
                     ),
                 )
                     .doOnError { error ->
@@ -984,23 +988,35 @@ class WalletService(
     private fun refreshOperatorWalletBalance(userId: String): Mono<WalletAccountDocument> {
         return operatorSessionForUser(userId)
             .flatMap { session ->
-                operatorGatewayClient.fetchUserDetail(session.operatorToken!!)
-                    .flatMap { detail ->
-                        val query = Query.query(Criteria.where("userId").`is`(userId))
-                        val update = Update()
-                            .setOnInsert("id", newId("wal"))
-                            .setOnInsert("userId", userId)
-                            .set("currency", detail.currency.trim().uppercase().ifBlank { walletCurrency })
-                            .set("availableBalance", detail.balance.toWalletAmount())
-                            .set("updatedAt", Instant.now(clock))
+                if (!sessionBindingService.isEnabled()) {
+                    return@flatMap walletAccountRepository.findByUserId(userId)
+                }
 
-                        mongoTemplate.findAndModify(
-                            query,
-                            update,
-                            FindAndModifyOptions.options().upsert(true).returnNew(true),
-                            WalletAccountDocument::class.java,
-                        )
-                    }
+                val sessionToken = session.operatorToken!!
+                val operatorId = session.operatorId?.trim().orEmpty()
+                val balanceMono = if (providerGameSdkClient.hasWalletAccess() && operatorId.isNotBlank()) {
+                    providerGameSdkClient.getBalance(operatorId, sessionToken)
+                } else {
+                    sessionBindingService.validateAndBind(sessionToken).map { it.balance }
+                }
+
+                balanceMono.flatMap { balance ->
+                    val currency = session.operatorCurrency?.trim()?.uppercase()?.ifBlank { null } ?: walletCurrency
+                    val query = Query.query(Criteria.where("userId").`is`(userId))
+                    val update = Update()
+                        .setOnInsert("id", newId("wal"))
+                        .setOnInsert("userId", userId)
+                        .set("currency", currency)
+                        .set("availableBalance", balance.toWalletAmount())
+                        .set("updatedAt", Instant.now(clock))
+
+                    mongoTemplate.findAndModify(
+                        query,
+                        update,
+                        FindAndModifyOptions.options().upsert(true).returnNew(true),
+                        WalletAccountDocument::class.java,
+                    )
+                }
             }
     }
 

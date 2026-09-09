@@ -72,16 +72,6 @@ data class GuestSessionResponse(
     val isOperatorSession: Boolean = false,
 )
 
-data class OperatorLoginRequest(
-    val userId: String,
-    val password: String,
-)
-
-data class OperatorTokenSessionRequest(
-    val id: String,
-    val gameId: Int? = null,
-)
-
 data class ValidateSessionRequest(
     val sessionToken: String,
     val gameId: Int? = null,
@@ -123,82 +113,15 @@ class IdentityService(
             .map(::toResponse)
     }
 
-    fun createOperatorSession(request: OperatorLoginRequest): Mono<GuestSessionResponse> {
-        val now = Instant.now(clock)
-
-        return operatorGatewayClient.login(request.userId, request.password)
-            .flatMap { login -> operatorGatewayClient.fetchUserDetail(login.token).map { detail -> login to detail } }
-            .flatMap { (login, detail) ->
-                val session = GuestSessionDocument(
-                    userId = detail.userId,
-                    displayName = normalizeOperatorDisplayName(detail.displayName, detail.userId),
-                    operatorToken = login.token,
-                    operatorUserId = detail.userId,
-                    operatorId = detail.operatorId,
-                    operatorCurrency = detail.currency,
-                    operatorGameId = operatorGatewayClient.gameId(),
-                    createdAt = now,
-                    updatedAt = now,
-                    expiresAt = now.plus(16, ChronoUnit.HOURS),
-                )
-
-                guestSessionRepository.save(session)
-                    .flatMap { savedSession ->
-                        walletService.initializeOperatorWallet(
-                            userId = savedSession.userId,
-                            balance = detail.balance,
-                            currency = detail.currency,
-                        ).thenReturn(savedSession)
-                    }
-            }
-            .map(::toResponse)
-    }
-
-    fun createOperatorSessionFromToken(request: OperatorTokenSessionRequest): Mono<GuestSessionResponse> {
-        val operatorToken = request.id.trim()
-        if (operatorToken.isBlank()) {
-            return Mono.error(DomainException(HttpStatus.BAD_REQUEST, "Operator token is required."))
-        }
-
-        val gameId = request.gameId ?: operatorGatewayClient.gameId()
-        if (gameId <= 0) {
-            return Mono.error(DomainException(HttpStatus.BAD_REQUEST, "game_id must be positive."))
-        }
-
-        if (externalSessionServiceEnabled) {
-            return validateExternalSession(operatorToken, gameId)
-        }
-
-        val now = Instant.now(clock)
-
-        return operatorGatewayClient.fetchUserDetail(operatorToken)
-            .flatMap { detail ->
-                val session = GuestSessionDocument(
-                    userId = detail.userId,
-                    displayName = normalizeOperatorDisplayName(detail.displayName, detail.userId),
-                    operatorToken = operatorToken,
-                    operatorUserId = detail.userId,
-                    operatorId = detail.operatorId,
-                    operatorCurrency = detail.currency,
-                    operatorGameId = gameId,
-                    createdAt = now,
-                    updatedAt = now,
-                    expiresAt = now.plus(16, ChronoUnit.HOURS),
-                )
-
-                guestSessionRepository.save(session)
-                    .flatMap { savedSession ->
-                        walletService.initializeOperatorWallet(
-                            userId = savedSession.userId,
-                            balance = detail.balance,
-                            currency = detail.currency,
-                        ).thenReturn(savedSession)
-                    }
-            }
-            .map(::toResponse)
-    }
-
     fun validateExternalSession(sessionToken: String, gameId: Int? = null): Mono<GuestSessionResponse> {
+        if (!externalSessionServiceEnabled) {
+            return Mono.error(
+                DomainException(
+                    HttpStatus.SERVICE_UNAVAILABLE,
+                    "External session service is disabled. Enable APP_SESSION_SERVICE_ENABLED or use guest mode.",
+                ),
+            )
+        }
         val normalizedToken = sessionToken.trim()
         if (normalizedToken.isBlank()) {
             return Mono.error(DomainException(HttpStatus.BAD_REQUEST, "sessionToken is required."))
@@ -310,14 +233,6 @@ class IdentityService(
         return normalized
     }
 
-    private fun normalizeOperatorDisplayName(rawDisplayName: String, userId: String): String {
-        val normalized = rawDisplayName.trim().replace(Regex("\\s+"), " ")
-        return if (normalized.length in 3..24) {
-            normalized
-        } else {
-            "Player ${userId.takeLast(4).uppercase()}"
-        }
-    }
 }
 
 @Component
@@ -348,20 +263,6 @@ class IdentityController(
         @RequestBody(required = false) request: CreateGuestSessionRequest?,
     ): Mono<GuestSessionResponse> {
         return identityService.createGuestSession(request ?: CreateGuestSessionRequest())
-    }
-
-    @PostMapping("/operator/login")
-    fun createOperatorSession(
-        @RequestBody request: OperatorLoginRequest,
-    ): Mono<GuestSessionResponse> {
-        return identityService.createOperatorSession(request)
-    }
-
-    @PostMapping("/operator/session")
-    fun createOperatorSessionFromToken(
-        @RequestBody request: OperatorTokenSessionRequest,
-    ): Mono<GuestSessionResponse> {
-        return identityService.createOperatorSessionFromToken(request)
     }
 
     @PostMapping("/session/validate")

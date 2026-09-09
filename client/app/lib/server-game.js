@@ -1,6 +1,11 @@
+import { ProviderGameSDK } from "@gamotech/game-sdk";
+
 const API_BASE_URL =
   process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/$/, "") ??
   "http://127.0.0.1:8082";
+const PROVIDER_API_BASE_URL =
+  process.env.NEXT_PUBLIC_PROVIDER_API_BASE_URL?.replace(/\/$/, "") ??
+  "https://api.dpbossking.com/api/v1";
 const OPERATOR_PLATFORM_ENABLED = ["1", "true", "enabled", "yes"].includes(
   (process.env.NEXT_PUBLIC_OPERATOR_PLATFORM_ENABLED ?? "").toLowerCase(),
 );
@@ -10,6 +15,12 @@ const CORS_DEBUG_ENABLED = ["1", "true", "enabled", "yes"].includes(
 
 const SESSION_STORAGE_KEY = "ludo.guest-session";
 export const OPERATOR_PLATFORM_ACCESS_MESSAGE = "This page is not accessible.";
+
+let activeProviderSdk = null;
+
+export function getProviderSdk() {
+  return activeProviderSdk;
+}
 
 const WALLET_TRANSACTION_SIGNS = {
   GUEST_STARTING_BALANCE: 1,
@@ -442,34 +453,23 @@ export async function ensureGuestSession(defaultDisplayName) {
   }
 
   if (operatorLaunch) {
-    let operatorSession;
-    try {
-      operatorSession = await requestJson("/api/v1/identity/session/validate", {
-        method: "POST",
-        body: {
-          sessionToken: operatorLaunch.sessionToken,
-          gameId: operatorLaunch.gameId,
-        },
-      });
-    } catch (error) {
-      try {
-        operatorSession = await requestJson("/api/v1/identity/operator/session", {
-          method: "POST",
-          body: {
-            id: operatorLaunch.sessionToken,
-            gameId: operatorLaunch.gameId,
-          },
-        });
-      } catch (fallbackError) {
-        if (OPERATOR_PLATFORM_ENABLED) {
-          throw new Error(OPERATOR_PLATFORM_ACCESS_MESSAGE);
-        }
-        throw fallbackError;
-      }
-    }
+    const providerSdk = new ProviderGameSDK({ apiBaseUrl: PROVIDER_API_BASE_URL });
+    await providerSdk.init(operatorLaunch.sessionToken);
+    providerSdk.attachUnloadHandler();
+    activeProviderSdk = providerSdk;
+
+    const operatorSession = await requestJson("/api/v1/identity/session/validate", {
+      method: "POST",
+      body: {
+        sessionToken: operatorLaunch.sessionToken,
+        gameId: operatorLaunch.gameId,
+      },
+    });
 
     const normalizedSession = normalizeSession(operatorSession, {
       operatorGameId: operatorLaunch.gameId,
+      operatorId: providerSdk.operatorId,
+      playerId: providerSdk.playerId,
     });
 
     storeSession(normalizedSession);

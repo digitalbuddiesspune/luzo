@@ -1,6 +1,7 @@
 package com.craft.ludo.operator
 
 import com.craft.ludo.identity.IdentityService
+import com.craft.ludo.provider.ProviderGameSdkClient
 import com.craft.ludo.shared.api.DomainException
 import com.craft.ludo.shared.config.AppProperties
 import com.fasterxml.jackson.databind.JsonNode
@@ -12,7 +13,6 @@ import org.springframework.web.bind.annotation.GetMapping
 import org.springframework.web.bind.annotation.RequestMapping
 import org.springframework.web.bind.annotation.RequestParam
 import org.springframework.web.bind.annotation.RestController
-import org.springframework.web.util.UriComponentsBuilder
 import org.springframework.stereotype.Service
 import org.springframework.web.reactive.function.client.WebClient
 import org.springframework.web.reactive.function.client.WebClientResponseException
@@ -25,23 +25,6 @@ import java.math.RoundingMode
 import java.time.Duration
 import java.time.Instant
 
-data class OperatorLoginResult(
-    val token: String,
-)
-
-data class OperatorLoginPayload(
-    val userId: String,
-    val password: String,
-)
-
-data class OperatorUserDetail(
-    val userId: String,
-    val displayName: String,
-    val balance: BigDecimal,
-    val currency: String,
-    val operatorId: String,
-)
-
 data class OperatorDebitRequest(
     val gameUserId: String,
     val txnId: String,
@@ -53,6 +36,8 @@ data class OperatorDebitRequest(
     val operatorId: String,
     val token: String,
     val betId: String,
+    val roundId: String? = null,
+    val tableId: String? = null,
     val txnType: Int = 0,
 )
 
@@ -126,105 +111,50 @@ class OperatorGatewayLogStream {
 class OperatorGatewayClient(
     private val webClientBuilder: WebClient.Builder,
     private val operatorGatewayLogStream: OperatorGatewayLogStream,
+    private val providerGameSdkClient: ProviderGameSdkClient,
     @Suppress("unused") private val rabbitTemplate: RabbitTemplate,
     appProperties: AppProperties,
 ) {
     private val log = LoggerFactory.getLogger(OperatorGatewayClient::class.java)
     private val operatorProperties = appProperties.operator
-    private val operatorBaseUrl = operatorProperties.baseUrl.trimEnd('/')
-    private val serviceBaseUrl = operatorBaseUrl.removeTrailingPathSegment("operator")
-    private val webClient = webClientBuilder
-        .baseUrl(operatorBaseUrl)
-        .build()
-    private val serviceWebClient = webClientBuilder
-        .baseUrl(serviceBaseUrl)
-        .build()
 
     init {
-        require(operatorProperties.baseUrl.isNotBlank()) { "app.operator.base-url must not be blank." }
         require(operatorProperties.gameId > 0) { "app.operator.game-id must be positive." }
     }
 
-    private fun resolveCreditUrl(): String {
-        val explicitUrl = operatorProperties.creditUrl.trim()
-        if (explicitUrl.isNotBlank()) {
-            return explicitUrl
-        }
-
-        val creditPath = operatorProperties.creditPath.trim()
-        if (creditPath.startsWith("http://") || creditPath.startsWith("https://")) {
-            return creditPath
-        }
-        if (creditPath.isNotBlank()) {
-            val normalizedPath = if (creditPath.startsWith("/")) creditPath else "/$creditPath"
-            return "$operatorBaseUrl$normalizedPath"
-        }
-
-        return ""
-    }
-
-    fun login(userId: String, password: String): Mono<OperatorLoginResult> {
-        val normalizedUserId = userId.trim()
-        if (normalizedUserId.isBlank()) {
-            return Mono.error(DomainException(HttpStatus.BAD_REQUEST, "Operator user id is required."))
-        }
-        if (password.isBlank()) {
-            return Mono.error(DomainException(HttpStatus.BAD_REQUEST, "Operator password is required."))
-        }
-
-        return webClient.post()
-            .uri(operatorProperties.loginPath)
-            .contentType(MediaType.APPLICATION_JSON)
-            .header("token", "")
-            .bodyValue(OperatorLoginPayload(userId = normalizedUserId, password = password))
-            .retrieve()
-            .bodyToMono(JsonNode::class.java)
-            .map { body ->
-                if (!body.path("status").asBoolean(false)) {
-                    throw DomainException(HttpStatus.BAD_GATEWAY, body.path("msg").asText("Operator login failed."))
-                }
-
-                val token = body.path("token").asText("").trim()
-                if (token.isBlank()) {
-                    throw DomainException(HttpStatus.BAD_GATEWAY, "Operator login response did not include a token.")
-                }
-
-                OperatorLoginResult(token = token)
-            }
-            .onErrorMap(WebClientResponseException::class.java, ::toGatewayError)
-    }
-
-    fun fetchUserDetail(token: String): Mono<OperatorUserDetail> {
-        val normalizedToken = token.trim()
-        if (normalizedToken.isBlank()) {
-            return Mono.error(DomainException(HttpStatus.UNAUTHORIZED, "Operator token is required."))
-        }
-
-        return webClientFor(operatorProperties.userDetailPath).get()
-            .uri(operatorProperties.userDetailPath.withoutDuplicateOperatorPrefix())
-            .header("token", normalizedToken)
-            .accept(MediaType.APPLICATION_JSON)
-            .retrieve()
-            .bodyToMono(JsonNode::class.java)
-            .map(::parseUserDetail)
-            .onErrorMap(WebClientResponseException::class.java, ::toGatewayError)
-    }
-
     fun debit(request: OperatorDebitRequest): Mono<String> {
-        val amountText = request.amount.toGuideAmountString()
-        val gameIdText = request.gameId.toString()
+        val debitAmount = request.amount
+            .setScale(0, RoundingMode.HALF_UP)
+            .longValueExact()
+
+        if (providerGameSdkClient.hasWalletAccess()) {
+            return debitViaProviderSdk(request, debitAmount)
+        }
+
+        val debitUrl = operatorProperties.debitUrl.trim()
+        if (debitUrl.isBlank()) {
+            return Mono.error(
+                DomainException(
+                    HttpStatus.SERVICE_UNAVAILABLE,
+                    "Wallet debit is not configured. Set GAME_SERVER_API_KEY or APP_WALLET_DEBIT_URL.",
+                ),
+            )
+        }
+
+        val gameName = operatorProperties.creditGameName.trim().ifBlank { "Ludo" }
+
         operatorGatewayLogStream.publish(
             OperatorGatewayLogEvent(
                 id = "operator_debit:${request.txnId}",
                 eventType = "operator_debit_api_called",
-                action = "Operator debit API called",
+                action = "Wallet debit API called",
                 gameUserId = request.gameUserId,
                 userId = request.userId,
                 operatorId = request.operatorId,
                 txnId = request.txnId,
                 amount = request.amount,
                 description = request.description,
-                target = operatorProperties.balancePath,
+                target = debitUrl,
                 createdAt = Instant.now(),
                 ip = request.ip,
                 gameId = request.gameId,
@@ -232,33 +162,28 @@ class OperatorGatewayClient(
             ),
         )
         log.info(
-            "Operator debit api called gameUserId={} userId={} operatorId={} txnId={} betId={} amount={} txnType={} gameId={} path={}",
+            "Wallet debit api called gameUserId={} userId={} operatorId={} txnId={} betId={} amount={} gameName={} url={}",
             request.gameUserId,
             request.userId,
             request.operatorId,
             request.txnId,
             request.betId,
-            amountText,
-            request.txnType,
-            gameIdText,
-            operatorProperties.balancePath,
+            debitAmount,
+            gameName,
+            debitUrl,
         )
 
-        // Body fields match the operator integration guide (section 5).
-        return webClient.post()
-            .uri(operatorProperties.balancePath)
-            .header("token", request.token)
+        return webClientBuilder.build()
+            .post()
+            .uri(debitUrl)
+            .header("Authorization", "Bearer ${request.token}")
             .contentType(MediaType.APPLICATION_JSON)
             .bodyValue(
                 mapOf(
-                    "txn_id" to request.txnId,
-                    "txn_type" to request.txnType,
-                    "amount" to amountText,
-                    "user_id" to request.userId,
-                    "game_id" to gameIdText,
-                    "bet_id" to request.betId,
+                    "userId" to request.userId,
+                    "gameName" to gameName,
+                    "amount" to debitAmount,
                     "description" to request.description,
-                    "ip" to request.ip,
                 ),
             )
             .retrieve()
@@ -266,47 +191,51 @@ class OperatorGatewayClient(
             .timeout(Duration.ofSeconds(5))
             .doOnError { error ->
                 log.error(
-                    "Operator debit api failed gameUserId={} userId={} operatorId={} txnId={} betId={} amount={} txnType={} gameId={} description={} reason={}",
+                    "Wallet debit api failed gameUserId={} userId={} operatorId={} txnId={} betId={} amount={} gameName={} url={} reason={}",
                     request.gameUserId,
                     request.userId,
                     request.operatorId,
                     request.txnId,
                     request.betId,
-                    amountText,
-                    request.txnType,
-                    gameIdText,
-                    request.description,
+                    debitAmount,
+                    gameName,
+                    debitUrl,
                     error.message ?: error.javaClass.simpleName,
                     error,
                 )
             }
             .map { body ->
-                if (!body.path("status").asBoolean(false)) {
-                    throw DomainException(HttpStatus.BAD_GATEWAY, body.path("msg").asText("Operator debit failed."))
+                if (body.has("status") && body.path("status").isBoolean && !body.path("status").asBoolean()) {
+                    throw DomainException(HttpStatus.BAD_GATEWAY, body.path("msg").asText("Wallet debit failed."))
+                }
+                if (body.has("success") && body.path("success").isBoolean && !body.path("success").asBoolean()) {
+                    throw DomainException(
+                        HttpStatus.BAD_GATEWAY,
+                        body.path("message").asText("Wallet debit failed."),
+                    )
                 }
                 log.info(
-                    "Operator debit api accepted gameUserId={} userId={} operatorId={} txnId={} betId={} amount={} description={} msg={}",
+                    "Wallet debit api accepted gameUserId={} userId={} operatorId={} txnId={} betId={} amount={} description={}",
                     request.gameUserId,
                     request.userId,
                     request.operatorId,
                     request.txnId,
                     request.betId,
-                    amountText,
+                    debitAmount,
                     request.description,
-                    body.path("msg").asText(""),
                 )
                 operatorGatewayLogStream.publish(
                     OperatorGatewayLogEvent(
                         id = "operator_debit_accepted:${request.txnId}",
                         eventType = "operator_debit_api_accepted",
-                        action = "Operator debit API accepted",
+                        action = "Wallet debit API accepted",
                         gameUserId = request.gameUserId,
                         userId = request.userId,
                         operatorId = request.operatorId,
                         txnId = request.txnId,
                         amount = request.amount,
                         description = request.description,
-                        target = operatorProperties.balancePath,
+                        target = debitUrl,
                         createdAt = Instant.now(),
                         ip = request.ip,
                         gameId = request.gameId,
@@ -319,9 +248,13 @@ class OperatorGatewayClient(
     }
 
     fun enqueueCredit(message: OperatorCreditQueueMessage): Mono<Void> {
+        if (providerGameSdkClient.hasWalletAccess()) {
+            return creditViaProviderSdk(message)
+        }
+
         if (message.txn_ref_id.startsWith("roomfee:")) {
             log.warn(
-                "Blocked operator credit for legacy/unconfirmed debit reference userId={} txnId={} txnRefId={} amount={}",
+                "Blocked wallet credit for legacy/unconfirmed debit reference userId={} txnId={} txnRefId={} amount={}",
                 message.user_id,
                 message.txn_id,
                 message.txn_ref_id,
@@ -331,7 +264,7 @@ class OperatorGatewayClient(
                 OperatorGatewayLogEvent(
                     id = "operator_credit_blocked:${message.txn_id}",
                     eventType = "operator_credit_blocked_legacy_debit_ref",
-                    action = "Operator credit blocked for legacy debit reference",
+                    action = "Wallet credit blocked for legacy debit reference",
                     gameUserId = message.user_id,
                     userId = message.user_id,
                     operatorId = message.operatorId,
@@ -351,7 +284,7 @@ class OperatorGatewayClient(
         val creditUrl = resolveCreditUrl()
         if (creditUrl.isBlank()) {
             log.error(
-                "Operator wallet credit skipped: APP_OPERATOR_CREDIT_URL (or APP_OPERATOR_CREDIT_PATH) is not configured userId={} txnId={} amount={}",
+                "Wallet credit skipped: APP_WALLET_CREDIT_URL (or APP_OPERATOR_CREDIT_URL) is not configured userId={} txnId={} amount={}",
                 message.user_id,
                 message.txn_id,
                 message.amount,
@@ -359,7 +292,7 @@ class OperatorGatewayClient(
             return Mono.error(
                 DomainException(
                     HttpStatus.SERVICE_UNAVAILABLE,
-                    "Operator credit URL is not configured. Set APP_OPERATOR_CREDIT_URL.",
+                    "Wallet credit URL is not configured. Set APP_WALLET_CREDIT_URL.",
                 ),
             )
         }
@@ -378,7 +311,7 @@ class OperatorGatewayClient(
             OperatorGatewayLogEvent(
                 id = "operator_credit:${message.txn_id}",
                 eventType = "operator_credit_api_called",
-                action = "Operator wallet credit API called",
+                action = "Wallet credit API called",
                 gameUserId = message.user_id,
                 userId = message.user_id,
                 operatorId = message.operatorId,
@@ -394,7 +327,7 @@ class OperatorGatewayClient(
             ),
         )
         log.info(
-            "Operator wallet credit api called userId={} operatorId={} txnId={} amount={} gameName={} url={}",
+            "Wallet credit api called userId={} operatorId={} txnId={} amount={} gameName={} url={}",
             message.user_id,
             message.operatorId,
             message.txn_id,
@@ -421,7 +354,7 @@ class OperatorGatewayClient(
             .timeout(Duration.ofSeconds(5))
             .doOnError { error ->
                 log.error(
-                    "Operator wallet credit api failed userId={} operatorId={} txnId={} amount={} gameName={} url={} reason={}",
+                    "Wallet credit api failed userId={} operatorId={} txnId={} amount={} gameName={} url={} reason={}",
                     message.user_id,
                     message.operatorId,
                     message.txn_id,
@@ -434,22 +367,27 @@ class OperatorGatewayClient(
             }
             .map { body ->
                 if (body.has("status") && body.path("status").isBoolean && !body.path("status").asBoolean()) {
-                    throw DomainException(HttpStatus.BAD_GATEWAY, body.path("msg").asText("Operator credit failed."))
+                    throw DomainException(HttpStatus.BAD_GATEWAY, body.path("msg").asText("Wallet credit failed."))
+                }
+                if (body.has("success") && body.path("success").isBoolean && !body.path("success").asBoolean()) {
+                    throw DomainException(
+                        HttpStatus.BAD_GATEWAY,
+                        body.path("message").asText("Wallet credit failed."),
+                    )
                 }
                 log.info(
-                    "Operator wallet credit api accepted userId={} operatorId={} txnId={} amount={} gameName={} msg={}",
+                    "Wallet credit api accepted userId={} operatorId={} txnId={} amount={} gameName={}",
                     message.user_id,
                     message.operatorId,
                     message.txn_id,
                     creditAmount,
                     gameName,
-                    body.path("msg").asText(""),
                 )
                 operatorGatewayLogStream.publish(
                     OperatorGatewayLogEvent(
                         id = "operator_credit_accepted:${message.txn_id}",
                         eventType = "operator_credit_api_accepted",
-                        action = "Operator wallet credit API accepted",
+                        action = "Wallet credit API accepted",
                         gameUserId = message.user_id,
                         userId = message.user_id,
                         operatorId = message.operatorId,
@@ -483,7 +421,7 @@ class OperatorGatewayClient(
             OperatorGatewayLogEvent(
                 id = "operator_debit_reused:$txnId",
                 eventType = "operator_debit_reused_existing_reservation",
-                action = "Existing operator debit reservation reused",
+                action = "Existing wallet debit reservation reused",
                 gameUserId = gameUserId,
                 userId = operatorUserId,
                 operatorId = operatorId,
@@ -500,91 +438,131 @@ class OperatorGatewayClient(
 
     fun gameId(): Int = operatorProperties.gameId
 
-    private fun webClientFor(path: String): WebClient =
-        if (path.trimStart().let { it.startsWith("/service/") || it.startsWith("/operator/service/") }) {
-            serviceWebClient
-        } else {
-            webClient
-        }
-
-    private fun String.withoutDuplicateOperatorPrefix(): String =
-        if (trimStart().startsWith("/operator/service/")) removePrefix("/operator") else this
-
-    private fun String.removeTrailingPathSegment(segment: String): String {
-        val uri = UriComponentsBuilder.fromUriString(this).build()
-        val path = uri.path.orEmpty().trimEnd('/')
-        if (!path.endsWith("/$segment")) {
-            return this
-        }
-
-        val rootPath = path.removeSuffix("/$segment").ifBlank { null }
-        val builder = UriComponentsBuilder.newInstance()
-            .scheme(uri.scheme)
-            .host(uri.host)
-
-        if (uri.port >= 0) {
-            builder.port(uri.port)
-        }
-        if (rootPath != null) {
-            builder.path(rootPath)
-        }
-
-        return builder.build()
-            .toUriString()
-            .trimEnd('/')
-    }
-
-    private fun parseUserDetail(body: JsonNode): OperatorUserDetail {
-        // Guide: success is a payload with a `user` object; status is optional.
-        // Reject when status is explicitly false, or when no user object / user_id is present.
-        if (body.has("status") && body.path("status").isBoolean && !body.path("status").asBoolean()) {
-            throw DomainException(HttpStatus.BAD_GATEWAY, body.path("msg").asText("Operator user detail failed."))
-        }
-
-        val data = body.path("user")
-            .takeUnless { it.isMissingNode || it.isNull }
-            ?: body.path("data").takeUnless { it.isMissingNode || it.isNull }
-            ?: throw DomainException(HttpStatus.BAD_GATEWAY, "Operator user detail response did not include user.")
-
-        val userId = firstText(data, "user_id", "userId", "id")
-        val displayName = firstText(data, "username", "display_name", "displayName", "name").ifBlank { userId }
-        val currency = firstText(data, "currency").ifBlank { "INR" }
-        val operatorId = firstText(data, "operator_id", "operatorId")
-        val balance = firstDecimal(data, "balance", "available_balance", "availableBalance")
-
-        if (userId.isBlank()) {
-            throw DomainException(HttpStatus.BAD_GATEWAY, "Operator user detail response did not include user_id.")
-        }
-        if (operatorId.isBlank()) {
-            throw DomainException(HttpStatus.BAD_GATEWAY, "Operator user detail response did not include operator_id.")
-        }
-
-        return OperatorUserDetail(
-            userId = userId,
-            displayName = displayName,
-            balance = balance,
-            currency = currency,
-            operatorId = operatorId,
+    private fun debitViaProviderSdk(request: OperatorDebitRequest, debitAmount: Long): Mono<String> {
+        val target = "provider-sdk:/adapters/${request.operatorId}/debit"
+        operatorGatewayLogStream.publish(
+            OperatorGatewayLogEvent(
+                id = "operator_debit:${request.txnId}",
+                eventType = "operator_debit_api_called",
+                action = "Provider SDK debit called",
+                gameUserId = request.gameUserId,
+                userId = request.userId,
+                operatorId = request.operatorId,
+                txnId = request.txnId,
+                amount = request.amount,
+                description = request.description,
+                target = target,
+                createdAt = Instant.now(),
+                ip = request.ip,
+                gameId = request.gameId,
+                txnType = request.txnType,
+            ),
         )
+
+        return providerGameSdkClient.debit(
+            operatorId = request.operatorId,
+            sessionToken = request.token,
+            amount = debitAmount,
+            transactionId = request.txnId,
+            roundId = request.roundId ?: request.txnId,
+            tableId = request.tableId,
+        )
+            .map {
+                operatorGatewayLogStream.publish(
+                    OperatorGatewayLogEvent(
+                        id = "operator_debit_accepted:${request.txnId}",
+                        eventType = "operator_debit_api_accepted",
+                        action = "Provider SDK debit accepted",
+                        gameUserId = request.gameUserId,
+                        userId = request.userId,
+                        operatorId = request.operatorId,
+                        txnId = request.txnId,
+                        amount = request.amount,
+                        description = request.description,
+                        target = target,
+                        createdAt = Instant.now(),
+                        ip = request.ip,
+                        gameId = request.gameId,
+                        txnType = request.txnType,
+                    ),
+                )
+                request.txnId
+            }
     }
 
-    private fun firstText(node: JsonNode, vararg names: String): String {
-        return names.firstNotNullOfOrNull { name ->
-            node.path(name).takeIf { !it.isMissingNode && !it.isNull }?.asText()?.trim()
-        }.orEmpty()
+    private fun creditViaProviderSdk(message: OperatorCreditQueueMessage): Mono<Void> {
+        if (message.txn_ref_id.startsWith("roomfee:")) {
+            log.warn(
+                "Blocked provider SDK credit for legacy debit reference userId={} txnId={} txnRefId={}",
+                message.user_id,
+                message.txn_id,
+                message.txn_ref_id,
+            )
+            return Mono.empty()
+        }
+
+        val amountDecimal = message.amount.toBigDecimalOrNull() ?: BigDecimal.ZERO
+        val creditAmount = amountDecimal
+            .setScale(0, RoundingMode.HALF_UP)
+            .longValueExact()
+        val target = "provider-sdk:/adapters/${message.operatorId}/credit"
+
+        operatorGatewayLogStream.publish(
+            OperatorGatewayLogEvent(
+                id = "operator_credit:${message.txn_id}",
+                eventType = "operator_credit_api_called",
+                action = "Provider SDK credit called",
+                gameUserId = message.user_id,
+                userId = message.user_id,
+                operatorId = message.operatorId,
+                txnId = message.txn_id,
+                txnRefId = message.txn_ref_id,
+                amount = amountDecimal,
+                description = message.description,
+                target = target,
+                createdAt = Instant.now(),
+                ip = message.ip,
+                gameId = message.game_id.toIntOrNull(),
+                txnType = message.txn_type,
+            ),
+        )
+
+        return providerGameSdkClient.credit(
+            operatorId = message.operatorId,
+            sessionToken = message.token,
+            amount = creditAmount,
+            transactionId = message.txn_id,
+            roundId = message.round_id,
+        )
+            .map {
+                operatorGatewayLogStream.publish(
+                    OperatorGatewayLogEvent(
+                        id = "operator_credit_accepted:${message.txn_id}",
+                        eventType = "operator_credit_api_accepted",
+                        action = "Provider SDK credit accepted",
+                        gameUserId = message.user_id,
+                        userId = message.user_id,
+                        operatorId = message.operatorId,
+                        txnId = message.txn_id,
+                        txnRefId = message.txn_ref_id,
+                        amount = amountDecimal,
+                        description = message.description,
+                        target = target,
+                        createdAt = Instant.now(),
+                        ip = message.ip,
+                        gameId = message.game_id.toIntOrNull(),
+                        txnType = message.txn_type,
+                    ),
+                )
+            }
+            .then()
     }
 
-    private fun firstDecimal(node: JsonNode, vararg names: String): BigDecimal {
-        val raw = firstText(node, *names)
-        return raw.toBigDecimalOrNull() ?: BigDecimal.ZERO
-    }
-
-    private fun BigDecimal.toGuideAmountString(): String =
-        setScale(2, RoundingMode.HALF_UP).toPlainString()
+    private fun resolveCreditUrl(): String = operatorProperties.creditUrl.trim()
 
     private fun toGatewayError(error: WebClientResponseException): DomainException {
         val message = error.responseBodyAsString.takeIf { it.isNotBlank() }
-            ?: "Operator gateway request failed with status ${error.statusCode.value()}."
+            ?: "Wallet gateway request failed with status ${error.statusCode.value()}."
         return DomainException(HttpStatus.BAD_GATEWAY, message)
     }
 }

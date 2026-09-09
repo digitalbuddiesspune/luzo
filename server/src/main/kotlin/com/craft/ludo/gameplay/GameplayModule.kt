@@ -15,7 +15,7 @@ import com.craft.ludo.gameplay.bot.rollUserDice
 import com.craft.ludo.gameplay.bot.stalkPlanFor
 import com.craft.ludo.gameplay.bot.upsertStalkPlan
 import com.craft.ludo.session.SessionLifecyclePublisher
-import com.craft.ludo.session.humanSessionTokens
+import com.craft.ludo.wallet.WalletReservation
 import com.craft.ludo.wallet.WalletService
 import com.fasterxml.jackson.annotation.JsonAlias
 import com.fasterxml.jackson.annotation.JsonProperty
@@ -134,6 +134,11 @@ data class RoomDocument(
     @Version
     val version: Long? = null,
 )
+
+fun humanSessionTokens(room: RoomDocument): List<String> =
+    room.seats
+        .filter { seat -> !seat.isBot && !seat.isAbandoned }
+        .mapNotNull { seat -> seat.sessionToken?.trim()?.takeIf { token -> token.isNotEmpty() } }
 
 data class MatchPlayerState(
     val userId: String,

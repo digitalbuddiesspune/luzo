@@ -53,9 +53,8 @@ app:
 
   session-service:
     enabled: ${APP_SESSION_SERVICE_ENABLED:false}
-    base-url: ${APP_SESSION_SERVICE_BASE_URL:https://api.dpbossking.com}
-    validate-path: ${APP_SESSION_SERVICE_VALIDATE_PATH:/api/v1/sessions/validate}
-    events-path: ${APP_SESSION_SERVICE_EVENTS_PATH:/api/v1/sessions/events}
+    api-base-url: ${APP_SESSION_SERVICE_API_BASE_URL:https://api.dpbossking.com/api/v1}
+    game-server-api-key: ${GAME_SERVER_API_KEY:}
     timeout-seconds: ${APP_SESSION_SERVICE_TIMEOUT_SECONDS:5}
 
   gameplay:
@@ -105,13 +104,11 @@ app:
     house-user-id: ${APP_WALLET_HOUSE_USER_ID:house}
 
   operator:
-    base-url: ${APP_OPERATOR_BASE_URL:https://sp.adminsportal.com}
-    login-path: ${APP_OPERATOR_LOGIN_PATH:/operator/user/login}
-    user-detail-path: ${APP_OPERATOR_USER_DETAIL_PATH:/service/user/detail}
-    balance-path: ${APP_OPERATOR_BALANCE_PATH:/service/operator/user/balance/v2}
-    credit-url: ${APP_OPERATOR_CREDIT_URL:}
-    credit-path: ${APP_OPERATOR_CREDIT_PATH:/api/wallet/credit/user}
-    credit-game-name: ${APP_OPERATOR_CREDIT_GAME_NAME:Ludo}
+    debit-url: ${APP_WALLET_DEBIT_URL:}
+    credit-url: ${APP_WALLET_CREDIT_URL:${APP_OPERATOR_CREDIT_URL:}}
+    credit-game-name: ${APP_WALLET_GAME_NAME:${APP_GAME_CODE:${APP_OPERATOR_GAME_ID:POTLUDO}}}
+    game-id: ${APP_GAME_ID:2}
+    game-code: ${APP_GAME_CODE:${APP_OPERATOR_GAME_ID:POTLUDO}}
     credit-exchange: ${APP_OPERATOR_CREDIT_EXCHANGE:/games/admin}
     credit-queue-name: ${APP_OPERATOR_CREDIT_QUEUE_NAME:games_cashout}
     credit-routing-key: ${APP_OPERATOR_CREDIT_ROUTING_KEY:games_cashout}
@@ -121,7 +118,6 @@ app:
     credit-dead-letter-routing-key: ${APP_OPERATOR_CREDIT_DLQ_ROUTING_KEY:games_cashout.dlq}
     credit-max-retries: ${APP_OPERATOR_CREDIT_MAX_RETRIES:5}
     credit-retry-delay-millis: ${APP_OPERATOR_CREDIT_RETRY_DELAY_MILLIS:5000}
-    game-id: ${APP_OPERATOR_GAME_ID:2}
 
   instance:
     id: ${APP_INSTANCE_ID:}
