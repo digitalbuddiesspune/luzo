@@ -53,7 +53,7 @@ app:
 
   session-service:
     enabled: ${APP_SESSION_SERVICE_ENABLED:false}
-    api-base-url: ${APP_SESSION_SERVICE_API_BASE_URL:https://api.dpbossking.com/api/v1}
+    api-base-url: ${PROVIDER_API_URL:${APP_SESSION_SERVICE_API_BASE_URL:https://api.dpbossking.com/api/v1}}
     game-server-api-key: ${GAME_SERVER_API_KEY:}
     timeout-seconds: ${APP_SESSION_SERVICE_TIMEOUT_SECONDS:5}
 

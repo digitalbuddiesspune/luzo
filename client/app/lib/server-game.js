@@ -1,11 +1,13 @@
-import { ProviderGameSDK } from "@gamotech/game-sdk";
+import { ProviderGameSDK } from "@gamotech/game-sdk-client";
 
 const API_BASE_URL =
   process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/$/, "") ??
   "http://127.0.0.1:8082";
 const PROVIDER_API_BASE_URL =
-  process.env.NEXT_PUBLIC_PROVIDER_API_BASE_URL?.replace(/\/$/, "") ??
-  "https://api.dpbossking.com/api/v1";
+  (
+    process.env.NEXT_PUBLIC_PROVIDER_API_URL ??
+    process.env.NEXT_PUBLIC_PROVIDER_API_BASE_URL
+  )?.replace(/\/$/, "") ?? "https://api.dpbossking.com/api/v1";
 const OPERATOR_PLATFORM_ENABLED = ["1", "true", "enabled", "yes"].includes(
   (process.env.NEXT_PUBLIC_OPERATOR_PLATFORM_ENABLED ?? "").toLowerCase(),
 );

@@ -20,9 +20,9 @@ data class SessionProperties(
 
 data class SessionServiceProperties(
     val enabled: Boolean = false,
-    /** Provider API base — matches @gamotech/game-sdk default. */
+    /** Provider API base — PROVIDER_API_URL / APP_SESSION_SERVICE_API_BASE_URL. */
     val apiBaseUrl: String = "https://api.dpbossking.com/api/v1",
-    /** Required for server-side wallet adapter calls (debit/credit/balance). */
+    /** Required for in.oreng:game-sdk wallet adapter calls (debit/credit/balance). */
     val gameServerApiKey: String = "",
     val timeoutSeconds: Long = 5,
 )

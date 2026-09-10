@@ -50,12 +50,13 @@ class WebConfig(
             allowedOriginPatterns,
         )
         log.info(
-            "Environment diagnostics: MONGODB_DATABASE={}, REDIS_HOST={}, REDIS_PORT={}, REDIS_SSL_ENABLED={}, APP_SESSION_SERVICE_ENABLED={}, APP_SESSION_SERVICE_API_BASE_URL={}, GAME_SERVER_API_KEY_present={}, APP_GAME_ID={}, MONGODB_URI_present={}, REDIS_PASSWORD_present={}, APP_REALTIME_WEB_RTC_TURN_CREDENTIAL_present={}",
+            "Environment diagnostics: MONGODB_DATABASE={}, REDIS_HOST={}, REDIS_PORT={}, REDIS_SSL_ENABLED={}, APP_SESSION_SERVICE_ENABLED={}, PROVIDER_API_URL={}, APP_SESSION_SERVICE_API_BASE_URL={}, GAME_SERVER_API_KEY_present={}, APP_GAME_ID={}, MONGODB_URI_present={}, REDIS_PASSWORD_present={}, APP_REALTIME_WEB_RTC_TURN_CREDENTIAL_present={}",
             System.getenv("MONGODB_DATABASE"),
             System.getenv("REDIS_HOST"),
             System.getenv("REDIS_PORT"),
             System.getenv("REDIS_SSL_ENABLED"),
             System.getenv("APP_SESSION_SERVICE_ENABLED"),
+            System.getenv("PROVIDER_API_URL"),
             System.getenv("APP_SESSION_SERVICE_API_BASE_URL"),
             System.getenv("GAME_SERVER_API_KEY").isNullOrBlank().not(),
             System.getenv("APP_GAME_ID"),
