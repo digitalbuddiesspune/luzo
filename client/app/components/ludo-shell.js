@@ -8020,6 +8020,10 @@ function OnlineBoardPageShell({ appState, configuredMaxPlayers }) {
       } catch (error) {
         if (!cancelled) {
           setIsOnlineBootstrapping(false);
+          if (error.message === OPERATOR_PLATFORM_ACCESS_MESSAGE) {
+            navigateToMenu(router);
+            return;
+          }
           setStatusMessage(
             error.message || "Unable to connect to the game server.",
           );

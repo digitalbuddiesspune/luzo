@@ -418,8 +418,7 @@ function readOperatorLaunchParams() {
   const params = new URLSearchParams(window.location.search);
   const sessionToken =
     params.get("sessionToken")?.trim() ||
-    params.get("session_token")?.trim() ||
-    params.get("id")?.trim();
+    params.get("session_token")?.trim();
   const rawGameId = params.get("game_id") ?? params.get("gameId");
   const gameId = Number(rawGameId ?? 2);
 
@@ -448,51 +447,83 @@ function normalizeSession(sessionResponse, extra = {}) {
   };
 }
 
-export async function ensureGuestSession(defaultDisplayName) {
-  const operatorLaunch = readOperatorLaunchParams();
-  if (OPERATOR_PLATFORM_ENABLED && !operatorLaunch) {
-    throw new Error(OPERATOR_PLATFORM_ACCESS_MESSAGE);
+async function attachProviderSdk(sessionToken) {
+  const providerSdk = new ProviderGameSDK({ apiBaseUrl: PROVIDER_API_BASE_URL });
+  await providerSdk.init(sessionToken);
+  providerSdk.attachUnloadHandler();
+  activeProviderSdk = providerSdk;
+  return providerSdk;
+}
+
+async function bootstrapOperatorSession(sessionToken, gameId) {
+  const providerSdk = await attachProviderSdk(sessionToken);
+
+  const operatorSession = await requestJson("/api/v1/identity/session/validate", {
+    method: "POST",
+    body: {
+      sessionToken,
+      gameId,
+    },
+  });
+
+  const normalizedSession = normalizeSession(operatorSession, {
+    operatorGameId: gameId,
+    operatorId: providerSdk.operatorId,
+    playerId: providerSdk.playerId,
+  });
+
+  storeSession(normalizedSession);
+  return normalizedSession;
+}
+
+async function refreshStoredSession(storedSession) {
+  const currentSession = await requestJson("/api/v1/identity/me", {
+    sessionToken: storedSession.sessionToken,
+  });
+
+  const refreshedSession = normalizeSession(currentSession, {
+    operatorGameId: storedSession.operatorGameId,
+    operatorId: storedSession.operatorId,
+    playerId: storedSession.playerId,
+  });
+
+  if (refreshedSession.isOperatorSession || storedSession.isOperatorSession) {
+    await attachProviderSdk(refreshedSession.sessionToken);
   }
 
+  storeSession(refreshedSession);
+  return refreshedSession;
+}
+
+export async function ensureGuestSession(defaultDisplayName) {
+  const operatorLaunch = OPERATOR_PLATFORM_ENABLED
+    ? readOperatorLaunchParams()
+    : null;
+
   if (operatorLaunch) {
-    const providerSdk = new ProviderGameSDK({ apiBaseUrl: PROVIDER_API_BASE_URL });
-    await providerSdk.init(operatorLaunch.sessionToken);
-    providerSdk.attachUnloadHandler();
-    activeProviderSdk = providerSdk;
-
-    const operatorSession = await requestJson("/api/v1/identity/session/validate", {
-      method: "POST",
-      body: {
-        sessionToken: operatorLaunch.sessionToken,
-        gameId: operatorLaunch.gameId,
-      },
-    });
-
-    const normalizedSession = normalizeSession(operatorSession, {
-      operatorGameId: operatorLaunch.gameId,
-      operatorId: providerSdk.operatorId,
-      playerId: providerSdk.playerId,
-    });
-
-    storeSession(normalizedSession);
-    return normalizedSession;
+    return bootstrapOperatorSession(
+      operatorLaunch.sessionToken,
+      operatorLaunch.gameId,
+    );
   }
 
   const storedSession = readStoredSession();
 
   if (storedSession?.sessionToken) {
     try {
-      const currentSession = await requestJson("/api/v1/identity/me", {
-        sessionToken: storedSession.sessionToken,
-      });
+      return await refreshStoredSession(storedSession);
+    } catch (error) {
+      if (OPERATOR_PLATFORM_ENABLED) {
+        throw new Error(
+          error.message ||
+            "Session has ended. Please re-launch from the operator.",
+        );
+      }
+    }
+  }
 
-      const refreshedSession = normalizeSession(currentSession, {
-        operatorGameId: storedSession.operatorGameId,
-      });
-
-      storeSession(refreshedSession);
-      return refreshedSession;
-    } catch {}
+  if (OPERATOR_PLATFORM_ENABLED) {
+    throw new Error(OPERATOR_PLATFORM_ACCESS_MESSAGE);
   }
 
   const createdSession = await requestJson("/api/v1/identity/guest", {

@@ -176,27 +176,8 @@ class IdentityService(
             return Mono.error(DomainException(HttpStatus.UNAUTHORIZED, "Missing session token."))
         }
 
-        if (externalSessionServiceEnabled) {
-            return sessionBindingService.validateAndBind(trimmedToken)
-                .map { validated ->
-                    GuestSessionDocument(
-                        userId = validated.userId,
-                        sessionToken = validated.sessionToken,
-                        displayName = validated.displayName,
-                        operatorToken = validated.sessionToken,
-                        operatorUserId = validated.operatorUserId ?: validated.userId,
-                        operatorId = validated.operatorId,
-                        operatorCurrency = validated.currency,
-                        operatorGameId = validated.gameId,
-                        createdAt = Instant.now(clock),
-                        updatedAt = Instant.now(clock),
-                        expiresAt = Instant.now(clock).plus(16, ChronoUnit.HOURS),
-                    )
-                }
-        }
-
+        // Local guest sessions live in Mongo even when the provider session service is enabled.
         return guestSessionRepository.findBySessionToken(trimmedToken)
-            .switchIfEmpty(Mono.error(DomainException(HttpStatus.UNAUTHORIZED, "Session not found.")))
             .flatMap { session ->
                 if (session.expiresAt.isAfter(Instant.now(clock))) {
                     Mono.just(session)
@@ -204,6 +185,32 @@ class IdentityService(
                     Mono.error(DomainException(HttpStatus.UNAUTHORIZED, "Session expired."))
                 }
             }
+            .switchIfEmpty(
+                Mono.defer {
+                    if (!externalSessionServiceEnabled) {
+                        return@defer Mono.error(
+                            DomainException(HttpStatus.UNAUTHORIZED, "Session not found."),
+                        )
+                    }
+
+                    sessionBindingService.validateAndBind(trimmedToken)
+                        .map { validated ->
+                            GuestSessionDocument(
+                                userId = validated.userId,
+                                sessionToken = validated.sessionToken,
+                                displayName = validated.displayName,
+                                operatorToken = validated.sessionToken,
+                                operatorUserId = validated.operatorUserId ?: validated.userId,
+                                operatorId = validated.operatorId,
+                                operatorCurrency = validated.currency,
+                                operatorGameId = validated.gameId,
+                                createdAt = Instant.now(clock),
+                                updatedAt = Instant.now(clock),
+                                expiresAt = Instant.now(clock).plus(16, ChronoUnit.HOURS),
+                            )
+                        }
+                },
+            )
     }
 
     private fun toResponse(session: GuestSessionDocument): GuestSessionResponse {
