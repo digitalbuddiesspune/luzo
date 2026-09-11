@@ -1297,7 +1297,10 @@ class MatchService(
         require(houseUserId.isNotBlank()) { "app.wallet.house-user-id must not be blank." }
     }
 
-    fun createStartedMatch(room: RoomDocument): Mono<MatchDocument> {
+    fun createStartedMatch(
+        room: RoomDocument,
+        assignedMatchId: String? = null,
+    ): Mono<MatchDocument> {
         require(room.seats.isNotEmpty()) { "Cannot start a match with no room seats." }
 
         // Concurrent start continuations: if another poller already activated the room, reuse it.
@@ -1309,7 +1312,7 @@ class MatchService(
         }
 
         val now = Instant.now(clock)
-        val matchId = newId("match")
+        val matchId = assignedMatchId?.trim()?.takeIf { it.isNotEmpty() } ?: newId("match")
         log.info(
             "Ludo match creation requested roomId={} roomCode={} mode={} matchId={} seats={} entryFee={} potAmount={}",
             room.id,

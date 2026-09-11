@@ -7,7 +7,9 @@ import com.craft.ludo.operator.OperatorCreditQueueMessage
 import com.craft.ludo.operator.OperatorDebitRequest
 import com.craft.ludo.operator.OperatorGatewayClient
 import com.craft.ludo.provider.ProviderGameSdkClient
+import com.craft.ludo.session.ExternalSessionBindingDocument
 import com.craft.ludo.session.SessionBindingService
+import com.craft.ludo.session.ValidatedSession
 import com.craft.ludo.shared.api.DomainException
 import com.craft.ludo.shared.config.AppProperties
 import com.craft.ludo.shared.support.newId
@@ -435,17 +437,20 @@ class WalletService(
         amount: Long,
         ipAddress: String?,
         startAttemptId: String? = null,
+        roundId: String? = null,
+        platformSessionToken: String? = null,
     ): Mono<WalletReservation> {
         require(amount > 0) { "Entry fee amount must be positive." }
 
         val transactionId = newId("roomfee")
         log.info(
-            "Ludo entry fee reservation requested userId={} roomId={} amount={} transactionId={} startAttemptId={}",
+            "Ludo entry fee reservation requested userId={} roomId={} amount={} transactionId={} startAttemptId={} roundId={}",
             userId,
             roomId,
             amount,
             transactionId,
             startAttemptId,
+            roundId ?: roomId,
         )
         return createEntryFeeReservation(
             userId = userId,
@@ -454,6 +459,8 @@ class WalletService(
             ipAddress = ipAddress,
             transactionId = transactionId,
             startAttemptId = startAttemptId,
+            roundId = roundId ?: roomId,
+            platformSessionToken = platformSessionToken,
         )
     }
 
@@ -464,6 +471,8 @@ class WalletService(
         ipAddress: String?,
         transactionId: String,
         startAttemptId: String? = null,
+        roundId: String = roomId,
+        platformSessionToken: String? = null,
     ): Mono<WalletReservation> {
         // Include startAttemptId so a failed start can retry without getting stuck on a stale idempotency key.
         val attemptKey = startAttemptId?.takeIf { it.isNotBlank() } ?: transactionId
@@ -472,16 +481,32 @@ class WalletService(
 
         return claimIdempotency(idempotencyScope, reservationKey)
             .then(
-                operatorSessionForUser(userId)
+                resolveOperatorSession(userId, platformSessionToken)
             .flatMap { operatorSession ->
+                val operatorUserId = operatorSession.operatorUserId?.trim()?.takeIf { it.isNotEmpty() }
+                    ?: operatorSession.userId.trim().takeIf { it.isNotEmpty() }
+                val operatorId = operatorSession.operatorId?.trim()?.takeIf { it.isNotEmpty() }
+                val operatorToken = operatorSession.operatorToken?.trim()?.takeIf { it.isNotEmpty() }
+                    ?: platformSessionToken?.trim()?.takeIf { it.isNotEmpty() }
+
+                if (operatorToken.isNullOrBlank() || operatorUserId.isNullOrBlank() || operatorId.isNullOrBlank()) {
+                    return@flatMap Mono.error(
+                        DomainException(
+                            HttpStatus.BAD_GATEWAY,
+                            "Operator wallet session is incomplete. Please re-launch from the operator.",
+                        ),
+                    )
+                }
+
                 val debitTransactionId = transactionId
                 val debitDescription = ludoDebitStatement(amount, debitTransactionId, roomId)
                 log.info(
-                    "Ludo operator entry fee debit requested userId={} operatorUserId={} operatorId={} roomId={} amount={} transactionId={} description={}",
+                    "Ludo operator entry fee debit requested userId={} operatorUserId={} operatorId={} roomId={} roundId={} amount={} transactionId={} description={}",
                     userId,
-                    operatorSession.operatorUserId,
-                    operatorSession.operatorId,
+                    operatorUserId,
+                    operatorId,
                     roomId,
+                    roundId,
                     amount,
                     debitTransactionId,
                     debitDescription,
@@ -494,11 +519,11 @@ class WalletService(
                         description = debitDescription,
                         ip = ipAddress ?: "0.0.0.0",
                         gameId = operatorSession.operatorGameId ?: operatorGatewayClient.gameId(),
-                        userId = operatorSession.operatorUserId!!,
-                        operatorId = operatorSession.operatorId!!,
-                        token = operatorSession.operatorToken!!,
-                        betId = "BT:$debitTransactionId:${operatorSession.operatorUserId}:${operatorSession.operatorId}",
-                        roundId = roomId,
+                        userId = operatorUserId,
+                        operatorId = operatorId,
+                        token = operatorToken,
+                        betId = "BT:$debitTransactionId:$operatorUserId:$operatorId",
+                        roundId = roundId,
                         tableId = roomId,
                     ),
                 )
@@ -536,9 +561,9 @@ class WalletService(
                                 amount = amount,
                                 externalDebitTransactionId = debitTransactionId,
                                 externalDebitConfirmed = true,
-                                operatorToken = operatorSession.operatorToken,
-                                operatorUserId = operatorSession.operatorUserId,
-                                operatorId = operatorSession.operatorId,
+                                operatorToken = operatorToken,
+                                operatorUserId = operatorUserId,
+                                operatorId = operatorId,
                                 ipAddress = ipAddress ?: "0.0.0.0",
                                 gameId = operatorSession.operatorGameId ?: operatorGatewayClient.gameId(),
                             ),
@@ -1063,24 +1088,62 @@ class WalletService(
             .switchIfEmpty(ensureGuestWalletBalance(userId))
     }
 
+    private fun resolveOperatorSession(
+        userId: String,
+        platformSessionToken: String?,
+    ): Mono<GuestSessionDocument> {
+        val normalizedToken = platformSessionToken?.trim()?.takeIf { it.isNotEmpty() }
+
+        if (sessionBindingService.isEnabled() && normalizedToken != null) {
+            return sessionBindingService.findBindingBySessionToken(normalizedToken)
+                .map(::guestSessionFromBinding)
+                .switchIfEmpty(
+                    sessionBindingService.validateAndBind(normalizedToken)
+                        .map(::guestSessionFromValidated),
+                )
+        }
+
+        return operatorSessionForUser(userId)
+    }
+
+    private fun guestSessionFromBinding(binding: ExternalSessionBindingDocument): GuestSessionDocument {
+        val now = Instant.now(clock)
+        return GuestSessionDocument(
+            userId = binding.userId,
+            sessionToken = binding.sessionToken,
+            displayName = binding.displayName,
+            operatorToken = binding.sessionToken,
+            operatorUserId = binding.operatorUserId ?: binding.userId,
+            operatorId = binding.operatorId,
+            operatorCurrency = null,
+            operatorGameId = binding.operatorGameId,
+            createdAt = now,
+            updatedAt = now,
+            expiresAt = now.plus(16, ChronoUnit.HOURS),
+        )
+    }
+
+    private fun guestSessionFromValidated(validated: ValidatedSession): GuestSessionDocument {
+        val now = Instant.now(clock)
+        return GuestSessionDocument(
+            userId = validated.userId,
+            sessionToken = validated.sessionToken,
+            displayName = validated.displayName,
+            operatorToken = validated.sessionToken,
+            operatorUserId = validated.operatorUserId ?: validated.userId,
+            operatorId = validated.operatorId,
+            operatorCurrency = validated.currency,
+            operatorGameId = validated.gameId,
+            createdAt = now,
+            updatedAt = now,
+            expiresAt = now.plus(16, ChronoUnit.HOURS),
+        )
+    }
+
     private fun operatorSessionForUser(userId: String): Mono<GuestSessionDocument> {
         if (sessionBindingService.isEnabled()) {
             return sessionBindingService.findBindingByUserId(userId)
-                .map { binding ->
-                    GuestSessionDocument(
-                        userId = binding.userId,
-                        sessionToken = binding.sessionToken,
-                        displayName = binding.displayName,
-                        operatorToken = binding.sessionToken,
-                        operatorUserId = binding.operatorUserId ?: binding.userId,
-                        operatorId = binding.operatorId,
-                        operatorCurrency = null,
-                        operatorGameId = binding.operatorGameId,
-                        createdAt = Instant.now(clock),
-                        updatedAt = Instant.now(clock),
-                        expiresAt = Instant.now(clock).plus(16, ChronoUnit.HOURS),
-                    )
-                }
+                .map(::guestSessionFromBinding)
         }
 
         return guestSessionRepository.findFirstByUserIdOrderByUpdatedAtDesc(userId)

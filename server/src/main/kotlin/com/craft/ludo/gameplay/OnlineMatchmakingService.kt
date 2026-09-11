@@ -1,6 +1,7 @@
 package com.craft.ludo.gameplay
 
 import com.craft.ludo.identity.SessionPrincipal
+import com.craft.ludo.session.SessionLifecyclePublisher
 import com.craft.ludo.shared.api.DomainException
 import com.craft.ludo.shared.config.AppProperties
 import com.craft.ludo.shared.support.newId
@@ -37,6 +38,7 @@ class OnlineMatchmakingService(
     private val matchRepository: MatchRepository,
     private val matchService: MatchService,
     private val walletService: WalletService,
+    private val sessionLifecyclePublisher: SessionLifecyclePublisher,
     private val instanceCoordinator: AppInstanceCoordinator,
     private val mongoTemplate: ReactiveMongoTemplate,
     private val clock: Clock,
@@ -461,13 +463,30 @@ class OnlineMatchmakingService(
             claimed.seats.count { it.isBot },
         )
 
+        val matchId = newId("match")
+        val sessionTokens = humanSessionTokens(claimed)
+
         // Soft re-check before debit so a player who emptied their wallet while waiting
         // is not charged mid-start and left stuck in STARTING.
-        return Flux.fromIterable(humans)
-            .concatMap { seat -> walletService.requireSufficientBalance(seat.userId, claimed.entryFee) }
-            .then(
-                reserveEntryFeesForSeats(humans, claimed.id, claimed.entryFee, claimed.startAttemptId),
-            )
+        return sessionLifecyclePublisher.publishMatchLifecycleBeforeStart(
+            matchId = matchId,
+            roomId = claimed.id,
+            roomCode = claimed.code,
+            entryFee = claimed.entryFee,
+            sessionTokens = sessionTokens,
+        ).then(
+            Flux.fromIterable(humans)
+                .concatMap { seat -> walletService.requireSufficientBalance(seat.userId, claimed.entryFee) }
+                .then(
+                    reserveEntryFeesForSeats(
+                        realSeats = humans,
+                        roomId = claimed.id,
+                        matchId = matchId,
+                        amount = claimed.entryFee,
+                        startAttemptId = claimed.startAttemptId,
+                    ),
+                ),
+        )
             .onErrorResume { error ->
                 logStartFailure(claimed, error)
                 rollbackStartingRoomToWaiting(claimed).then(Mono.error(error))
@@ -487,7 +506,7 @@ class OnlineMatchmakingService(
                         updatedAt = now,
                     ),
                 ).flatMap { roomWithFees ->
-                    matchService.createStartedMatch(roomWithFees)
+                    matchService.createStartedMatch(roomWithFees, matchId)
                         .then(roomRepository.findById(roomWithFees.id))
                         .onErrorResume { error ->
                             rollbackStartingRoomToWaiting(roomWithFees)
@@ -913,6 +932,7 @@ class OnlineMatchmakingService(
     private fun reserveEntryFeesForSeats(
         realSeats: List<RoomSeat>,
         roomId: String,
+        matchId: String,
         amount: Long,
         startAttemptId: String?,
     ): Mono<List<WalletReservation>> {
@@ -920,11 +940,13 @@ class OnlineMatchmakingService(
         return Flux.fromIterable(realSeats)
             .concatMap { seat ->
                 walletService.reserveEntryFee(
-                    seat.userId,
-                    roomId,
-                    amount,
-                    seat.ipAddress,
-                    startAttemptId,
+                    userId = seat.userId,
+                    roomId = roomId,
+                    amount = amount,
+                    ipAddress = seat.ipAddress,
+                    startAttemptId = startAttemptId,
+                    roundId = matchId,
+                    platformSessionToken = seat.sessionToken,
                 ).doOnNext { completed.add(it) }
             }
             .collectList()

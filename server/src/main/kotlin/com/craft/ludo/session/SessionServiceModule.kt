@@ -13,6 +13,8 @@ import java.time.Clock
 import java.time.Instant
 
 object SessionGameEvents {
+    const val TABLE_CREATED = "TABLE_CREATED"
+    const val ROUND_CREATED = "ROUND_CREATED"
     const val ROUND_STARTED = "ROUND_STARTED"
     const val ROUND_ENDED = "ROUND_ENDED"
     const val ROUND_CANCELLED = "ROUND_CANCELLED"
@@ -83,6 +85,55 @@ class SessionBindingService(
 class SessionLifecyclePublisher(
     private val providerGameSdkClient: ProviderGameSdkClient,
 ) {
+    /**
+     * Provider expects table + round to exist before wallet debit / round start.
+     * Best-effort per token; failures are logged but do not block match start.
+     */
+    fun publishMatchLifecycleBeforeStart(
+        matchId: String,
+        roomId: String,
+        roomCode: String,
+        entryFee: Long,
+        sessionTokens: List<String>,
+    ): Mono<Void> {
+        if (!providerGameSdkClient.isEnabled() || sessionTokens.isEmpty()) {
+            return Mono.empty()
+        }
+
+        val tablePayload = mapOf(
+            "roomId" to roomId,
+            "roomCode" to roomCode,
+        )
+        val roundPayload = mapOf(
+            "entryFee" to entryFee,
+            "roomId" to roomId,
+            "roomCode" to roomCode,
+        )
+
+        return Flux.fromIterable(sessionTokens.distinct())
+            .concatMap { token ->
+                providerGameSdkClient.publishEvent(
+                    sessionToken = token,
+                    event = SessionGameEvents.TABLE_CREATED,
+                    tableId = roomId,
+                    payload = tablePayload,
+                )
+            }
+            .then(
+                Flux.fromIterable(sessionTokens.distinct())
+                    .concatMap { token ->
+                        providerGameSdkClient.publishEvent(
+                            sessionToken = token,
+                            event = SessionGameEvents.ROUND_CREATED,
+                            roundId = matchId,
+                            tableId = roomId,
+                            payload = roundPayload,
+                        )
+                    }
+                    .then(),
+            )
+    }
+
     fun publishRoundStarted(
         matchId: String,
         entryFee: Long,

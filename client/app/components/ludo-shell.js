@@ -16,6 +16,7 @@ import { Dice3D } from "@/app/components/dice-3d";
 import {
   createPrivateRoom as createPrivateRoomRequest,
   ensureGuestSession,
+  getProviderSdk,
   fetchMatchSnapshot,
   fetchPrivateRoomState,
   fetchWalletOverview,
@@ -7730,6 +7731,7 @@ function OnlineBoardPageShell({ appState, configuredMaxPlayers }) {
   const settledMatchIdRef = useRef(null);
   const isLeavingOnlineRoomRef = useRef(false);
   const lobbyStartingSinceRef = useRef(null);
+  const providerTableCreatedForRoomRef = useRef(null);
   const hasActiveOnlineSession = Boolean(
     lobbyRoom || (match?.id && match.phase !== "finished"),
   );
@@ -7925,6 +7927,26 @@ function OnlineBoardPageShell({ appState, configuredMaxPlayers }) {
         setLobbyRoom(response.room);
         setMatch(null);
         setIsOnlineBootstrapping(false);
+
+        if (
+          isOperatorPlatformEnabled() &&
+          response.room?.id &&
+          providerTableCreatedForRoomRef.current !== response.room.id
+        ) {
+          const providerSdk = getProviderSdk();
+          if (providerSdk) {
+            providerTableCreatedForRoomRef.current = response.room.id;
+            providerSdk
+              .createTable({ tableId: response.room.id })
+              .catch((error) => {
+                console.warn("[Ludo online lobby] Provider createTable failed", {
+                  roomId: response.room.id,
+                  message: error?.message,
+                });
+                providerTableCreatedForRoomRef.current = null;
+              });
+          }
+        }
 
         if (isOnlineLobbyStarting(response.room)) {
           if (!lobbyStartingSinceRef.current) {
