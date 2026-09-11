@@ -194,7 +194,7 @@ class OnlineMatchmakingService(
                         )
                         .onErrorResume { error ->
                             logStartFailure(waitingRoom, error)
-                            respondWithCurrentLobby(principal, maxPlayers)
+                            respondWithCurrentLobby(principal, maxPlayers, error.message)
                         }
                 } else {
                     Mono.just(JoinOnlineMatchResponse(room = waitingRoom.toSummary()))
@@ -212,9 +212,15 @@ class OnlineMatchmakingService(
     private fun respondWithCurrentLobby(
         principal: SessionPrincipal,
         maxPlayers: Int,
+        startFailureMessage: String? = null,
     ): Mono<JoinOnlineMatchResponse> {
         return findExistingPublicRoomForUser(principal.id)
-            .map { current -> JoinOnlineMatchResponse(room = current.toSummary()) }
+            .map { current ->
+                JoinOnlineMatchResponse(
+                    room = current.toSummary(),
+                    startFailureMessage = startFailureMessage,
+                )
+            }
             .switchIfEmpty(createWaitingRoom(principal, maxPlayers, startImmediately = false))
     }
 

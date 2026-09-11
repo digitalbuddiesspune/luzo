@@ -7928,19 +7928,21 @@ function OnlineBoardPageShell({ appState, configuredMaxPlayers }) {
         setMatch(null);
         setIsOnlineBootstrapping(false);
 
+        const lobbyRoomId = response.room?.roomId ?? response.room?.id;
+
         if (
           isOperatorPlatformEnabled() &&
-          response.room?.id &&
-          providerTableCreatedForRoomRef.current !== response.room.id
+          lobbyRoomId &&
+          providerTableCreatedForRoomRef.current !== lobbyRoomId
         ) {
           const providerSdk = getProviderSdk();
           if (providerSdk) {
-            providerTableCreatedForRoomRef.current = response.room.id;
+            providerTableCreatedForRoomRef.current = lobbyRoomId;
             providerSdk
-              .createTable({ tableId: response.room.id })
+              .createTable({ tableId: lobbyRoomId })
               .catch((error) => {
                 console.warn("[Ludo online lobby] Provider createTable failed", {
-                  roomId: response.room.id,
+                  roomId: lobbyRoomId,
                   message: error?.message,
                 });
                 providerTableCreatedForRoomRef.current = null;
@@ -7948,7 +7950,13 @@ function OnlineBoardPageShell({ appState, configuredMaxPlayers }) {
           }
         }
 
-        if (isOnlineLobbyStarting(response.room)) {
+        if (response.startFailureMessage) {
+          console.error("[Ludo online lobby] Match start failed", {
+            roomId: lobbyRoomId,
+            message: response.startFailureMessage,
+          });
+          setStatusMessage(response.startFailureMessage);
+        } else if (isOnlineLobbyStarting(response.room)) {
           if (!lobbyStartingSinceRef.current) {
             lobbyStartingSinceRef.current = Date.now();
           }
@@ -7957,7 +7965,7 @@ function OnlineBoardPageShell({ appState, configuredMaxPlayers }) {
             // Do not leave/recreate rooms here — that caused a lobby room-code loop.
             // Keep polling the same seat and let the server hung-start recovery finish.
             console.warn("[Ludo online lobby] Starting state still pending; keeping seat", {
-              roomId: response.room?.id,
+              roomId: lobbyRoomId,
               roomCode: response.room?.roomCode,
               stuckForMs,
             });

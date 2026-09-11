@@ -1092,18 +1092,40 @@ class WalletService(
         userId: String,
         platformSessionToken: String?,
     ): Mono<GuestSessionDocument> {
-        val normalizedToken = platformSessionToken?.trim()?.takeIf { it.isNotEmpty() }
-
-        if (sessionBindingService.isEnabled() && normalizedToken != null) {
-            return sessionBindingService.findBindingBySessionToken(normalizedToken)
-                .map(::guestSessionFromBinding)
-                .switchIfEmpty(
-                    sessionBindingService.validateAndBind(normalizedToken)
-                        .map(::guestSessionFromValidated),
-                )
+        if (!sessionBindingService.isEnabled()) {
+            return operatorSessionForUser(userId)
         }
 
-        return operatorSessionForUser(userId)
+        val normalizedToken = platformSessionToken?.trim()?.takeIf { it.isNotEmpty() }
+        val byToken = if (normalizedToken != null) {
+            sessionBindingService.findBindingBySessionToken(normalizedToken)
+        } else {
+            Mono.empty()
+        }
+
+        // Only use persisted operator bindings here. Guest/local tokens must not be sent to
+        // provider validate during wallet debit — that fails and rolls the lobby back to WAITING.
+        return byToken
+            .flatMap(::operatorBindingToSession)
+            .switchIfEmpty(
+                sessionBindingService.findBindingByUserId(userId)
+                    .flatMap(::operatorBindingToSession),
+            )
+    }
+
+    private fun operatorBindingToSession(
+        binding: ExternalSessionBindingDocument,
+    ): Mono<GuestSessionDocument> {
+        if (binding.operatorId.isNullOrBlank()) {
+            log.warn(
+                "Skipping operator wallet binding without operatorId userId={} sessionToken={}",
+                binding.userId,
+                binding.sessionToken.take(4) + "...",
+            )
+            return Mono.empty()
+        }
+
+        return Mono.just(guestSessionFromBinding(binding))
     }
 
     private fun guestSessionFromBinding(binding: ExternalSessionBindingDocument): GuestSessionDocument {

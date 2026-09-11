@@ -271,6 +271,8 @@ data class JoinOnlineMatchResponse(
     val room: RoomSummaryResponse,
     val match: MatchSnapshotResponse? = null,
     val websocketPath: String? = null,
+    /** Set when a due lobby tried to start but entry-fee debit / match creation failed. */
+    val startFailureMessage: String? = null,
 )
 
 data class PrivateRoomMemberResponse(
