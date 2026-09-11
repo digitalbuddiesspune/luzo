@@ -1,6 +1,9 @@
 package com.craft.ludo.session
 
 import com.craft.ludo.provider.ProviderGameSdkClient
+import com.craft.ludo.wallet.IdempotencyKeyDocument
+import com.craft.ludo.wallet.IdempotencyKeyRepository
+import org.springframework.dao.DuplicateKeyException
 import org.springframework.data.annotation.Id
 import org.springframework.data.mongodb.core.mapping.Document
 import org.springframework.data.mongodb.repository.ReactiveMongoRepository
@@ -84,6 +87,8 @@ class SessionBindingService(
 @Service
 class SessionLifecyclePublisher(
     private val providerGameSdkClient: ProviderGameSdkClient,
+    private val idempotencyKeyRepository: IdempotencyKeyRepository,
+    private val clock: Clock,
 ) {
     /**
      * Provider expects table + round to exist before wallet debit / round start.
@@ -112,7 +117,7 @@ class SessionLifecyclePublisher(
 
         return Flux.fromIterable(sessionTokens.distinct())
             .concatMap { token ->
-                providerGameSdkClient.publishEvent(
+                publishOnce(
                     sessionToken = token,
                     event = SessionGameEvents.TABLE_CREATED,
                     tableId = roomId,
@@ -122,7 +127,7 @@ class SessionLifecyclePublisher(
             .then(
                 Flux.fromIterable(sessionTokens.distinct())
                     .concatMap { token ->
-                        providerGameSdkClient.publishEvent(
+                        publishOnce(
                             sessionToken = token,
                             event = SessionGameEvents.ROUND_CREATED,
                             roundId = matchId,
@@ -153,7 +158,7 @@ class SessionLifecyclePublisher(
 
         return Flux.fromIterable(sessionTokens.distinct())
             .flatMap { token ->
-                providerGameSdkClient.publishEvent(
+                publishOnce(
                     sessionToken = token,
                     event = SessionGameEvents.ROUND_STARTED,
                     roundId = matchId,
@@ -189,7 +194,7 @@ class SessionLifecyclePublisher(
 
         return Flux.fromIterable(sessionTokens.distinct())
             .flatMap { token ->
-                providerGameSdkClient.publishEvent(
+                publishOnce(
                     sessionToken = token,
                     event = SessionGameEvents.ROUND_ENDED,
                     roundId = matchId,
@@ -215,7 +220,7 @@ class SessionLifecyclePublisher(
 
         return Flux.fromIterable(sessionTokens.distinct())
             .flatMap { token ->
-                providerGameSdkClient.publishEvent(
+                publishOnce(
                     sessionToken = token,
                     event = SessionGameEvents.ROUND_CANCELLED,
                     roundId = roundId,
@@ -223,5 +228,53 @@ class SessionLifecyclePublisher(
                 )
             }
             .then()
+    }
+
+    private fun publishOnce(
+        sessionToken: String,
+        event: String,
+        roundId: String? = null,
+        tableId: String? = null,
+        payload: Map<String, Any?> = emptyMap(),
+    ): Mono<Void> {
+        val normalizedToken = sessionToken.trim()
+        if (normalizedToken.isBlank()) {
+            return Mono.empty()
+        }
+
+        val dedupeKey = listOf(
+            event,
+            tableId.orEmpty(),
+            roundId.orEmpty(),
+        ).joinToString(":")
+        val scope = "session-event:$normalizedToken"
+
+        return claimSessionEvent(scope, dedupeKey)
+            .flatMap { claimed ->
+                if (!claimed) {
+                    return@flatMap Mono.empty()
+                }
+                providerGameSdkClient.publishEvent(
+                    sessionToken = normalizedToken,
+                    event = event,
+                    roundId = roundId,
+                    tableId = tableId,
+                    payload = payload,
+                )
+            }
+    }
+
+    /** @return true when this process should publish; false when another attempt already did. */
+    private fun claimSessionEvent(scope: String, dedupeKey: String): Mono<Boolean> {
+        return idempotencyKeyRepository.save(
+            IdempotencyKeyDocument(
+                id = "$scope:$dedupeKey",
+                scope = scope,
+                key = dedupeKey,
+                createdAt = Instant.now(clock),
+            ),
+        )
+            .thenReturn(true)
+            .onErrorReturn(DuplicateKeyException::class.java, false)
     }
 }

@@ -401,10 +401,12 @@ class OnlineMatchmakingService(
 
         val seatsToStart = padWithBots(humans, room.maxPlayers, now)
         val startAttemptId = newId("roomstart")
+        val providerRoundId = room.providerRoundId ?: newId("match")
         val prepared = room.copy(
             seats = seatsToStart,
             status = RoomStatus.STARTING,
             startAttemptId = startAttemptId,
+            providerRoundId = providerRoundId,
             ownerInstanceId = instanceCoordinator.instanceId,
             updatedAt = now,
             waitingDeadlineAt = null,
@@ -469,7 +471,7 @@ class OnlineMatchmakingService(
             claimed.seats.count { it.isBot },
         )
 
-        val matchId = newId("match")
+        val matchId = claimed.providerRoundId ?: newId("match")
         val sessionTokens = humanSessionTokens(claimed)
 
         // Soft re-check before debit so a player who emptied their wallet while waiting
@@ -573,6 +575,7 @@ class OnlineMatchmakingService(
         val update = Update()
             .set("status", RoomStatus.STARTING)
             .set("startAttemptId", prepared.startAttemptId)
+            .set("providerRoundId", prepared.providerRoundId)
             .set("ownerInstanceId", prepared.ownerInstanceId)
             .set("seats", prepared.seats)
             .set("walletReservations", emptyList<WalletReservation>())

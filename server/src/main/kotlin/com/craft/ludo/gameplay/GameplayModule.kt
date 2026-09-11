@@ -131,6 +131,8 @@ data class RoomDocument(
     val seats: List<RoomSeat>,
     val walletReservations: List<WalletReservation> = emptyList(),
     val matchId: String? = null,
+    /** Stable provider round id for this lobby room; reused across failed start retries. */
+    val providerRoundId: String? = null,
     @Version
     val version: Long? = null,
 )
