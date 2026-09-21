@@ -7639,21 +7639,15 @@ function PrivateRoomPageShell({ appState }) {
     navigateToMode(router, modeKey, () => setIsUtilityOpen(false));
   }
 
-  if (isSessionBootstrapping) {
-    return (
-      <ProviderOpeningScreen
-        message={
-          isOperatorPlatformEnabled()
-            ? "Connecting to game..."
-            : "Loading game..."
-        }
-      />
-    );
-  }
-
   return (
     <>
-      {isLeavingRoom ? (
+      {isSessionBootstrapping ? (
+        <OnlineLoadingScreen
+          appState={composedAppState}
+          title="Loading Room"
+          statusMessage={statusMessage || "Connecting to private table..."}
+        />
+      ) : isLeavingRoom ? (
         <BoardTransitionScreen
           appState={composedAppState}
           title="Leaving Room"
@@ -8466,18 +8460,6 @@ function OnlineBoardPageShell({ appState, configuredMaxPlayers }) {
     return null;
   }
 
-  if (isSessionBootstrapping) {
-    return (
-      <ProviderOpeningScreen
-        message={
-          isOperatorPlatformEnabled()
-            ? "Connecting to game..."
-            : "Loading game..."
-        }
-      />
-    );
-  }
-
   return (
     <>
       {isLeavingOnlineRoom ? (
@@ -8489,10 +8471,16 @@ function OnlineBoardPageShell({ appState, configuredMaxPlayers }) {
             (lobbyRoom ? "Leaving lobby..." : "Leaving room...")
           }
         />
-      ) : isOnlineBootstrapping || (!lobbyRoom && !match) ? (
+      ) : isSessionBootstrapping ||
+        isOnlineBootstrapping ||
+        (!lobbyRoom && !match) ? (
         <OnlineLoadingScreen
           appState={composedAppState}
-          statusMessage={statusMessage}
+          statusMessage={
+            isSessionBootstrapping
+              ? statusMessage || "Connecting to game server..."
+              : statusMessage
+          }
         />
       ) : lobbyRoom ? (
         <WaitingLobbyScreen
