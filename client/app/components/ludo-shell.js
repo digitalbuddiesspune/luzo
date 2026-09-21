@@ -3139,6 +3139,7 @@ function useHydratedGuestAppState(baseAppState) {
   const [session, setSession] = useState(null);
   const [wallet, setWallet] = useState(baseAppState.wallet);
   const [accessMessage, setAccessMessage] = useState("");
+  const [isBootstrapping, setIsBootstrapping] = useState(true);
 
   useEffect(() => {
     let cancelled = false;
@@ -3169,6 +3170,10 @@ function useHydratedGuestAppState(baseAppState) {
         if (!cancelled && error.message === OPERATOR_PLATFORM_ACCESS_MESSAGE) {
           setAccessMessage(OPERATOR_PLATFORM_ACCESS_MESSAGE);
         }
+      } finally {
+        if (!cancelled) {
+          setIsBootstrapping(false);
+        }
       }
     }
 
@@ -3187,6 +3192,7 @@ function useHydratedGuestAppState(baseAppState) {
   return {
     appState: hydratedAppState,
     accessMessage,
+    isBootstrapping,
   };
 }
 
@@ -3779,6 +3785,32 @@ function MenuScreen({
             />
           </div>
         </div>
+      </section>
+    </AppFrame>
+  );
+}
+
+function ProviderOpeningScreen({ message = "Loading game..." }) {
+  return (
+    <AppFrame screenClassName="screen-menu screen-provider-opening">
+      <section
+        className="provider-opening-panel"
+        aria-busy="true"
+        aria-live="polite"
+      >
+        <img
+          src="/assets/orengelogo.png"
+          alt="Orenge"
+          className="provider-opening-logo"
+        />
+        <div
+          className="provider-opening-progress"
+          role="progressbar"
+          aria-label={message}
+        >
+          <span className="provider-opening-progress-fill" />
+        </div>
+        <p className="provider-opening-sr-only">{message}</p>
       </section>
     </AppFrame>
   );
@@ -6741,13 +6773,25 @@ export function MenuPageShell({ appState = mockBootState }) {
   const [friendsRoomCode, setFriendsRoomCode] = useState("");
   const [friendsStatusMessage, setFriendsStatusMessage] = useState("");
   const [isFriendsSubmitting, setIsFriendsSubmitting] = useState(false);
-  const { appState: hydratedAppState, accessMessage } =
+  const { appState: hydratedAppState, accessMessage, isBootstrapping } =
     useHydratedGuestAppState(appState);
   const [isSoundOn, setIsSoundOn] = useSoundSetting();
   useSoundUnlock();
   useGlobalButtonClickSound();
-  useLobbyBackgroundMusic(true);
+  useLobbyBackgroundMusic(!isBootstrapping);
   useMenuBrowserBackExit();
+
+  if (isBootstrapping) {
+    return (
+      <ProviderOpeningScreen
+        message={
+          isOperatorPlatformEnabled()
+            ? "Connecting to game..."
+            : "Loading game..."
+        }
+      />
+    );
+  }
 
   if (accessMessage) {
     return <OperatorAccessBlockedScreen message={accessMessage} />;
@@ -6896,6 +6940,7 @@ function PrivateRoomPageShell({ appState }) {
   const [statusMessage, setStatusMessage] = useState("");
   const [session, setSession] = useState(null);
   const [wallet, setWallet] = useState(appState.wallet);
+  const [isSessionBootstrapping, setIsSessionBootstrapping] = useState(true);
   const [privateRoom, setPrivateRoom] = useState(null);
   const [match, setMatch] = useState(null);
   const [copiedCode, setCopiedCode] = useState(false);
@@ -6915,7 +6960,7 @@ function PrivateRoomPageShell({ appState }) {
   const [isMatchIntroComplete, setIsMatchIntroComplete] = useState(false);
   const privateMatchUserId = session?.userId ?? appState.profile.id;
 
-  useLobbyBackgroundMusic(!privateRoom && !match);
+  useLobbyBackgroundMusic(!isSessionBootstrapping && !privateRoom && !match);
 
   useEffect(() => {
     setIsMatchIntroComplete(false);
@@ -6997,6 +7042,10 @@ function PrivateRoomPageShell({ appState }) {
         );
         await refreshWallet(activeSession.sessionToken);
 
+        if (!cancelled) {
+          setIsSessionBootstrapping(false);
+        }
+
         const currentRoom = await fetchPrivateRoomState(
           activeSession.sessionToken,
         );
@@ -7014,6 +7063,7 @@ function PrivateRoomPageShell({ appState }) {
         }
       } catch (error) {
         if (!cancelled) {
+          setIsSessionBootstrapping(false);
           setStatusMessage(
             error.message || "Unable to connect to the private table.",
           );
@@ -7589,6 +7639,18 @@ function PrivateRoomPageShell({ appState }) {
     navigateToMode(router, modeKey, () => setIsUtilityOpen(false));
   }
 
+  if (isSessionBootstrapping) {
+    return (
+      <ProviderOpeningScreen
+        message={
+          isOperatorPlatformEnabled()
+            ? "Connecting to game..."
+            : "Loading game..."
+        }
+      />
+    );
+  }
+
   return (
     <>
       {isLeavingRoom ? (
@@ -7713,6 +7775,9 @@ function OnlineBoardPageShell({ appState, configuredMaxPlayers }) {
   );
   const [session, setSession] = useState(null);
   const [wallet, setWallet] = useState(appState.wallet);
+  const [isSessionBootstrapping, setIsSessionBootstrapping] = useState(
+    hasExplicitPlayerCount,
+  );
   const [lobbyRoom, setLobbyRoom] = useState(null);
   const [match, setMatch] = useState(null);
   const [onlineRestartKey, setOnlineRestartKey] = useState(0);
@@ -7736,7 +7801,9 @@ function OnlineBoardPageShell({ appState, configuredMaxPlayers }) {
   const onlineUserPlayerId = session?.userId ?? appState.profile.id;
 
   useLobbyBackgroundMusic(
-    (isOnlineBootstrapping || (!lobbyRoom && !match)) && !isLeavingOnlineRoom,
+    !isSessionBootstrapping &&
+      (isOnlineBootstrapping || (!lobbyRoom && !match)) &&
+      !isLeavingOnlineRoom,
   );
 
   useEffect(() => {
@@ -8007,6 +8074,7 @@ function OnlineBoardPageShell({ appState, configuredMaxPlayers }) {
         const nextWallet = normalizeWalletResponse(walletOverview);
         if (!cancelled) {
           setWallet(nextWallet);
+          setIsSessionBootstrapping(false);
         }
 
         const entryFee = DEFAULT_ONLINE_ENTRY_FEE;
@@ -8027,6 +8095,7 @@ function OnlineBoardPageShell({ appState, configuredMaxPlayers }) {
         await refreshWallet(activeSession.sessionToken);
       } catch (error) {
         if (!cancelled) {
+          setIsSessionBootstrapping(false);
           setIsOnlineBootstrapping(false);
           if (error.message === OPERATOR_PLATFORM_ACCESS_MESSAGE) {
             navigateToMenu(router);
@@ -8395,6 +8464,18 @@ function OnlineBoardPageShell({ appState, configuredMaxPlayers }) {
 
   if (!hasExplicitPlayerCount) {
     return null;
+  }
+
+  if (isSessionBootstrapping) {
+    return (
+      <ProviderOpeningScreen
+        message={
+          isOperatorPlatformEnabled()
+            ? "Connecting to game..."
+            : "Loading game..."
+        }
+      />
+    );
   }
 
   return (

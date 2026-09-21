@@ -1515,10 +1515,88 @@ img {
   text-align: center;
 }
 
+.viewport-shell:has(.screen-provider-opening) {
+  background-color: #000000;
+}
+
+body:has(.screen-provider-opening)::before {
+  display: none;
+}
+
+.screen-provider-opening.portrait-device {
+  background-color: #000000;
+  background-image: none;
+}
+
+.screen-provider-opening > .screen-content-shell,
 .screen-access-blocked > .screen-content-shell {
-  display: grid;
-  place-items: center;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  min-height: 100%;
   padding: clamp(1rem, 5vw, 1.5rem);
+}
+
+.provider-opening-panel {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: clamp(1.35rem, 4.5vh, 2rem);
+  width: min(100%, 22rem);
+  text-align: center;
+}
+
+.provider-opening-logo {
+  display: block;
+  width: min(74vw, 16.5rem);
+  height: auto;
+  object-fit: contain;
+}
+
+.provider-opening-progress {
+  position: relative;
+  width: min(78vw, 15.5rem);
+  height: 0.72rem;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.provider-opening-progress-fill {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #d8dce6 0%, #ffffff 52%, #d8dce6 100%);
+  transform: translateX(-100%);
+  animation: providerOpeningBarSlide 1.35s ease-in-out infinite;
+}
+
+.provider-opening-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+@keyframes providerOpeningBarSlide {
+  0% {
+    transform: translateX(-100%);
+  }
+
+  55% {
+    transform: translateX(-8%);
+  }
+
+  100% {
+    transform: translateX(100%);
+  }
 }
 
 .access-blocked-panel {
