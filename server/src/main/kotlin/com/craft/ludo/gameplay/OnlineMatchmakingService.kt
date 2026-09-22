@@ -840,20 +840,29 @@ class OnlineMatchmakingService(
     }
 
     private fun settleAndMarkRoomFinished(room: RoomDocument, match: MatchDocument): Mono<RoomDocument> {
-        if (room.status == RoomStatus.FINISHED) {
-            return Mono.just(room)
-        }
+        log.info(
+            "Ludo online room settlement requested roomId={} roomCode={} matchId={} winnerUserId={} roomStatus={}",
+            room.id,
+            room.code,
+            match.id,
+            match.winnerUserId,
+            room.status,
+        )
 
-        val settlement = match.winnerUserId
-            ?.let { winnerUserId ->
-                walletService.payoutWinner(
-                    matchId = match.id,
-                    winnerUserId = winnerUserId,
-                    reservations = room.walletReservations,
-                    roomId = room.id,
-                )
-            }
-            ?: Mono.empty()
+        val settlement = if (room.status == RoomStatus.FINISHED) {
+            Mono.empty()
+        } else {
+            match.winnerUserId
+                ?.let { winnerUserId ->
+                    walletService.payoutWinner(
+                        matchId = match.id,
+                        winnerUserId = winnerUserId,
+                        reservations = room.walletReservations,
+                        roomId = room.id,
+                    )
+                }
+                ?: Mono.empty()
+        }
 
         return settlement
             .onErrorResume { error ->
@@ -870,14 +879,19 @@ class OnlineMatchmakingService(
                 )
                 Mono.empty()
             }
+            .then(sessionLifecyclePublisher.publishRoundFinishedForRoom(room, match))
             .then(
-                roomRepository.save(
-                    room.copy(
-                        status = RoomStatus.FINISHED,
-                        startAttemptId = null,
-                        updatedAt = Instant.now(clock),
-                    ),
-                ),
+                if (room.status == RoomStatus.FINISHED) {
+                    Mono.just(room)
+                } else {
+                    roomRepository.save(
+                        room.copy(
+                            status = RoomStatus.FINISHED,
+                            startAttemptId = null,
+                            updatedAt = Instant.now(clock),
+                        ),
+                    )
+                },
             )
     }
 

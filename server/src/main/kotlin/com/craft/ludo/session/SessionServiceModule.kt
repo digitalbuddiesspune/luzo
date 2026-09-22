@@ -1,8 +1,11 @@
 package com.craft.ludo.session
 
+import com.craft.ludo.gameplay.RoomDocument
+import com.craft.ludo.gameplay.MatchDocument
 import com.craft.ludo.provider.ProviderGameSdkClient
 import com.craft.ludo.wallet.IdempotencyKeyDocument
 import com.craft.ludo.wallet.IdempotencyKeyRepository
+import org.slf4j.LoggerFactory
 import org.springframework.dao.DuplicateKeyException
 import org.springframework.data.annotation.Id
 import org.springframework.data.mongodb.core.mapping.Document
@@ -90,6 +93,7 @@ class SessionLifecyclePublisher(
     private val idempotencyKeyRepository: IdempotencyKeyRepository,
     private val clock: Clock,
 ) {
+    private val log = LoggerFactory.getLogger(SessionLifecyclePublisher::class.java)
     /**
      * Provider expects table + round to exist before wallet debit / round start.
      * Best-effort per token; failures are logged but do not block match start.
@@ -169,6 +173,19 @@ class SessionLifecyclePublisher(
             .then()
     }
 
+    fun publishRoundFinishedForRoom(room: RoomDocument, match: MatchDocument): Mono<Void> {
+        return publishRoundFinished(
+            matchId = match.id,
+            entryFee = room.entryFee,
+            potAmount = match.potAmount,
+            winnerUserId = match.winnerUserId,
+            winnerDisplayName = match.winnerDisplayName,
+            roomId = room.id,
+            roomCode = room.code,
+            sessionTokens = providerSessionTokens(room),
+        )
+    }
+
     fun publishRoundFinished(
         matchId: String,
         entryFee: Long,
@@ -179,7 +196,16 @@ class SessionLifecyclePublisher(
         roomCode: String,
         sessionTokens: List<String>,
     ): Mono<Void> {
-        if (!providerGameSdkClient.isEnabled() || sessionTokens.isEmpty()) {
+        if (!providerGameSdkClient.isEnabled()) {
+            return Mono.empty()
+        }
+        if (sessionTokens.isEmpty()) {
+            log.warn(
+                "Skipping ROUND_ENDED publish: no session tokens matchId={} roomId={} roomCode={}",
+                matchId,
+                roomId,
+                roomCode,
+            )
             return Mono.empty()
         }
 
@@ -229,6 +255,12 @@ class SessionLifecyclePublisher(
             }
             .then()
     }
+
+    private fun providerSessionTokens(room: RoomDocument): List<String> =
+        room.seats
+            .filter { seat -> !seat.isBot }
+            .mapNotNull { seat -> seat.sessionToken?.trim()?.takeIf { token -> token.isNotEmpty() } }
+            .distinct()
 
     private fun publishOnce(
         sessionToken: String,

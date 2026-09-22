@@ -2276,16 +2276,7 @@ class MatchService(
                             }
 
                             settlement.then(
-                                sessionLifecyclePublisher.publishRoundFinished(
-                                    matchId = saved.id,
-                                    entryFee = room.entryFee,
-                                    potAmount = saved.potAmount,
-                                    winnerUserId = saved.winnerUserId,
-                                    winnerDisplayName = saved.winnerDisplayName,
-                                    roomId = room.id,
-                                    roomCode = room.code,
-                                    sessionTokens = humanSessionTokens(room),
-                                ),
+                                sessionLifecyclePublisher.publishRoundFinishedForRoom(room, saved),
                             ).then(
                                 if (room.status == RoomStatus.FINISHED) {
                                     Mono.just(room)
@@ -2299,6 +2290,16 @@ class MatchService(
                                 },
                             )
                         }
+                        .switchIfEmpty(
+                            Mono.defer {
+                                log.error(
+                                    "Cannot publish ROUND_ENDED: room {} not found for finished match {}",
+                                    saved.roomId,
+                                    saved.id,
+                                )
+                                Mono.empty()
+                            },
+                        )
                         .then()
                 } else {
                     Mono.empty()
@@ -2315,6 +2316,7 @@ class LobbyService(
     private val matchRepository: MatchRepository,
     private val matchService: MatchService,
     private val walletService: WalletService,
+    private val sessionLifecyclePublisher: SessionLifecyclePublisher,
     private val onlineMatchmakingService: OnlineMatchmakingService,
     private val instanceCoordinator: AppInstanceCoordinator,
     private val mongoTemplate: ReactiveMongoTemplate,
@@ -2777,28 +2779,30 @@ class LobbyService(
     }
 
     private fun settleAndMarkRoomFinished(room: RoomDocument, match: MatchDocument): Mono<RoomDocument> {
-        if (room.status == RoomStatus.FINISHED) {
-            return Mono.just(room)
-        }
         log.info(
-            "Ludo room settlement requested roomId={} roomCode={} matchId={} winnerUserId={} reservations={}",
+            "Ludo room settlement requested roomId={} roomCode={} matchId={} winnerUserId={} reservations={} roomStatus={}",
             room.id,
             room.code,
             match.id,
             match.winnerUserId,
             room.walletReservations.size,
+            room.status,
         )
 
-        val settlement = match.winnerUserId
-            ?.let { winnerUserId ->
-                walletService.payoutWinner(
-                    matchId = match.id,
-                    winnerUserId = winnerUserId,
-                    reservations = room.walletReservations,
-                    roomId = room.id,
-                )
-            }
-            ?: Mono.empty()
+        val settlement = if (room.status == RoomStatus.FINISHED) {
+            Mono.empty()
+        } else {
+            match.winnerUserId
+                ?.let { winnerUserId ->
+                    walletService.payoutWinner(
+                        matchId = match.id,
+                        winnerUserId = winnerUserId,
+                        reservations = room.walletReservations,
+                        roomId = room.id,
+                    )
+                }
+                ?: Mono.empty()
+        }
 
         return settlement
             .onErrorResume { error ->
@@ -2810,13 +2814,18 @@ class LobbyService(
                 )
                 Mono.empty()
             }
+            .then(sessionLifecyclePublisher.publishRoundFinishedForRoom(room, match))
             .then(
-                roomRepository.save(
-                    room.copy(
-                        status = RoomStatus.FINISHED,
-                        updatedAt = match.updatedAt,
-                    ),
-                ),
+                if (room.status == RoomStatus.FINISHED) {
+                    Mono.just(room)
+                } else {
+                    roomRepository.save(
+                        room.copy(
+                            status = RoomStatus.FINISHED,
+                            updatedAt = match.updatedAt,
+                        ),
+                    )
+                },
             )
             .doOnNext { savedRoom ->
                 log.info(
