@@ -1,6 +1,7 @@
 package com.craft.ludo.gameplay
 
 import com.craft.ludo.identity.SessionPrincipal
+import com.craft.ludo.session.SessionLifecyclePublisher
 import com.craft.ludo.shared.api.DomainException
 import com.craft.ludo.shared.config.AppProperties
 import com.craft.ludo.shared.support.newId
@@ -37,6 +38,7 @@ class OnlineMatchmakingService(
     private val matchRepository: MatchRepository,
     private val matchService: MatchService,
     private val walletService: WalletService,
+    private val sessionLifecyclePublisher: SessionLifecyclePublisher,
     private val instanceCoordinator: AppInstanceCoordinator,
     private val mongoTemplate: ReactiveMongoTemplate,
     private val clock: Clock,
@@ -192,7 +194,7 @@ class OnlineMatchmakingService(
                         )
                         .onErrorResume { error ->
                             logStartFailure(waitingRoom, error)
-                            respondWithCurrentLobby(principal, maxPlayers)
+                            respondWithCurrentLobby(principal, maxPlayers, error.message)
                         }
                 } else {
                     Mono.just(JoinOnlineMatchResponse(room = waitingRoom.toSummary()))
@@ -210,9 +212,15 @@ class OnlineMatchmakingService(
     private fun respondWithCurrentLobby(
         principal: SessionPrincipal,
         maxPlayers: Int,
+        startFailureMessage: String? = null,
     ): Mono<JoinOnlineMatchResponse> {
         return findExistingPublicRoomForUser(principal.id)
-            .map { current -> JoinOnlineMatchResponse(room = current.toSummary()) }
+            .map { current ->
+                JoinOnlineMatchResponse(
+                    room = current.toSummary(),
+                    startFailureMessage = startFailureMessage,
+                )
+            }
             .switchIfEmpty(createWaitingRoom(principal, maxPlayers, startImmediately = false))
     }
 
@@ -260,6 +268,7 @@ class OnlineMatchmakingService(
                 ipAddress = principal.ipAddress,
                 operatorUserId = principal.operatorUserId,
                 operatorId = principal.operatorId,
+                sessionToken = principal.sessionToken,
             ),
         )
 
@@ -322,6 +331,7 @@ class OnlineMatchmakingService(
                         ipAddress = principal.ipAddress,
                         operatorUserId = principal.operatorUserId,
                         operatorId = principal.operatorId,
+                        sessionToken = principal.sessionToken,
                     ),
                 ),
             ),
@@ -391,10 +401,12 @@ class OnlineMatchmakingService(
 
         val seatsToStart = padWithBots(humans, room.maxPlayers, now)
         val startAttemptId = newId("roomstart")
+        val providerRoundId = room.providerRoundId ?: newId("match")
         val prepared = room.copy(
             seats = seatsToStart,
             status = RoomStatus.STARTING,
             startAttemptId = startAttemptId,
+            providerRoundId = providerRoundId,
             ownerInstanceId = instanceCoordinator.instanceId,
             updatedAt = now,
             waitingDeadlineAt = null,
@@ -459,13 +471,30 @@ class OnlineMatchmakingService(
             claimed.seats.count { it.isBot },
         )
 
+        val matchId = claimed.providerRoundId ?: newId("match")
+        val sessionTokens = humanSessionTokens(claimed)
+
         // Soft re-check before debit so a player who emptied their wallet while waiting
         // is not charged mid-start and left stuck in STARTING.
-        return Flux.fromIterable(humans)
-            .concatMap { seat -> walletService.requireSufficientBalance(seat.userId, claimed.entryFee) }
-            .then(
-                reserveEntryFeesForSeats(humans, claimed.id, claimed.entryFee, claimed.startAttemptId),
-            )
+        return sessionLifecyclePublisher.publishMatchLifecycleBeforeStart(
+            matchId = matchId,
+            roomId = claimed.id,
+            roomCode = claimed.code,
+            entryFee = claimed.entryFee,
+            sessionTokens = sessionTokens,
+        ).then(
+            Flux.fromIterable(humans)
+                .concatMap { seat -> walletService.requireSufficientBalance(seat.userId, claimed.entryFee) }
+                .then(
+                    reserveEntryFeesForSeats(
+                        realSeats = humans,
+                        roomId = claimed.id,
+                        matchId = matchId,
+                        amount = claimed.entryFee,
+                        startAttemptId = claimed.startAttemptId,
+                    ),
+                ),
+        )
             .onErrorResume { error ->
                 logStartFailure(claimed, error)
                 rollbackStartingRoomToWaiting(claimed).then(Mono.error(error))
@@ -485,7 +514,7 @@ class OnlineMatchmakingService(
                         updatedAt = now,
                     ),
                 ).flatMap { roomWithFees ->
-                    matchService.createStartedMatch(roomWithFees)
+                    matchService.createStartedMatch(roomWithFees, matchId)
                         .then(roomRepository.findById(roomWithFees.id))
                         .onErrorResume { error ->
                             rollbackStartingRoomToWaiting(roomWithFees)
@@ -546,6 +575,7 @@ class OnlineMatchmakingService(
         val update = Update()
             .set("status", RoomStatus.STARTING)
             .set("startAttemptId", prepared.startAttemptId)
+            .set("providerRoundId", prepared.providerRoundId)
             .set("ownerInstanceId", prepared.ownerInstanceId)
             .set("seats", prepared.seats)
             .set("walletReservations", emptyList<WalletReservation>())
@@ -810,20 +840,29 @@ class OnlineMatchmakingService(
     }
 
     private fun settleAndMarkRoomFinished(room: RoomDocument, match: MatchDocument): Mono<RoomDocument> {
-        if (room.status == RoomStatus.FINISHED) {
-            return Mono.just(room)
-        }
+        log.info(
+            "Ludo online room settlement requested roomId={} roomCode={} matchId={} winnerUserId={} roomStatus={}",
+            room.id,
+            room.code,
+            match.id,
+            match.winnerUserId,
+            room.status,
+        )
 
-        val settlement = match.winnerUserId
-            ?.let { winnerUserId ->
-                walletService.payoutWinner(
-                    matchId = match.id,
-                    winnerUserId = winnerUserId,
-                    reservations = room.walletReservations,
-                    roomId = room.id,
-                )
-            }
-            ?: Mono.empty()
+        val settlement = if (room.status == RoomStatus.FINISHED) {
+            Mono.empty()
+        } else {
+            match.winnerUserId
+                ?.let { winnerUserId ->
+                    walletService.payoutWinner(
+                        matchId = match.id,
+                        winnerUserId = winnerUserId,
+                        reservations = room.walletReservations,
+                        roomId = room.id,
+                    )
+                }
+                ?: Mono.empty()
+        }
 
         return settlement
             .onErrorResume { error ->
@@ -840,14 +879,19 @@ class OnlineMatchmakingService(
                 )
                 Mono.empty()
             }
+            .then(sessionLifecyclePublisher.publishRoundFinishedForRoom(room, match))
             .then(
-                roomRepository.save(
-                    room.copy(
-                        status = RoomStatus.FINISHED,
-                        startAttemptId = null,
-                        updatedAt = Instant.now(clock),
-                    ),
-                ),
+                if (room.status == RoomStatus.FINISHED) {
+                    Mono.just(room)
+                } else {
+                    roomRepository.save(
+                        room.copy(
+                            status = RoomStatus.FINISHED,
+                            startAttemptId = null,
+                            updatedAt = Instant.now(clock),
+                        ),
+                    )
+                },
             )
     }
 
@@ -889,7 +933,7 @@ class OnlineMatchmakingService(
                 phase = MatchPhase.FINISHED,
                 players = match.players.map { player ->
                     if (player.userId == userId && !player.isBot && !player.isEffectivelyAbandoned()) {
-                        player.copy(userId = abandonedId, isAbandoned = true, tokens = emptyList())
+                        player.asAbandoned(abandonedId)
                     } else {
                         player
                     }
@@ -902,7 +946,7 @@ class OnlineMatchmakingService(
                 turnDeadlineAt = null,
                 updatedAt = now,
                 sequence = match.sequence + 1,
-            )
+            ).withFinishedBoard(WinnerReason.FORFEIT)
             matchRepository.save(finishedMatch)
                 .flatMap { savedMatch -> settleAndMarkRoomFinished(savedRoom, savedMatch) }
         }
@@ -911,6 +955,7 @@ class OnlineMatchmakingService(
     private fun reserveEntryFeesForSeats(
         realSeats: List<RoomSeat>,
         roomId: String,
+        matchId: String,
         amount: Long,
         startAttemptId: String?,
     ): Mono<List<WalletReservation>> {
@@ -918,11 +963,13 @@ class OnlineMatchmakingService(
         return Flux.fromIterable(realSeats)
             .concatMap { seat ->
                 walletService.reserveEntryFee(
-                    seat.userId,
-                    roomId,
-                    amount,
-                    seat.ipAddress,
-                    startAttemptId,
+                    userId = seat.userId,
+                    roomId = roomId,
+                    amount = amount,
+                    ipAddress = seat.ipAddress,
+                    startAttemptId = startAttemptId,
+                    roundId = matchId,
+                    platformSessionToken = seat.sessionToken,
                 ).doOnNext { completed.add(it) }
             }
             .collectList()

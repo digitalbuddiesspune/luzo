@@ -7,29 +7,29 @@ class MissedTurnAutoLeaveTests {
     @Test
     fun `increments missed turns without leaving before the limit`() {
         val players = listOf(
-            humanPlayer("player-a", "Alice", consecutiveMissedTurns = 1),
+            humanPlayer("player-a", "Alice", missedTurns = 0),
             humanPlayer("player-b", "Bob"),
         )
 
         val result = registerMissedTurn(
             players = players,
             playerIndex = 0,
-            maxConsecutiveMissedTurns = 3,
+            maxMissedTurns = 2,
             abandonedUserId = "abandoned_test",
         )
 
         assertThat(result.autoLeft).isFalse()
         assertThat(result.abandonOutcome.forfeitWinner).isNull()
         assertThat(result.abandonOutcome.houseWin).isFalse()
-        assertThat(result.players[0].consecutiveMissedTurns).isEqualTo(2)
+        assertThat(result.players[0].missedTurns).isEqualTo(1)
         assertThat(result.players[0].isAbandoned).isFalse()
         assertThat(result.players[0].userId).isEqualTo("player-a")
     }
 
     @Test
-    fun `auto leaves after three consecutive missed turns`() {
+    fun `auto leaves after two missed turns in the whole match`() {
         val players = listOf(
-            humanPlayer("player-a", "Alice", consecutiveMissedTurns = 2),
+            humanPlayer("player-a", "Alice", missedTurns = 1),
             humanPlayer("player-b", "Bob"),
             humanPlayer("player-c", "Cara"),
         )
@@ -37,7 +37,7 @@ class MissedTurnAutoLeaveTests {
         val result = registerMissedTurn(
             players = players,
             playerIndex = 0,
-            maxConsecutiveMissedTurns = 3,
+            maxMissedTurns = 2,
             abandonedUserId = "abandoned_test",
         )
 
@@ -47,20 +47,20 @@ class MissedTurnAutoLeaveTests {
         assertThat(result.players[0].isAbandoned).isTrue()
         assertThat(result.players[0].userId).isEqualTo("abandoned_test")
         assertThat(result.players[0].tokens).isEmpty()
-        assertThat(result.players[0].consecutiveMissedTurns).isEqualTo(3)
+        assertThat(result.players[0].missedTurns).isEqualTo(2)
     }
 
     @Test
-    fun `awards remaining human the win in a two player match after three misses`() {
+    fun `awards remaining human the win in a two player match after two misses`() {
         val players = listOf(
-            humanPlayer("player-a", "Alice", consecutiveMissedTurns = 2),
+            humanPlayer("player-a", "Alice", missedTurns = 1),
             humanPlayer("player-b", "Bob"),
         )
 
         val result = registerMissedTurn(
             players = players,
             playerIndex = 0,
-            maxConsecutiveMissedTurns = 3,
+            maxMissedTurns = 2,
             abandonedUserId = "abandoned_test",
         )
 
@@ -73,7 +73,7 @@ class MissedTurnAutoLeaveTests {
     @Test
     fun `awards bot win when last real player is removed for missed turns`() {
         val players = listOf(
-            humanPlayer("player-a", "Alice", consecutiveMissedTurns = 2),
+            humanPlayer("player-a", "Alice", missedTurns = 1),
             botPlayer("bot-red", "Red Bot"),
             botPlayer("bot-yellow", "Yellow Bot"),
         )
@@ -81,7 +81,7 @@ class MissedTurnAutoLeaveTests {
         val result = registerMissedTurn(
             players = players,
             playerIndex = 0,
-            maxConsecutiveMissedTurns = 3,
+            maxMissedTurns = 2,
             abandonedUserId = "abandoned_test",
         )
 
@@ -92,22 +92,28 @@ class MissedTurnAutoLeaveTests {
     }
 
     @Test
-    fun `resets missed turn counter after a successful action`() {
+    fun `keeps miss count after earlier successful play would have reset consecutive logic`() {
         val players = listOf(
-            humanPlayer("player-a", "Alice", consecutiveMissedTurns = 2),
+            humanPlayer("player-a", "Alice", missedTurns = 1),
             humanPlayer("player-b", "Bob"),
         )
 
-        val reset = resetMissedTurns(players, 0)
+        // A second miss anywhere in the match removes the player — counts are total, not consecutive.
+        val result = registerMissedTurn(
+            players = players,
+            playerIndex = 0,
+            maxMissedTurns = 2,
+            abandonedUserId = "abandoned_test",
+        )
 
-        assertThat(reset[0].consecutiveMissedTurns).isEqualTo(0)
-        assertThat(reset[1].consecutiveMissedTurns).isEqualTo(0)
+        assertThat(result.autoLeft).isTrue()
+        assertThat(result.players[0].missedTurns).isEqualTo(2)
     }
 
     private fun humanPlayer(
         userId: String,
         displayName: String,
-        consecutiveMissedTurns: Int = 0,
+        missedTurns: Int = 0,
     ): MatchPlayerState {
         return MatchPlayerState(
             userId = userId,
@@ -116,11 +122,14 @@ class MissedTurnAutoLeaveTests {
             isBot = false,
             isAbandoned = false,
             tokens = listOf(-1, -1, -1, -1),
-            consecutiveMissedTurns = consecutiveMissedTurns,
+            missedTurns = missedTurns,
         )
     }
 
-    private fun botPlayer(userId: String, displayName: String): MatchPlayerState {
+    private fun botPlayer(
+        userId: String,
+        displayName: String,
+    ): MatchPlayerState {
         return MatchPlayerState(
             userId = userId,
             displayName = displayName,

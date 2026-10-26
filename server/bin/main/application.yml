@@ -1,12 +1,15 @@
 spring:
   config:
     import: optional:file:.env[.properties]
+
   application:
     name: potludo-server
+
   data:
     mongodb:
       uri: ${MONGODB_URI:mongodb://localhost:27017/potludo}
       database: ${MONGODB_DATABASE:potludo}
+
     redis:
       host: ${REDIS_HOST:localhost}
       port: ${REDIS_PORT:6379}
@@ -14,65 +17,122 @@ spring:
       password: ${REDIS_PASSWORD:}
       ssl:
         enabled: ${REDIS_SSL_ENABLED:false}
+
   rabbitmq:
     addresses: ${AMQP_URI:amqp://guest:guest@localhost:5672}
+
 
 server:
   port: ${PORT:8080}
   forward-headers-strategy: framework
+
 
 management:
   endpoint:
     health:
       probes:
         enabled: true
+
   health:
+    rabbit:
+      enabled: false
     livenessstate:
       enabled: true
     readinessstate:
       enabled: true
+
   endpoints:
     web:
       exposure:
         include: health,info,metrics,prometheus
 
+
 app:
   session:
     ttl-days: ${APP_SESSION_TTL_DAYS:30}
+
+  session-service:
+    enabled: ${APP_SESSION_SERVICE_ENABLED:false}
+    api-base-url: ${PROVIDER_API_URL:${APP_SESSION_SERVICE_API_BASE_URL:https://api.dpbossking.com/api/v1}}
+    game-server-api-key: ${GAME_SERVER_API_KEY:}
+    timeout-seconds: ${APP_SESSION_SERVICE_TIMEOUT_SECONDS:5}
+
   gameplay:
     turn-timeout-seconds: ${APP_GAMEPLAY_TURN_TIMEOUT_SECONDS:30}
+    max-missed-turns: ${APP_GAMEPLAY_MAX_MISSED_TURNS:2}
     room-max-players: ${APP_GAMEPLAY_ROOM_MAX_PLAYERS:4}
     online-entry-fee: ${APP_GAMEPLAY_ONLINE_ENTRY_FEE:100}
     lobby-wait-millis: ${APP_GAMEPLAY_LOBBY_WAIT_MILLIS:60000}
-    online-pvp-real-player-threshold: ${APP_GAMEPLAY_ONLINE_PVP_REAL_PLAYER_THRESHOLD:25}
+    online-pvp-real-player-threshold: ${APP_GAMEPLAY_ONLINE_PVP_REAL_PLAYER_THRESHOLD:0}
     roll-delay-millis: ${APP_GAMEPLAY_ROLL_DELAY_MILLIS:700}
     bot-move-delay-millis: ${APP_GAMEPLAY_BOT_MOVE_DELAY_MILLIS:850}
     advance-delay-millis: ${APP_GAMEPLAY_ADVANCE_DELAY_MILLIS:750}
+    bot:
+      difficulty: ${APP_GAMEPLAY_BOT_DIFFICULTY:SUPER}
+      expectimax-depth: ${APP_GAMEPLAY_BOT_EXPECTIMAX_DEPTH:2}
+      max-decision-millis: ${APP_GAMEPLAY_BOT_MAX_DECISION_MILLIS:300}
+      two-player-attack-multiplier: ${APP_GAMEPLAY_BOT_TWO_PLAYER_ATTACK_MULTIPLIER:1.60}
+      win-game: ${APP_GAMEPLAY_BOT_WIN_GAME:10000}
+      # Finish almost as valuable as a capture so late-game tokens go home.
+      token-home: ${APP_GAMEPLAY_BOT_TOKEN_HOME:2200}
+      capture-base: ${APP_GAMEPLAY_BOT_CAPTURE_BASE:2500}
+      escape-threat: ${APP_GAMEPLAY_BOT_ESCAPE_THREAT:650}
+      create-blockade: ${APP_GAMEPLAY_BOT_CREATE_BLOCKADE:400}
+      break-opponent-blockade: ${APP_GAMEPLAY_BOT_BREAK_OPPONENT_BLOCKADE:350}
+      enter-home-path: ${APP_GAMEPLAY_BOT_ENTER_HOME_PATH:500}
+      land-safe: ${APP_GAMEPLAY_BOT_LAND_SAFE:220}
+      save-threatened: ${APP_GAMEPLAY_BOT_SAVE_THREATENED:280}
+      create-capture-threat: ${APP_GAMEPLAY_BOT_CREATE_CAPTURE_THREAT:220}
+      maintain-blockade: ${APP_GAMEPLAY_BOT_MAINTAIN_BLOCKADE:150}
+      leave-base: ${APP_GAMEPLAY_BOT_LEAVE_BASE:120}
+      progress-per-step: ${APP_GAMEPLAY_BOT_PROGRESS_PER_STEP:12}
+      expose-to-capture: ${APP_GAMEPLAY_BOT_EXPOSE_TO_CAPTURE:-700}
+      multi-opponent-danger: ${APP_GAMEPLAY_BOT_MULTI_OPPONENT_DANGER:-900}
+      break-own-blockade: ${APP_GAMEPLAY_BOT_BREAK_OWN_BLOCKADE:-300}
+      ignore-guaranteed-capture: ${APP_GAMEPLAY_BOT_IGNORE_GUARANTEED_CAPTURE:-2000}
+      leave-safety-into-danger: ${APP_GAMEPLAY_BOT_LEAVE_SAFETY_INTO_DANGER:-250}
+      hunt-reward: ${APP_GAMEPLAY_BOT_HUNT_REWARD:750}
+      danger-probability-penalty: ${APP_GAMEPLAY_BOT_DANGER_PROBABILITY_PENALTY:-900}
+      token-diversity-reward: ${APP_GAMEPLAY_BOT_TOKEN_DIVERSITY_REWARD:180}
+      hunt-horizon-turns: ${APP_GAMEPLAY_BOT_HUNT_HORIZON_TURNS:4}
+
   wallet:
     currency: ${APP_WALLET_CURRENCY:INR}
     guest-starting-balance: ${APP_WALLET_GUEST_STARTING_BALANCE:100000}
     payout-rake-basis-points: ${APP_WALLET_PAYOUT_RAKE_BASIS_POINTS:0}
+    platform-fee-per-player: ${APP_WALLET_PLATFORM_FEE_PER_PLAYER:10}
     house-user-id: ${APP_WALLET_HOUSE_USER_ID:house}
+
   operator:
-    base-url: ${APP_OPERATOR_BASE_URL:https://sp.adminsportal.com}
-    login-path: ${APP_OPERATOR_LOGIN_PATH:/operator/user/login}
-    user-detail-path: ${APP_OPERATOR_USER_DETAIL_PATH:/service/user/detail}
-    balance-path: ${APP_OPERATOR_BALANCE_PATH:/service/operator/user/balance/v2}
+    debit-url: ${APP_WALLET_DEBIT_URL:}
+    credit-url: ${APP_WALLET_CREDIT_URL:${APP_OPERATOR_CREDIT_URL:}}
+    credit-game-name: ${APP_WALLET_GAME_NAME:${APP_GAME_CODE:${APP_OPERATOR_GAME_ID:POTLUDO}}}
+    game-id: ${APP_GAME_ID:2}
+    game-code: ${APP_GAME_CODE:${APP_OPERATOR_GAME_ID:POTLUDO}}
     credit-exchange: ${APP_OPERATOR_CREDIT_EXCHANGE:/games/admin}
     credit-queue-name: ${APP_OPERATOR_CREDIT_QUEUE_NAME:games_cashout}
     credit-routing-key: ${APP_OPERATOR_CREDIT_ROUTING_KEY:games_cashout}
-    game-id: ${APP_OPERATOR_GAME_ID:2}
+    credit-declare-topology: ${APP_OPERATOR_CREDIT_DECLARE_TOPOLOGY:false}
+    credit-dead-letter-exchange: ${APP_OPERATOR_CREDIT_DLX:}
+    credit-dead-letter-queue: ${APP_OPERATOR_CREDIT_DLQ:games_cashout.dlq}
+    credit-dead-letter-routing-key: ${APP_OPERATOR_CREDIT_DLQ_ROUTING_KEY:games_cashout.dlq}
+    credit-max-retries: ${APP_OPERATOR_CREDIT_MAX_RETRIES:5}
+    credit-retry-delay-millis: ${APP_OPERATOR_CREDIT_RETRY_DELAY_MILLIS:5000}
+
   instance:
     id: ${APP_INSTANCE_ID:}
     lock-key-prefix: ${APP_INSTANCE_LOCK_KEY_PREFIX:potludo:lock}
     heartbeat-key-prefix: ${APP_INSTANCE_HEARTBEAT_KEY_PREFIX:potludo:instance}
     lock-ttl-millis: ${APP_INSTANCE_LOCK_TTL_MILLIS:5000}
     heartbeat-ttl-millis: ${APP_INSTANCE_HEARTBEAT_TTL_MILLIS:15000}
+
   realtime:
     redis-channel: ${APP_REALTIME_REDIS_CHANNEL:potludo:realtime}
+
     web-rtc:
       ice-servers: ${APP_REALTIME_WEB_RTC_ICE_SERVERS:stun:stun.l.google.com:19302}
       turn-username: ${APP_REALTIME_WEB_RTC_TURN_USERNAME:}
       turn-credential: ${APP_REALTIME_WEB_RTC_TURN_CREDENTIAL:}
+
   web:
-    allowed-origin-patterns: ${APP_WEB_ALLOWED_ORIGIN_PATTERNS:http://localhost:3000,http://127.0.0.1:3000,http://localhost:3005,http://127.0.0.1:3005,https://*.vercel.app}
+    allowed-origin-patterns: ${APP_WEB_ALLOWED_ORIGIN_PATTERNS:http://localhost:3000,http://127.0.0.1:3000,http://localhost:3005,http://127.0.0.1:3005,https://*.vercel.app,https://www.fashionbuddies.in}

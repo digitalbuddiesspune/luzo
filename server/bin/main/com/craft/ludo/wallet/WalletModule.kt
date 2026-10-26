@@ -6,6 +6,10 @@ import com.craft.ludo.identity.GuestSessionRepository
 import com.craft.ludo.operator.OperatorCreditQueueMessage
 import com.craft.ludo.operator.OperatorDebitRequest
 import com.craft.ludo.operator.OperatorGatewayClient
+import com.craft.ludo.provider.ProviderGameSdkClient
+import com.craft.ludo.session.ExternalSessionBindingDocument
+import com.craft.ludo.session.SessionBindingService
+import com.craft.ludo.session.ValidatedSession
 import com.craft.ludo.shared.api.DomainException
 import com.craft.ludo.shared.config.AppProperties
 import com.craft.ludo.shared.support.newId
@@ -37,6 +41,7 @@ import java.math.BigDecimal
 import java.time.Clock
 import java.time.Duration
 import java.time.Instant
+import java.time.temporal.ChronoUnit
 
 enum class WalletTransactionType {
     GUEST_STARTING_BALANCE,
@@ -45,6 +50,7 @@ enum class WalletTransactionType {
     ROOM_REFUND,
     MATCH_PAYOUT,
     HOUSE_RAKE,
+    HOUSE_WIN,
 }
 
 @Document("wallet_accounts")
@@ -93,6 +99,16 @@ data class IdempotencyKeyDocument(
     val key: String,
     val createdAt: Instant,
 )
+
+@Document("platform_settings")
+data class PlatformSettingsDocument(
+    @Id
+    val id: String = GLOBAL_PLATFORM_SETTINGS_ID,
+    val platformFeePerPlayer: Long = 10,
+    val updatedAt: Instant = Instant.EPOCH,
+)
+
+const val GLOBAL_PLATFORM_SETTINGS_ID = "global"
 
 interface WalletAccountRepository : ReactiveMongoRepository<WalletAccountDocument, String> {
     fun findByUserId(userId: String): Mono<WalletAccountDocument>
@@ -146,10 +162,11 @@ data class WalletReservation(
 internal fun calculateWinnerLedgerPayoutAmount(
     winnerUserId: String,
     paidReservations: List<WalletReservation>,
-    payoutRakeBasisPoints: Int,
+    platformFeePerPlayer: Long,
 ): Long {
     val potAmount = paidReservations.sumOf { it.amount }
-    val winnerPayoutAmount = potAmount - calculateRakeAmount(potAmount, payoutRakeBasisPoints)
+    val rakeAmount = calculateFlatPlatformFeeAmount(paidReservations, platformFeePerPlayer)
+    val winnerPayoutAmount = potAmount - rakeAmount
     val winnerReservation = paidReservations.lastOrNull { it.userId == winnerUserId }
     val winnerUsesOperatorWallet = winnerReservation?.operatorUserId != null ||
         winnerReservation?.operatorToken != null ||
@@ -164,6 +181,32 @@ internal fun calculateWinnerLedgerPayoutAmount(
     } else {
         winnerPayoutAmount
     }
+}
+
+internal fun calculateFlatPlatformFeeAmount(
+    reservations: List<WalletReservation>,
+    platformFeePerPlayer: Long,
+): Long {
+    if (platformFeePerPlayer <= 0) {
+        return 0L
+    }
+
+    val paidReservations = reservations.filter { it.amount > 0 }
+    if (paidReservations.isEmpty()) {
+        return 0L
+    }
+
+    // Fee applies to every seat in the pot, including synthetic bot entries.
+    val requestedFee = platformFeePerPlayer * paidReservations.size
+    val potAmount = paidReservations.sumOf { it.amount }
+
+    return minOf(requestedFee, potAmount)
+}
+
+internal fun calculateHouseWinAmount(reservations: List<WalletReservation>): Long {
+    return reservations
+        .filter { reservation -> reservation.amount > 0 && !reservation.synthetic }
+        .sumOf { it.amount }
 }
 
 internal fun calculateRakeAmount(
@@ -182,6 +225,8 @@ class WalletService(
     private val walletEntryRepository: WalletEntryRepository,
     private val idempotencyKeyRepository: IdempotencyKeyRepository,
     private val guestSessionRepository: GuestSessionRepository,
+    private val sessionBindingService: SessionBindingService,
+    private val providerGameSdkClient: ProviderGameSdkClient,
     private val operatorGatewayClient: OperatorGatewayClient,
     private val mongoTemplate: ReactiveMongoTemplate,
     private val transactionalOperator: TransactionalOperator,
@@ -191,14 +236,14 @@ class WalletService(
     private val log = LoggerFactory.getLogger(WalletService::class.java)
     private val walletCurrency = appProperties.wallet.currency.trim().uppercase()
     private val guestStartingBalance = appProperties.wallet.guestStartingBalance
-    private val payoutRakeBasisPoints = appProperties.wallet.payoutRakeBasisPoints
+    private val defaultPlatformFeePerPlayer = appProperties.wallet.platformFeePerPlayer
     private val houseUserId = appProperties.wallet.houseUserId.trim()
 
     init {
         require(walletCurrency.isNotBlank()) { "app.wallet.currency must not be blank." }
         require(guestStartingBalance >= 0) { "app.wallet.guest-starting-balance must not be negative." }
-        require(payoutRakeBasisPoints in 0..10_000) {
-            "app.wallet.payout-rake-basis-points must be between 0 and 10000."
+        require(defaultPlatformFeePerPlayer >= 0) {
+            "app.wallet.platform-fee-per-player must not be negative."
         }
         require(houseUserId.isNotBlank()) { "app.wallet.house-user-id must not be blank." }
     }
@@ -277,9 +322,10 @@ class WalletService(
         )
     }
 
-    fun getOverview(userId: String): Mono<WalletOverviewResponse> {
-        return refreshOperatorWalletBalance(userId)
-            .switchIfEmpty(ensureGuestWalletBalance(userId))
+    fun getOverview(userId: String, platformSessionToken: String? = null): Mono<WalletOverviewResponse> {
+        return refreshOperatorWalletBalance(userId, platformSessionToken)
+            .onErrorResume { error -> recoverWalletOverviewAccount(userId, error) }
+            .switchIfEmpty(recoverWalletOverviewAccount(userId))
             .flatMap { account ->
             walletTransactionRepository.findByUserId(
                 userId,
@@ -296,6 +342,30 @@ class WalletService(
                     )
                 }
         }
+    }
+
+    /**
+     * Soft balance gate used before seating a player in a lobby.
+     * Refreshes operator balance when available; never debits.
+     */
+    fun requireSufficientBalance(userId: String, amount: Long): Mono<WalletAccountDocument> {
+        require(amount > 0) { "Required balance amount must be positive." }
+
+        return refreshOperatorWalletBalance(userId)
+            .onErrorResume { error -> recoverWalletOverviewAccount(userId, error) }
+            .switchIfEmpty(recoverWalletOverviewAccount(userId))
+            .flatMap { account ->
+                if (account.availableBalance < amount) {
+                    Mono.error(
+                        DomainException(
+                            HttpStatus.PAYMENT_REQUIRED,
+                            "Insufficient wallet balance. You need $amount coins to join. Current balance: ${account.availableBalance}.",
+                        ),
+                    )
+                } else {
+                    Mono.just(account)
+                }
+            }
     }
 
     private fun ensureGuestWalletBalance(userId: String): Mono<WalletAccountDocument> {
@@ -366,18 +436,32 @@ class WalletService(
         roomId: String,
         amount: Long,
         ipAddress: String?,
+        startAttemptId: String? = null,
+        roundId: String? = null,
+        platformSessionToken: String? = null,
     ): Mono<WalletReservation> {
         require(amount > 0) { "Entry fee amount must be positive." }
 
         val transactionId = newId("roomfee")
         log.info(
-            "Ludo entry fee reservation requested userId={} roomId={} amount={} transactionId={}",
+            "Ludo entry fee reservation requested userId={} roomId={} amount={} transactionId={} startAttemptId={} roundId={}",
             userId,
             roomId,
             amount,
             transactionId,
+            startAttemptId,
+            roundId ?: roomId,
         )
-        return createEntryFeeReservation(userId, roomId, amount, ipAddress, transactionId)
+        return createEntryFeeReservation(
+            userId = userId,
+            roomId = roomId,
+            amount = amount,
+            ipAddress = ipAddress,
+            transactionId = transactionId,
+            startAttemptId = startAttemptId,
+            roundId = roundId ?: roomId,
+            platformSessionToken = platformSessionToken,
+        )
     }
 
     private fun createEntryFeeReservation(
@@ -386,22 +470,43 @@ class WalletService(
         amount: Long,
         ipAddress: String?,
         transactionId: String,
+        startAttemptId: String? = null,
+        roundId: String = roomId,
+        platformSessionToken: String? = null,
     ): Mono<WalletReservation> {
-        val idempotencyScope = "wallet:room-reservation:$roomId:$userId"
+        // Include startAttemptId so a failed start can retry without getting stuck on a stale idempotency key.
+        val attemptKey = startAttemptId?.takeIf { it.isNotBlank() } ?: transactionId
+        val idempotencyScope = "wallet:room-reservation:$roomId:$userId:$attemptKey"
         val reservationKey = "amount:$amount"
 
         return claimIdempotency(idempotencyScope, reservationKey)
             .then(
-                operatorSessionForUser(userId)
+                resolveOperatorSession(userId, platformSessionToken)
             .flatMap { operatorSession ->
+                val operatorUserId = operatorSession.operatorUserId?.trim()?.takeIf { it.isNotEmpty() }
+                    ?: operatorSession.userId.trim().takeIf { it.isNotEmpty() }
+                val operatorId = operatorSession.operatorId?.trim()?.takeIf { it.isNotEmpty() }
+                val operatorToken = operatorSession.operatorToken?.trim()?.takeIf { it.isNotEmpty() }
+                    ?: platformSessionToken?.trim()?.takeIf { it.isNotEmpty() }
+
+                if (operatorToken.isNullOrBlank() || operatorUserId.isNullOrBlank() || operatorId.isNullOrBlank()) {
+                    return@flatMap Mono.error(
+                        DomainException(
+                            HttpStatus.BAD_GATEWAY,
+                            "Operator wallet session is incomplete. Please re-launch from the operator.",
+                        ),
+                    )
+                }
+
                 val debitTransactionId = transactionId
                 val debitDescription = ludoDebitStatement(amount, debitTransactionId, roomId)
                 log.info(
-                    "Ludo operator entry fee debit requested userId={} operatorUserId={} operatorId={} roomId={} amount={} transactionId={} description={}",
+                    "Ludo operator entry fee debit requested userId={} operatorUserId={} operatorId={} roomId={} roundId={} amount={} transactionId={} description={}",
                     userId,
-                    operatorSession.operatorUserId,
-                    operatorSession.operatorId,
+                    operatorUserId,
+                    operatorId,
                     roomId,
+                    roundId,
                     amount,
                     debitTransactionId,
                     debitDescription,
@@ -414,9 +519,12 @@ class WalletService(
                         description = debitDescription,
                         ip = ipAddress ?: "0.0.0.0",
                         gameId = operatorSession.operatorGameId ?: operatorGatewayClient.gameId(),
-                        userId = operatorSession.operatorUserId!!,
-                        operatorId = operatorSession.operatorId!!,
-                        token = operatorSession.operatorToken!!,
+                        userId = operatorUserId,
+                        operatorId = operatorId,
+                        token = operatorToken,
+                        betId = "BT:$debitTransactionId:$operatorUserId:$operatorId",
+                        roundId = roundId,
+                        tableId = roomId,
                     ),
                 )
                     .doOnError { error ->
@@ -453,9 +561,9 @@ class WalletService(
                                 amount = amount,
                                 externalDebitTransactionId = debitTransactionId,
                                 externalDebitConfirmed = true,
-                                operatorToken = operatorSession.operatorToken,
-                                operatorUserId = operatorSession.operatorUserId,
-                                operatorId = operatorSession.operatorId,
+                                operatorToken = operatorToken,
+                                operatorUserId = operatorUserId,
+                                operatorId = operatorId,
                                 ipAddress = ipAddress ?: "0.0.0.0",
                                 gameId = operatorSession.operatorGameId ?: operatorGatewayClient.gameId(),
                             ),
@@ -577,6 +685,7 @@ class WalletService(
             amount = reservation.amount,
             txnId = newId("txn"),
             description = ludoCreditStatement(reservation.amount, roomId, "refund", roomId),
+            roundId = roomId,
         )
             .then(releaseReservedBalance)
             .then(
@@ -597,6 +706,25 @@ class WalletService(
         matchId: String,
         winnerUserId: String,
         reservations: List<WalletReservation>,
+        roomId: String? = null,
+    ): Mono<Void> {
+        return resolvePlatformFeePerPlayer().flatMap { platformFeePerPlayer ->
+            payoutWinnerWithFee(matchId, winnerUserId, reservations, platformFeePerPlayer, roomId)
+        }
+    }
+
+    fun resolvePlatformFeePerPlayer(): Mono<Long> {
+        return mongoTemplate.findById(GLOBAL_PLATFORM_SETTINGS_ID, PlatformSettingsDocument::class.java)
+            .map { settings -> settings.platformFeePerPlayer.coerceAtLeast(0) }
+            .defaultIfEmpty(defaultPlatformFeePerPlayer.coerceAtLeast(0))
+    }
+
+    private fun payoutWinnerWithFee(
+        matchId: String,
+        winnerUserId: String,
+        reservations: List<WalletReservation>,
+        platformFeePerPlayer: Long,
+        roomId: String? = null,
     ): Mono<Void> {
         val paidReservations = reservations.filter { it.amount > 0 }
         val realPaidReservations = paidReservations.filterNot { it.synthetic }
@@ -607,24 +735,36 @@ class WalletService(
         val potAmount = paidReservations.sumOf { it.amount }
         val confirmedExternalPotAmount = externallyDebitedReservations.sumOf { it.amount }
         if (potAmount <= 0) return Mono.empty()
-        val rakeAmount = calculateRakeAmount(potAmount)
-        val winnerPayoutAmount = potAmount - rakeAmount
         val winnerReservation = paidReservations.lastOrNull { it.userId == winnerUserId }
         val winnerIsSynthetic = winnerReservation?.synthetic == true
+        // Bot/synthetic winners cannot receive payouts; the platform keeps the pot.
+        val isHouseWinner = winnerUserId == houseUserId || winnerIsSynthetic
+        val rakeAmount = if (isHouseWinner) {
+            0L
+        } else {
+            calculateFlatPlatformFeeAmount(paidReservations, platformFeePerPlayer)
+        }
         val winnerUsesOperatorWallet = winnerReservation?.operatorUserId != null ||
             winnerReservation?.operatorToken != null ||
             winnerReservation?.operatorId != null
         val winnerHasConfirmedExternalDebit = winnerReservation?.externalDebitTransactionId != null &&
             winnerReservation.externalDebitConfirmed
-        val winnerLedgerPayoutAmount = calculateWinnerLedgerPayoutAmount(
-            winnerUserId = winnerUserId,
-            paidReservations = paidReservations,
-            payoutRakeBasisPoints = payoutRakeBasisPoints,
-        )
+        val winnerLedgerPayoutAmount = if (isHouseWinner) {
+            calculateHouseWinAmount(paidReservations)
+        } else {
+            calculateWinnerLedgerPayoutAmount(
+                winnerUserId = winnerUserId,
+                paidReservations = paidReservations,
+                platformFeePerPlayer = platformFeePerPlayer,
+            )
+        }
         log.info(
-            "Ludo wallet settlement requested matchId={} winnerUserId={} reservations={} realReservations={} confirmedExternalReservations={} potAmount={} confirmedExternalPotAmount={} winnerUsesOperatorWallet={} winnerHasConfirmedExternalDebit={} payoutAmount={}",
+            "Ludo wallet settlement requested matchId={} winnerUserId={} houseWinner={} platformFeePerPlayer={} rakeAmount={} reservations={} realReservations={} confirmedExternalReservations={} potAmount={} confirmedExternalPotAmount={} winnerUsesOperatorWallet={} winnerHasConfirmedExternalDebit={} payoutAmount={}",
             matchId,
             winnerUserId,
+            isHouseWinner,
+            platformFeePerPlayer,
+            rakeAmount,
             paidReservations.size,
             realPaidReservations.size,
             externallyDebitedReservations.size,
@@ -650,23 +790,43 @@ class WalletService(
                 },
             )
             .then(
-                if (winnerIsSynthetic) {
-                    Mono.empty()
-                } else if (winnerLedgerPayoutAmount <= 0) {
-                    Mono.empty()
-                } else {
+                when {
+                    isHouseWinner -> persistHouseWin(matchId, winnerLedgerPayoutAmount)
+                    winnerLedgerPayoutAmount <= 0 -> Mono.empty()
+                    else -> persistWinnerPayout(matchId, winnerUserId, winnerLedgerPayoutAmount, roomId)
+                },
+            )
+            .then(persistHouseRake(matchId, rakeAmount))
+
+        // The operator credit runs only once the ledger has committed. While the
+        // credit lived inside the transaction, an unreachable operator API rolled the whole
+        // settlement back, so a genuine win never reached wallet history.
+        return transactionalOperator.transactional(workflow.then())
+            .then(
+                Mono.defer {
+                    if (isHouseWinner || winnerLedgerPayoutAmount <= 0) {
+                        return@defer Mono.empty<Void>()
+                    }
+
                     enqueueWinnerExternalCreditIfNeeded(
                         matchId,
                         winnerUserId,
                         winnerLedgerPayoutAmount,
                         externallyDebitedReservations,
-                    )
-                        .then(persistWinnerPayout(matchId, winnerUserId, winnerLedgerPayoutAmount))
+                    ).onErrorResume { error ->
+                        log.error(
+                            "Operator winner credit API failed after the payout was recorded; " +
+                                "manual replay required matchId={} winnerUserId={} amount={} reason={}",
+                            matchId,
+                            winnerUserId,
+                            winnerLedgerPayoutAmount,
+                            error.message ?: error.javaClass.simpleName,
+                            error,
+                        )
+                        Mono.empty()
+                    }
                 },
             )
-            .then(persistHouseRake(matchId, rakeAmount))
-
-        return transactionalOperator.transactional(workflow.then())
     }
 
     private fun adjustBalances(
@@ -743,7 +903,8 @@ class WalletService(
                 accountSide = if (
                     type == WalletTransactionType.MATCH_PAYOUT ||
                     type == WalletTransactionType.ADMIN_CREDIT ||
-                    type == WalletTransactionType.HOUSE_RAKE
+                    type == WalletTransactionType.HOUSE_RAKE ||
+                    type == WalletTransactionType.HOUSE_WIN
                 ) {
                     "AVAILABLE_CREDIT"
                 } else {
@@ -789,16 +950,14 @@ class WalletService(
         ).then()
     }
 
-    private fun calculateRakeAmount(potAmount: Long): Long {
-        return calculateRakeAmount(potAmount, payoutRakeBasisPoints)
-    }
-
     private fun persistWinnerPayout(
         matchId: String,
         winnerUserId: String,
         winnerPayoutAmount: Long,
+        roomId: String? = null,
     ): Mono<Void> {
         if (winnerPayoutAmount <= 0) return Mono.empty()
+        val payoutReferenceId = roomId?.takeIf { it.isNotBlank() } ?: matchId
 
         return adjustBalances(winnerUserId, winnerPayoutAmount, 0)
             .flatMap {
@@ -806,8 +965,8 @@ class WalletService(
                     userId = winnerUserId,
                     amount = winnerPayoutAmount,
                     type = WalletTransactionType.MATCH_PAYOUT,
-                    referenceId = matchId,
-                    description = ludoCreditStatement(winnerPayoutAmount, matchId, "winner payout"),
+                    referenceId = payoutReferenceId,
+                    description = ludoCreditStatement(winnerPayoutAmount, matchId, "winner payout", roomId),
                     idempotencyKey = matchId,
                 )
             }
@@ -832,30 +991,183 @@ class WalletService(
             }
     }
 
-    private fun refreshOperatorWalletBalance(userId: String): Mono<WalletAccountDocument> {
-        return operatorSessionForUser(userId)
-            .flatMap { session ->
-                operatorGatewayClient.fetchUserDetail(session.operatorToken!!)
-                    .flatMap { detail ->
-                        val query = Query.query(Criteria.where("userId").`is`(userId))
-                        val update = Update()
-                            .setOnInsert("id", newId("wal"))
-                            .setOnInsert("userId", userId)
-                            .set("currency", detail.currency.trim().uppercase().ifBlank { walletCurrency })
-                            .set("availableBalance", detail.balance.toWalletAmount())
-                            .set("updatedAt", Instant.now(clock))
+    private fun persistHouseWin(
+        matchId: String,
+        houseWinAmount: Long,
+    ): Mono<Void> {
+        if (houseWinAmount <= 0) return Mono.empty()
 
-                        mongoTemplate.findAndModify(
-                            query,
-                            update,
-                            FindAndModifyOptions.options().upsert(true).returnNew(true),
-                            WalletAccountDocument::class.java,
-                        )
-                    }
+        return adjustBalances(houseUserId, houseWinAmount, 0)
+            .flatMap {
+                persistLedger(
+                    userId = houseUserId,
+                    amount = houseWinAmount,
+                    type = WalletTransactionType.HOUSE_WIN,
+                    referenceId = matchId,
+                    description = "House win for match $matchId after all real players left",
+                    idempotencyKey = "house-win:$matchId",
+                )
             }
     }
 
+    private fun refreshOperatorWalletBalance(
+        userId: String,
+        platformSessionToken: String? = null,
+    ): Mono<WalletAccountDocument> {
+        if (sessionBindingService.isEnabled() && !platformSessionToken.isNullOrBlank()) {
+            return sessionBindingService.validateAndBind(platformSessionToken.trim())
+                .flatMap { validated ->
+                    providerGameSdkClient.enrichWithPlatformBalance(validated, platformSessionToken.trim())
+                }
+                .flatMap { validated -> persistOperatorWalletBalance(userId, validated.balance, validated.currency) }
+        }
+
+        return operatorSessionForUser(userId)
+            .flatMap { session ->
+                if (!sessionBindingService.isEnabled()) {
+                    return@flatMap walletAccountRepository.findByUserId(userId)
+                }
+
+                val sessionToken = session.operatorToken!!
+
+                val balanceMono = if (providerGameSdkClient.hasWalletAccess()) {
+                    providerGameSdkClient.getBalance(sessionToken)
+                } else {
+                    sessionBindingService.validateAndBind(sessionToken)
+                        .flatMap { validated ->
+                            providerGameSdkClient.enrichWithPlatformBalance(validated, sessionToken)
+                        }
+                        .map { it.balance }
+                }
+
+                balanceMono.flatMap { balance ->
+                    persistOperatorWalletBalance(
+                        userId,
+                        balance,
+                        session.operatorCurrency ?: walletCurrency,
+                    )
+                }
+            }
+    }
+
+    private fun persistOperatorWalletBalance(
+        userId: String,
+        balance: BigDecimal,
+        currency: String,
+    ): Mono<WalletAccountDocument> {
+        val query = Query.query(Criteria.where("userId").`is`(userId))
+        val update = Update()
+            .setOnInsert("id", newId("wal"))
+            .setOnInsert("userId", userId)
+            .set("currency", currency.trim().uppercase().ifBlank { walletCurrency })
+            .set("availableBalance", balance.toWalletAmount())
+            .set("updatedAt", Instant.now(clock))
+
+        return mongoTemplate.findAndModify(
+            query,
+            update,
+            FindAndModifyOptions.options().upsert(true).returnNew(true),
+            WalletAccountDocument::class.java,
+        )
+    }
+
+    private fun recoverWalletOverviewAccount(
+        userId: String,
+        error: Throwable? = null,
+    ): Mono<WalletAccountDocument> {
+        if (error != null) {
+            log.warn(
+                "Wallet refresh failed userId={} reason={}",
+                userId,
+                error.message ?: error.javaClass.simpleName,
+            )
+        }
+
+        return sessionBindingService.findBindingByUserId(userId)
+            .flatMap { walletAccountRepository.findByUserId(userId) }
+            .switchIfEmpty(ensureGuestWalletBalance(userId))
+    }
+
+    private fun resolveOperatorSession(
+        userId: String,
+        platformSessionToken: String?,
+    ): Mono<GuestSessionDocument> {
+        if (!sessionBindingService.isEnabled()) {
+            return operatorSessionForUser(userId)
+        }
+
+        val normalizedToken = platformSessionToken?.trim()?.takeIf { it.isNotEmpty() }
+        val byToken = if (normalizedToken != null) {
+            sessionBindingService.findBindingBySessionToken(normalizedToken)
+        } else {
+            Mono.empty()
+        }
+
+        // Only use persisted operator bindings here. Guest/local tokens must not be sent to
+        // provider validate during wallet debit — that fails and rolls the lobby back to WAITING.
+        return byToken
+            .flatMap(::operatorBindingToSession)
+            .switchIfEmpty(
+                sessionBindingService.findBindingByUserId(userId)
+                    .flatMap(::operatorBindingToSession),
+            )
+    }
+
+    private fun operatorBindingToSession(
+        binding: ExternalSessionBindingDocument,
+    ): Mono<GuestSessionDocument> {
+        if (binding.operatorId.isNullOrBlank()) {
+            log.warn(
+                "Skipping operator wallet binding without operatorId userId={} sessionToken={}",
+                binding.userId,
+                binding.sessionToken.take(4) + "...",
+            )
+            return Mono.empty()
+        }
+
+        return Mono.just(guestSessionFromBinding(binding))
+    }
+
+    private fun guestSessionFromBinding(binding: ExternalSessionBindingDocument): GuestSessionDocument {
+        val now = Instant.now(clock)
+        return GuestSessionDocument(
+            userId = binding.userId,
+            sessionToken = binding.sessionToken,
+            displayName = binding.displayName,
+            operatorToken = binding.sessionToken,
+            operatorUserId = binding.operatorUserId ?: binding.userId,
+            operatorId = binding.operatorId,
+            operatorCurrency = null,
+            operatorGameId = binding.operatorGameId,
+            createdAt = now,
+            updatedAt = now,
+            expiresAt = now.plus(16, ChronoUnit.HOURS),
+        )
+    }
+
+    private fun guestSessionFromValidated(validated: ValidatedSession): GuestSessionDocument {
+        val now = Instant.now(clock)
+        return GuestSessionDocument(
+            userId = validated.userId,
+            sessionToken = validated.sessionToken,
+            displayName = validated.displayName,
+            operatorToken = validated.sessionToken,
+            operatorUserId = validated.operatorUserId ?: validated.userId,
+            operatorId = validated.operatorId,
+            operatorCurrency = validated.currency,
+            operatorGameId = validated.gameId,
+            createdAt = now,
+            updatedAt = now,
+            expiresAt = now.plus(16, ChronoUnit.HOURS),
+        )
+    }
+
     private fun operatorSessionForUser(userId: String): Mono<GuestSessionDocument> {
+        if (sessionBindingService.isEnabled()) {
+            return sessionBindingService.findBindingByUserId(userId)
+                .map(::guestSessionFromBinding)
+        }
+
         return guestSessionRepository.findFirstByUserIdOrderByUpdatedAtDesc(userId)
             .filter { session ->
                 session.expiresAt.isAfter(Instant.now(clock)) &&
@@ -887,6 +1199,7 @@ class WalletService(
             amount = winnerPayoutAmount,
             txnId = newId("txn"),
             description = ludoCreditStatement(winnerPayoutAmount, matchId, "winner payout"),
+            roundId = matchId,
         )
     }
 
@@ -895,6 +1208,7 @@ class WalletService(
         amount: Long,
         txnId: String,
         description: String,
+        roundId: String? = null,
     ): Mono<Void> {
         val debitTransactionId = reservation.externalDebitTransactionId ?: return Mono.empty()
         if (!reservation.externalDebitConfirmed) return Mono.empty()
@@ -904,16 +1218,17 @@ class WalletService(
 
         return operatorGatewayClient.enqueueCredit(
             OperatorCreditQueueMessage(
-                gameUserId = reservation.userId,
-                amount = amount.toExternalAmount(),
                 txn_id = txnId,
                 txn_ref_id = debitTransactionId,
-                ip = reservation.ipAddress ?: "0.0.0.0",
-                game_id = reservation.gameId ?: operatorGatewayClient.gameId(),
+                txn_type = 1,
+                amount = amount.toExternalAmount().toPlainString(),
                 user_id = operatorUserId,
+                game_id = (reservation.gameId ?: operatorGatewayClient.gameId()).toString(),
+                description = description,
+                ip = reservation.ipAddress ?: "0.0.0.0",
                 operatorId = operatorId,
                 token = operatorToken,
-                description = description,
+                round_id = roundId,
             ),
         )
     }
@@ -942,7 +1257,7 @@ class WalletController(
         @RequestHeader("X-Session-Token") sessionToken: String,
     ): Mono<WalletOverviewResponse> {
         return sessionPrincipalResolver.requireUser(sessionToken)
-            .flatMap { walletService.getOverview(it.id) }
+            .flatMap { walletService.getOverview(it.id, sessionToken) }
     }
 }
 

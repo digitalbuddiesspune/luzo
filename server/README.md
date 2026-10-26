@@ -94,3 +94,30 @@ docker compose up -d
   Broadcasts a WebRTC signaling payload to the room/match stream for later friend-room peer setup.
 - `GET /ws/matches/{matchId}?sessionToken=...`
   WebSocket stream for live match snapshots and signaling events.
+
+## Custom rooms with friends
+
+The home screen's **Custom Room** option lets a host select **2 Players** or
+**4 Players** and create a private room with the game-configured entry fee. Friends join using
+the generated room code. Codes are case insensitive. No bots fill private rooms.
+Only the host can start, and all selected seats must be occupied.
+
+Existing endpoints use the `X-Session-Token` header:
+
+- `POST /api/v1/lobby/private/create`: `{ "roomName": "Weekend Table", "displayName": "Host", "maxPlayers": 2 }`.
+  `maxPlayers` accepts 2 or 4, defaults to 4, and rejects other values with 400.
+  The server sets `entryFee` from `app.gameplay.online-entry-fee`; hosts cannot override it.
+- `POST /api/v1/lobby/private/join`: `{ "roomCode": "ABC123", "displayName": "Friend" }`.
+- `GET /api/v1/lobby/private/current`: current room, members, host, capacity, and active match if present.
+- `POST /api/v1/lobby/private/start`: host only; returns 409 until all selected seats are filled.
+- `POST /api/v1/lobby/private/host`: existing host can transfer ownership using `{ "targetUserId": "..." }`.
+- `POST /api/v1/lobby/private/leave`: leave the lobby, or forfeit an active round.
+
+After completion and settlement, the room returns to `WAITING` with the same
+code, configuration, and remaining friends. The result screen offers **Back to
+Lobby** and returns automatically after eight seconds. The host can start the
+next round once the room is full. Each round uses a new match/provider round ID
+and new entry-fee reservations. Previous reservations are cleared after
+settlement. Players who left or were removed are not added back automatically;
+a remaining member becomes host if the previous host left. Public matchmaking
+continues to close its rooms after each match.

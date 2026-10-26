@@ -135,11 +135,12 @@ export function isInsufficientBalanceError(error) {
 /** Default online entry fee used for client-side pre-join checks. */
 export const DEFAULT_ONLINE_ENTRY_FEE = 100;
 
-async function request(path, { method = "GET", sessionToken, body } = {}) {
+async function request(path, { method = "GET", sessionToken, body, signal } = {}) {
   logCorsRequest(path, method);
 
   try {
     const response = await fetch(`${API_BASE_URL}${path}`, {
+      signal,
       method,
       headers: buildHeaders(sessionToken, Boolean(body)),
       body: body ? JSON.stringify(body) : undefined,
@@ -154,8 +155,9 @@ async function request(path, { method = "GET", sessionToken, body } = {}) {
   }
 }
 
-async function requestJson(path, { method = "GET", sessionToken, body } = {}) {
+async function requestJson(path, { method = "GET", sessionToken, body, signal } = {}) {
   const response = await request(path, {
+    signal,
     method,
     sessionToken,
     body,
@@ -756,6 +758,7 @@ export async function leavePrivateRoom(sessionToken) {
   return requestJson("/api/v1/lobby/private/leave", {
     method: "POST",
     sessionToken,
+    signal: AbortSignal.timeout(10000),
   });
 }
 

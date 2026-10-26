@@ -3405,12 +3405,36 @@ function MenuHeader({
   );
 }
 
+function RoomPlayerCountPicker({ value, onChange, disabled = false }) {
+  const labelId = useId();
+  return (
+    <div className="private-room-field">
+      <span id={labelId}>Game size</span>
+      <div className="private-room-toggle" role="group" aria-labelledby={labelId}>
+        {[2, 4].map((count) => (
+          <button
+            key={count}
+            type="button"
+            className={value === count ? "is-active" : ""}
+            aria-pressed={value === count}
+            disabled={disabled}
+            onClick={() => onChange(count)}
+          >
+            {count} Players
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function FriendsRoomModal({
   isOpen,
   activeTab,
   roomName,
   displayName,
-  entryFee,
+  maxPlayers,
+  onMaxPlayersChange,
   roomCode,
   statusMessage = "",
   isSubmitting = false,
@@ -3418,7 +3442,6 @@ function FriendsRoomModal({
   onChangeTab,
   onRoomNameChange,
   onDisplayNameChange,
-  onEntryFeeChange,
   onRoomCodeChange,
   onSubmitCreate,
   onSubmitJoin,
@@ -3502,6 +3525,7 @@ function FriendsRoomModal({
               onSubmitCreate();
             }}
           >
+            <RoomPlayerCountPicker value={maxPlayers} onChange={onMaxPlayersChange} disabled={isSubmitting} />
             <label className="private-room-field">
               <span>Room Name</span>
               <input
@@ -3523,19 +3547,7 @@ function FriendsRoomModal({
                 maxLength={24}
               />
             </label>
-
-            <label className="private-room-field">
-              <span>Entry Fee</span>
-              <input
-                type="number"
-                inputMode="numeric"
-                min="1"
-                step="1"
-                value={entryFee}
-                onChange={(event) => onEntryFeeChange(event.target.value)}
-                placeholder="100"
-              />
-            </label>
+            <p className="waiting-lobby-copy">The game sets the entry fee. You’ll see the fee in the lobby before playing.</p>
 
             <button
               type="submit"
@@ -3691,7 +3703,7 @@ function PlayerAvatarIcon({ players }) {
   );
 }
 
-function PlayerModeCard({ players, subtitle, tone, onPlay }) {
+function PlayerModeCard({ players, tone, onPlay }) {
   return (
     <article className={`player-mode-card player-mode-card-${tone}`}>
       <div className="player-mode-top">
@@ -3700,7 +3712,6 @@ function PlayerModeCard({ players, subtitle, tone, onPlay }) {
         </div>
         <div className="player-mode-copy">
           <strong>{players} PLAYER</strong>
-          <span>{subtitle}</span>
         </div>
       </div>
       <button type="button" className="player-mode-play" onClick={onPlay}>
@@ -3773,17 +3784,20 @@ function MenuScreen({
           >
             <PlayerModeCard
               players={2}
-              subtitle="Play with a friend"
               tone="blue"
               onPlay={() => onModeSelect("online2")}
             />
             <PlayerModeCard
               players={4}
-              subtitle="Play with everyone"
               tone="green"
               onPlay={() => onModeSelect("online4")}
             />
           </div>
+          {IS_FRIENDS_MODE_VISIBLE ? (
+            <button type="button" className="private-room-primary-button menu-custom-room-button" onClick={() => onModeSelect("friends")}>
+              Custom Room <span>Create or join with friends</span>
+            </button>
+          ) : null}
         </div>
       </section>
     </AppFrame>
@@ -5608,7 +5622,7 @@ function BoardScreen({
 
   return (
     <AppFrame
-      screenClassName="screen-board screen-board-match screen-board-scrollable"
+      screenClassName="screen-board screen-board-match"
       backdrop={<GameBackdrop />}
       overlay={
         <>
@@ -5962,17 +5976,35 @@ function ConfirmDialog({
   onConfirm,
   onCancel,
 }) {
+  const dialogRef = useRef(null);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    const dialog = dialogRef.current;
+    if (!dialog) return;
+    if (!dialog.open) dialog.showModal();
+    return () => {
+      if (dialog.open) dialog.close();
+    };
+  }, [isOpen]);
+
   if (!isOpen) {
     return null;
   }
 
   return (
-    <div className="dialog-scrim" role="presentation" onClick={onCancel}>
+    <dialog
+      ref={dialogRef}
+      className="dialog-scrim confirm-dialog"
+      aria-label={title}
+      onCancel={(event) => {
+        event.preventDefault();
+        onCancel();
+      }}
+      onClick={onCancel}
+    >
       <aside
         className="dialog-card"
-        role="dialog"
-        aria-modal="true"
-        aria-label={title}
         onClick={(event) => event.stopPropagation()}
       >
         <strong>{title}</strong>
@@ -5994,7 +6026,7 @@ function ConfirmDialog({
           </button>
         </div>
       </aside>
-    </div>
+    </dialog>
   );
 }
 
@@ -6118,6 +6150,7 @@ function MatchResultDialog({
   onGoHome,
   onStartNewGame,
   newGameLabel = "Play Again",
+  lobbyNotice = "",
 }) {
   const isFinished = Boolean(
     match && match.phase === "finished" && match.winnerId,
@@ -6260,6 +6293,7 @@ function MatchResultDialog({
           </div>
         </div>
 
+        {lobbyNotice ? <p className="match-result-lobby-notice" role="status">{lobbyNotice}</p> : null}
         <div className="match-result-actions">
           <button
             type="button"
@@ -6286,14 +6320,14 @@ function PrivateRoomSetupScreen({
   activeTab,
   roomName,
   displayName,
-  entryFee,
+  maxPlayers,
+  onMaxPlayersChange,
   roomCode,
   statusMessage = "",
   onBack,
   onChangeTab,
   onRoomNameChange,
   onDisplayNameChange,
-  onEntryFeeChange,
   onRoomCodeChange,
   onSubmitCreate,
   onSubmitJoin,
@@ -6305,7 +6339,7 @@ function PrivateRoomSetupScreen({
 
   return (
     <AppFrame
-      screenClassName="screen-board screen-board-match"
+      screenClassName="screen-board screen-private-lobby"
       backdrop={<GameBackdrop />}
     >
       <BoardHeader
@@ -6367,6 +6401,7 @@ function PrivateRoomSetupScreen({
                 onSubmitCreate();
               }}
             >
+              <RoomPlayerCountPicker value={maxPlayers} onChange={onMaxPlayersChange} />
               <label className="private-room-field">
                 <span>Room Name</span>
                 <input
@@ -6389,20 +6424,7 @@ function PrivateRoomSetupScreen({
                 />
               </label>
 
-              <div className="private-room-field-grid private-room-field-grid-single">
-                <label className="private-room-field">
-                  <span>Entry Fee</span>
-                  <input
-                    type="number"
-                    inputMode="numeric"
-                    min="1"
-                    step="1"
-                    value={entryFee}
-                    onChange={(event) => onEntryFeeChange(event.target.value)}
-                    placeholder="100"
-                  />
-                </label>
-              </div>
+            <p className="waiting-lobby-copy">The game sets the entry fee. You’ll see the fee in the lobby before playing.</p>
 
               <button type="submit" className="private-room-primary-button">
                 Create And Enter
@@ -6456,6 +6478,7 @@ function PrivateRoomLobbyScreen({
   session,
   statusMessage = "",
   copiedCode = false,
+  isStarting = false,
   onBack,
   onCopyCode,
   onStart,
@@ -6468,7 +6491,7 @@ function PrivateRoomLobbyScreen({
 
   return (
     <AppFrame
-      screenClassName="screen-board screen-board-match"
+      screenClassName="screen-board screen-private-lobby"
       backdrop={<GameBackdrop />}
     >
       <BoardHeader
@@ -6529,8 +6552,8 @@ function PrivateRoomLobbyScreen({
         </div>
 
         <p className="waiting-lobby-copy">
-          Share this code with your friends. The host can start when the room
-          has at least 2 players.
+          Share this code with your friends. The host can start when all {room.maxPlayers} players
+          have joined. After each round, everyone returns here for the next game.
         </p>
 
         <aside className="lobby-miss-warning" role="note" aria-label="Turn warning">
@@ -6575,9 +6598,9 @@ function PrivateRoomLobbyScreen({
             type="button"
             className="private-room-primary-button"
             onClick={onStart}
-            disabled={room.members.length < 2}
+            disabled={room.members.length !== room.maxPlayers || isStarting}
           >
-            Start Game
+            {isStarting ? "Starting…" : "Start Game"}
           </button>
         ) : null}
 
@@ -6769,7 +6792,7 @@ export function MenuPageShell({ appState = mockBootState }) {
   const [friendsDisplayName, setFriendsDisplayName] = useState(
     appState.profile.displayName,
   );
-  const [friendsEntryFee, setFriendsEntryFee] = useState("100");
+  const [friendsMaxPlayers, setFriendsMaxPlayers] = useState(4);
   const [friendsRoomCode, setFriendsRoomCode] = useState("");
   const [friendsStatusMessage, setFriendsStatusMessage] = useState("");
   const [isFriendsSubmitting, setIsFriendsSubmitting] = useState(false);
@@ -6819,13 +6842,6 @@ export function MenuPageShell({ appState = mockBootState }) {
 
   async function handleCreateFriendsRoom() {
     try {
-      const parsedEntryFee = Number.parseInt(friendsEntryFee, 10);
-
-      if (!Number.isFinite(parsedEntryFee) || parsedEntryFee <= 0) {
-        setFriendsStatusMessage("Enter a valid entry fee greater than 0.");
-        return;
-      }
-
       setIsFriendsSubmitting(true);
       setFriendsStatusMessage("Creating private room...");
       const activeSession = await ensureGuestSession(
@@ -6835,7 +6851,7 @@ export function MenuPageShell({ appState = mockBootState }) {
       await createPrivateRoomRequest(activeSession.sessionToken, {
         roomName: friendsRoomName,
         displayName: friendsDisplayName,
-        entryFee: parsedEntryFee,
+        maxPlayers: friendsMaxPlayers,
       });
 
       navigateToHref(router, PLAY_ROUTES.friends);
@@ -6888,7 +6904,8 @@ export function MenuPageShell({ appState = mockBootState }) {
                 activeTab={friendsActiveTab}
                 roomName={friendsRoomName}
                 displayName={friendsDisplayName}
-                entryFee={friendsEntryFee}
+                maxPlayers={friendsMaxPlayers}
+                onMaxPlayersChange={setFriendsMaxPlayers}
                 roomCode={friendsRoomCode}
                 statusMessage={friendsStatusMessage}
                 isSubmitting={isFriendsSubmitting}
@@ -6899,7 +6916,6 @@ export function MenuPageShell({ appState = mockBootState }) {
                 }}
                 onRoomNameChange={setFriendsRoomName}
                 onDisplayNameChange={setFriendsDisplayName}
-                onEntryFeeChange={setFriendsEntryFee}
                 onRoomCodeChange={setFriendsRoomCode}
                 onSubmitCreate={handleCreateFriendsRoom}
                 onSubmitJoin={handleJoinFriendsRoom}
@@ -6935,7 +6951,8 @@ function PrivateRoomPageShell({ appState }) {
   const [activeTab, setActiveTab] = useState("create");
   const [roomName, setRoomName] = useState("Weekend Table");
   const [displayName, setDisplayName] = useState(appState.profile.displayName);
-  const [entryFee, setEntryFee] = useState("100");
+  const [maxPlayers, setMaxPlayers] = useState(4);
+  const [isStarting, setIsStarting] = useState(false);
   const [roomCode, setRoomCode] = useState("");
   const [statusMessage, setStatusMessage] = useState("");
   const [session, setSession] = useState(null);
@@ -6960,7 +6977,7 @@ function PrivateRoomPageShell({ appState }) {
   const [isMatchIntroComplete, setIsMatchIntroComplete] = useState(false);
   const privateMatchUserId = session?.userId ?? appState.profile.id;
 
-  useLobbyBackgroundMusic(!isSessionBootstrapping && !privateRoom && !match);
+  useLobbyBackgroundMusic(!isSessionBootstrapping && !match);
 
   useEffect(() => {
     setIsMatchIntroComplete(false);
@@ -6990,16 +7007,44 @@ function PrivateRoomPageShell({ appState }) {
     setMatch,
     timeoutRef: forfeitSyncTimeoutRef,
   });
-  const returnToMenu = useCallback(() => {
-    navigateToMenu(router);
-  }, [router]);
-  const startNewPrivateRoom = useCallback(() => {
-    setPrivateRoom(null);
-    setMatch(null);
-    setStatusMessage("");
-    setCopiedCode(false);
-    setActiveTab("create");
-  }, []);
+  const returnToPrivateLobby = useCallback(async () => {
+    if (!session?.sessionToken) return;
+    try {
+      const currentRoom = await fetchPrivateRoomState(session.sessionToken);
+      if (!currentRoom) {
+        setPrivateRoom(null);
+        setMatch(null);
+        setStatusMessage("You have left the room. Create or join another room.");
+        return;
+      }
+      const room = normalizePrivateRoomState(currentRoom);
+      // Settlement may still be completing. Keep the result until the lobby is ready.
+      if (room.match?.phase === "finished") return;
+      setPrivateRoom(room);
+      setMatch(room.match ?? null);
+      setCopiedCode(false);
+      setIsSubmittingMove(false);
+      setRollingDiceUserId(null);
+      setStatusMessage("");
+    } catch (error) {
+      setStatusMessage(error.message || "Unable to return to the lobby. Retrying…");
+    }
+  }, [session?.sessionToken]);
+
+  useEffect(() => {
+    if (match?.phase !== "finished") return;
+    let cancelled = false;
+    let timerId;
+    async function returnWhenReady() {
+      await returnToPrivateLobby();
+      if (!cancelled) timerId = window.setTimeout(returnWhenReady, 3000);
+    }
+    timerId = window.setTimeout(returnWhenReady, 8000);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timerId);
+    };
+  }, [match?.id, match?.phase, returnToPrivateLobby]);
   useMatchResultSound(match, privateMatchUserId);
 
   useEffect(() => {
@@ -7240,6 +7285,7 @@ function PrivateRoomPageShell({ appState }) {
           setStatusMessage(
             error.message || "Unable to refresh the private table.",
           );
+          pollTimeoutRef.current = window.setTimeout(pollRoom, 2000);
         }
       }
     }
@@ -7337,29 +7383,17 @@ function PrivateRoomPageShell({ appState }) {
 
   async function handleCreateRoom() {
     try {
-      const parsedEntryFee = Number.parseInt(entryFee, 10);
-      if (!Number.isFinite(parsedEntryFee) || parsedEntryFee <= 0) {
-        setStatusMessage("Enter a valid entry fee greater than 0.");
-        return;
-      }
-
       setStatusMessage("Creating private room...");
       const activeSession = await ensureActiveSession(displayName);
       const walletOverview = await fetchWalletOverview(activeSession.sessionToken);
       const nextWallet = normalizeWalletResponse(walletOverview);
       setWallet(nextWallet);
-      if ((nextWallet.availableBalance ?? 0) < parsedEntryFee) {
-        setStatusMessage(
-          `Insufficient wallet balance. You need ${parsedEntryFee} coins to create this room. Current balance: ${nextWallet.availableBalance ?? 0}.`,
-        );
-        return;
-      }
       const createdRoom = await createPrivateRoomRequest(
         activeSession.sessionToken,
         {
           roomName,
           displayName,
-          entryFee: parsedEntryFee,
+          maxPlayers,
         },
       );
       const normalizedRoom = normalizePrivateRoomState(createdRoom);
@@ -7410,11 +7444,12 @@ function PrivateRoomPageShell({ appState }) {
   }
 
   async function handleStartRoom() {
-    if (!session?.sessionToken) {
+    if (!session?.sessionToken || isStarting) {
       return;
     }
 
     try {
+      setIsStarting(true);
       setStatusMessage("Starting private table...");
       const startedRoom = await startPrivateRoomRequest(session.sessionToken);
       const normalizedRoom = normalizePrivateRoomState(startedRoom);
@@ -7424,6 +7459,8 @@ function PrivateRoomPageShell({ appState }) {
       setStatusMessage(normalizedRoom.match ? "Syncing private table..." : "");
     } catch (error) {
       setStatusMessage(error.message || "Unable to start the private table.");
+    } finally {
+      setIsStarting(false);
     }
   }
 
@@ -7446,15 +7483,18 @@ function PrivateRoomPageShell({ appState }) {
   }
 
   async function handleConfirmLeaveRoom() {
+    if (isLeavingRoomRef.current) return;
+    isLeavingRoomRef.current = true;
+    setIsLeaveConfirmOpen(false);
+    setIsUtilityOpen(false);
+    setIsLeavingRoom(true);
+
     if (!session?.sessionToken) {
       navigateToMenu(router);
       return;
     }
 
     try {
-      setIsLeavingRoom(true);
-      setIsUtilityOpen(false);
-      isLeavingRoomRef.current = true;
       setStatusMessage("Leaving room...");
       await leavePrivateRoom(session.sessionToken);
     } catch (error) {
@@ -7676,6 +7716,7 @@ function PrivateRoomPageShell({ appState }) {
           session={session}
           statusMessage={statusMessage}
           copiedCode={copiedCode}
+          isStarting={isStarting}
           onBack={() => setIsLeaveConfirmOpen(true)}
           onCopyCode={handleCopyCode}
           onStart={handleStartRoom}
@@ -7690,14 +7731,14 @@ function PrivateRoomPageShell({ appState }) {
           activeTab={activeTab}
           roomName={roomName}
           displayName={displayName}
-          entryFee={entryFee}
+          maxPlayers={maxPlayers}
+          onMaxPlayersChange={setMaxPlayers}
           roomCode={roomCode}
           statusMessage={statusMessage}
           onBack={() => navigateToMenu(router)}
           onChangeTab={setActiveTab}
           onRoomNameChange={setRoomName}
           onDisplayNameChange={setDisplayName}
-          onEntryFeeChange={setEntryFee}
           onRoomCodeChange={setRoomCode}
           onSubmitCreate={handleCreateRoom}
           onSubmitJoin={handleJoinRoom}
@@ -7717,6 +7758,8 @@ function PrivateRoomPageShell({ appState }) {
       <ConfirmDialog
         isOpen={isLeaveConfirmOpen}
         title="Leave Private Room?"
+        confirmLabel="Leave Room"
+        cancelLabel="Stay in Room"
         message={
           match
             ? getLeaveActiveMatchMessage({
@@ -7738,9 +7781,10 @@ function PrivateRoomPageShell({ appState }) {
           composedAppState?.profile?.displayName ||
           appState.profile.displayName
         }
-        onGoHome={returnToMenu}
-        onStartNewGame={startNewPrivateRoom}
-        newGameLabel="New Room"
+        onGoHome={handleConfirmLeaveRoom}
+        onStartNewGame={returnToPrivateLobby}
+        newGameLabel="Back to Lobby"
+        lobbyNotice={statusMessage || "Returning to your friends’ lobby shortly…"}
       />
     </>
   );

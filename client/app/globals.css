@@ -941,6 +941,7 @@ img {
   display: flex;
   align-items: flex-end;
   justify-content: center;
+  gap: 0.055em;
   height: 1.35em;
   padding: 0 0.15em;
 }
@@ -948,7 +949,8 @@ img {
 .menu-home-logo-char {
   display: inline-block;
   flex: 0 0 auto;
-  width: 0.48em;
+  width: auto;
+  padding-inline: 0.015em;
   text-align: center;
   line-height: 1;
   transform-origin: center 85%;
@@ -2581,6 +2583,21 @@ body:has(.screen-provider-opening)::before {
   background: linear-gradient(180deg, rgba(15, 40, 43, 0.98), rgba(8, 24, 27, 0.98));
   border: 0.06rem solid rgba(246, 230, 177, 0.3);
   box-shadow: 0 1rem 2.3rem rgba(0, 0, 0, 0.28);
+}
+
+/* Native dialogs stay above game overlays and keep focus inside the confirmation. */
+.confirm-dialog {
+  width: 100%;
+  height: 100%;
+  max-width: none;
+  max-height: none;
+  margin: 0;
+  border: 0;
+  color: inherit;
+}
+
+.confirm-dialog::backdrop {
+  background: transparent;
 }
 
 .dialog-card strong {
@@ -5005,6 +5022,34 @@ body:has(.screen-provider-opening)::before {
   }
 }
 
+/* Keep the original layout; fit the square board into its available slot. */
+.screen-board-match > .screen-content-shell {
+  min-height: 0;
+  min-width: 0;
+}
+
+.screen-board-match .game-header-bar,
+.screen-board-match .board-status-banner {
+  flex-shrink: 0;
+}
+
+.screen-board-match .board-stage-shell {
+  min-width: 0;
+  min-height: 0;
+  /* Leave clearance for the existing raised rim and shadow. */
+  padding: 0.4rem 0.4rem 0.9rem;
+  container-type: size;
+}
+
+.screen-board-match .ludo-board-frame {
+  flex: none;
+  width: min(100cqw, 100cqh);
+  height: min(100cqw, 100cqh);
+  max-width: 100%;
+  max-height: 100%;
+  aspect-ratio: 1;
+}
+
 @media (min-height: 900px) {
   .menu-stage-mobile {
     --home-top-gap: clamp(1.25rem, 2.9vh, 2rem);
@@ -5014,4 +5059,95 @@ body:has(.screen-provider-opening)::before {
     --home-options-width: min(74vw, 21rem);
     --home-options-gap-top: clamp(1rem, 2.4vh, 1.6rem);
   }
+}
+
+.menu-custom-room-button {
+  position: relative;
+  display: grid;
+  align-content: center;
+  gap: 0.22rem;
+  width: 100%;
+  min-height: 3.8rem;
+  margin-bottom: 0.4rem;
+  padding: 0.75rem 3.25rem 0.75rem 1.25rem;
+  border: 2px solid #fff0a6;
+  border-radius: 1rem;
+  background: linear-gradient(180deg, #fff09a 0%, #ffda53 48%, #edb324 100%);
+  color: #173a85;
+  font-size: clamp(0.9rem, 3.6vw, 1.05rem);
+  font-weight: 900;
+  letter-spacing: 0.06em;
+  text-align: center;
+  text-shadow: 0 1px 0 rgb(255 255 255 / 45%);
+  box-shadow:
+    inset 0 2px 0 rgb(255 255 255 / 65%),
+    inset 0 -2px 0 rgb(183 116 0 / 20%),
+    0 5px 0 #a36b14,
+    0 9px 16px rgb(5 24 74 / 30%);
+  cursor: pointer;
+  transition: transform 140ms ease, box-shadow 140ms ease, filter 140ms ease;
+}
+
+.menu-custom-room-button::after {
+  content: "›";
+  position: absolute;
+  top: 50%;
+  right: 1rem;
+  display: grid;
+  place-items: center;
+  width: 1.7rem;
+  height: 1.7rem;
+  border-radius: 50%;
+  background: linear-gradient(180deg, #4385ff, #2154cf);
+  color: #fff;
+  font-size: 1.7rem;
+  line-height: 1;
+  text-shadow: none;
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 40%), 0 2px 3px rgb(16 47 112 / 25%);
+  transform: translateY(-50%);
+}
+
+@media (hover: hover) {
+  .menu-custom-room-button:hover {
+    filter: brightness(1.06);
+    transform: translateY(-1px);
+  }
+}
+
+.menu-custom-room-button:active {
+  transform: translateY(4px);
+  box-shadow: inset 0 2px 3px rgb(183 116 0 / 15%), 0 1px 0 #a36b14, 0 3px 8px rgb(5 24 74 / 25%);
+}
+
+.menu-custom-room-button:focus-visible {
+  outline: 3px solid #fff;
+  outline-offset: 5px;
+}
+
+.menu-custom-room-button span {
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .menu-custom-room-button {
+    transition: none;
+  }
+}
+
+.screen-menu:has(.menu-custom-room-button) > .screen-content-shell {
+  overflow-y: auto;
+}
+
+.screen-private-lobby > .screen-content-shell {
+  min-height: 100%;
+}
+
+.match-result-lobby-notice {
+  margin: 0.75rem 0;
+  color: #ffe5a0;
+  text-align: center;
+  font-size: 0.85rem;
 }

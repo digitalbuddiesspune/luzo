@@ -1,1 +1,1 @@
-export const IS_FRIENDS_MODE_VISIBLE = false;
+export const IS_FRIENDS_MODE_VISIBLE = true;

@@ -1,7 +1,7 @@
-import { Lilita_One, Manrope } from "next/font/google";
+import { Titan_One, Manrope } from "next/font/google";
 import "./globals.css";
 
-const brandFont = Lilita_One({
+const brandFont = Titan_One({
   weight: "400",
   subsets: ["latin"],
   variable: "--font-brand",

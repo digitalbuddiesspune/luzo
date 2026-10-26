@@ -301,9 +301,9 @@ data class PrivateRoomStateResponse(
 )
 
 data class CreatePrivateRoomRequest(
+    val maxPlayers: Int? = null,
     val roomName: String? = null,
     val displayName: String? = null,
-    val entryFee: Long? = null,
 )
 
 data class JoinPrivateRoomRequest(
@@ -624,14 +624,31 @@ private fun normalizeRequestedRoomName(roomName: String?): String {
     return resolved
 }
 
-private fun normalizeRequestedEntryFee(entryFee: Long?, fallback: Long): Long {
-    val resolved = entryFee ?: fallback
-
-    if (resolved <= 0) {
-        throw DomainException(HttpStatus.BAD_REQUEST, "Entry fee must be greater than zero.")
+internal fun normalizePrivateMaxPlayers(maxPlayers: Int?): Int {
+    val resolved = maxPlayers ?: 4
+    if (resolved != 2 && resolved != 4) {
+        throw DomainException(HttpStatus.BAD_REQUEST, "Private rooms support only 2 or 4 players.")
     }
-
     return resolved
+}
+
+/** Keep friends together, but never carry a previous round's debits into a rematch. */
+internal fun RoomDocument.afterFinishedRound(now: Instant): RoomDocument {
+    if (mode != RoomMode.PRIVATE_FRIENDS) return copy(status = RoomStatus.FINISHED, updatedAt = now)
+    val remaining = seats.filter { !it.isBot && !it.isAbandoned }
+    return copy(
+        status = if (remaining.isEmpty()) RoomStatus.FINISHED else RoomStatus.WAITING,
+        seats = normalizeSeatColors(remaining),
+        hostUserId = hostUserId?.takeIf { host -> remaining.any { it.userId == host } }
+            ?: remaining.minByOrNull { it.joinedAt }?.userId,
+        matchId = null,
+        walletReservations = emptyList(),
+        providerRoundId = null,
+        startAttemptId = null,
+        waitingDeadlineAt = null,
+        ownedWaitingDeadlineAt = null,
+        updatedAt = now,
+    )
 }
 
 internal fun normalizeOnlineMaxPlayers(maxPlayers: Int?): Int {
@@ -2278,14 +2295,11 @@ class MatchService(
                             settlement.then(
                                 sessionLifecyclePublisher.publishRoundFinishedForRoom(room, saved),
                             ).then(
-                                if (room.status == RoomStatus.FINISHED) {
+                                if (room.matchId != saved.id) {
                                     Mono.just(room)
                                 } else {
                                     roomRepository.save(
-                                        room.copy(
-                                            status = RoomStatus.FINISHED,
-                                            updatedAt = saved.updatedAt,
-                                        ),
+                                        room.afterFinishedRound(saved.updatedAt),
                                     )
                                 },
                             )
@@ -2381,38 +2395,31 @@ class LobbyService(
         request: CreatePrivateRoomRequest,
     ): Mono<PrivateRoomStateResponse> {
         log.info(
-            "Ludo private lobby create requested userId={} displayName={} requestedRoomName={} requestedEntryFee={}",
+            "Ludo private lobby create requested userId={} displayName={} requestedRoomName={}",
             principal.id,
             principal.displayName,
             request.roomName,
-            request.entryFee,
         )
         return findExistingPrivateRoomForUser(principal.id)
-            .flatMap { room ->
-                finishRoomIfMatchAlreadyFinished(room)
-                    .flatMap { finished ->
-                        if (finished) {
-                            Mono.empty<PrivateRoomStateResponse>()
-                        } else {
-                            Mono.error<PrivateRoomStateResponse>(
-                                DomainException(HttpStatus.CONFLICT, "Leave the current private room before creating a new one."),
-                            )
-                        }
-                    }
+            .flatMap { _ ->
+                Mono.error<PrivateRoomStateResponse>(
+                    DomainException(HttpStatus.CONFLICT, "Leave the current private room before creating a new one."),
+                )
             }
             .switchIfEmpty(
                 Mono.defer {
                     val now = Instant.now(clock)
                     val displayName = normalizeRequestedDisplayName(request.displayName, principal.displayName)
                     val roomName = normalizeRequestedRoomName(request.roomName)
-                    val entryFee = normalizeRequestedEntryFee(request.entryFee, onlineEntryFee)
+                    val entryFee = onlineEntryFee
+                    val maxPlayers = normalizePrivateMaxPlayers(request.maxPlayers)
                     walletService.requireSufficientBalance(principal.id, entryFee)
                         .then(
                             Mono.defer {
                                 val room = RoomDocument(
                                     mode = RoomMode.PRIVATE_FRIENDS,
                                     status = RoomStatus.WAITING,
-                                    maxPlayers = privateRoomMaxPlayers,
+                                    maxPlayers = maxPlayers,
                                     entryFee = entryFee,
                                     roomName = roomName,
                                     hostUserId = principal.id,
@@ -2466,14 +2473,11 @@ class LobbyService(
         )
         return findExistingPrivateRoomForUser(principal.id)
             .flatMap { room ->
-                finishRoomIfMatchAlreadyFinished(room)
-                    .flatMap { finished ->
-                        if (finished) {
-                            Mono.empty<PrivateRoomStateResponse>()
-                        } else {
-                            buildPrivateRoomState(room, principal.sessionToken)
-                        }
-                    }
+                if (!room.code.equals(request.roomCode.trim(), ignoreCase = true)) {
+                    Mono.error(DomainException(HttpStatus.CONFLICT, "Leave your current room before joining another room."))
+                } else {
+                    buildPrivateRoomState(room, principal.sessionToken)
+                }
             }
             .switchIfEmpty(
                 findPrivateRoomByCode(request.roomCode)
@@ -2593,18 +2597,20 @@ class LobbyService(
                 }
 
                 val realSeats = randomizeSeatColors(room.seats.filter { !it.isBot })
-                if (realSeats.size < 2) {
+                if (realSeats.size != room.maxPlayers) {
                     return@flatMap Mono.error(
-                        DomainException(HttpStatus.CONFLICT, "At least 2 players are required to start a private room."),
+                        DomainException(HttpStatus.CONFLICT, "All ${room.maxPlayers} players must join before starting this room."),
                     )
                 }
                 rejectSameSourceSeatGroup(realSeats, room.id, room.code)
 
                 val now = Instant.now(clock)
                 val preparedRoom = room.copy(
+                    status = RoomStatus.STARTING,
                     seats = realSeats,
                     updatedAt = now,
                     waitingDeadlineAt = null,
+                    providerRoundId = room.providerRoundId ?: newId("match"),
                 )
                 log.info(
                     "Ludo private lobby start preparing roomId={} roomCode={} hostUserId={} realSeats={} entryFee={}",
@@ -2635,6 +2641,7 @@ class LobbyService(
                                     seatsNeedingReservation,
                                     savedPreparedRoom.id,
                                     savedPreparedRoom.entryFee,
+                                    roundId = savedPreparedRoom.providerRoundId,
                                 ),
                             )
                             .flatMap { newReservations ->
@@ -2642,13 +2649,42 @@ class LobbyService(
                                     savedPreparedRoom.copy(walletReservations = existingReservations + newReservations),
                                 )
                                     .flatMap { savedRoom ->
-                                        matchService.createStartedMatch(savedRoom)
+                                        matchService.createStartedMatch(savedRoom, savedRoom.providerRoundId)
                                             .then(roomRepository.findById(savedRoom.id))
                                     }
                                 startWorkflow.onErrorResume { error ->
-                                    refundReservationsAfterFailedStart(newReservations, savedPreparedRoom.id)
-                                        .then(Mono.error(error))
+                                    roomRepository.findById(savedPreparedRoom.id)
+                                        .flatMap { latestRoom ->
+                                            if (latestRoom.status == RoomStatus.ACTIVE && latestRoom.matchId != null) {
+                                                // A match was created: do not refund fees for a live round.
+                                                Mono.error<RoomDocument>(error)
+                                            } else {
+                                                refundReservationsAfterFailedStart(newReservations, savedPreparedRoom.id)
+                                                    .then(roomRepository.save(latestRoom.copy(
+                                                        status = RoomStatus.WAITING,
+                                                        matchId = null,
+                                                        walletReservations = existingReservations,
+                                                        providerRoundId = null,
+                                                        updatedAt = Instant.now(clock),
+                                                    )))
+                                                    .then(Mono.error<RoomDocument>(error))
+                                            }
+                                        }
                                 }
+                            }
+                            .onErrorResume { error ->
+                                // Includes insufficient balance and partial debits, refunded by the batch helper.
+                                roomRepository.findById(savedPreparedRoom.id)
+                                    .flatMap { latestRoom ->
+                                        if (latestRoom.status == RoomStatus.STARTING) {
+                                            roomRepository.save(latestRoom.copy(
+                                                status = RoomStatus.WAITING,
+                                                providerRoundId = null,
+                                                updatedAt = Instant.now(clock),
+                                            ))
+                                        } else Mono.just(latestRoom)
+                                    }
+                                    .then(Mono.error<RoomDocument>(error))
                             }
                     }
                     .flatMap { startedRoom -> buildPrivateRoomState(startedRoom, principal.sessionToken) }
@@ -2751,7 +2787,7 @@ class LobbyService(
             .flatMap { match ->
                 if (match.status == MatchStatus.FINISHED || match.phase == MatchPhase.FINISHED) {
                     settleAndMarkRoomFinished(room, match)
-                        .then(Mono.error(DomainException(HttpStatus.NOT_FOUND, "Private room not found for user.")))
+                        .map { it.toPrivateState() }
                 } else {
                     Mono.just(
                         room.toPrivateState(
@@ -2761,21 +2797,6 @@ class LobbyService(
                     )
                 }
             }
-    }
-
-    private fun finishRoomIfMatchAlreadyFinished(room: RoomDocument): Mono<Boolean> {
-        val matchId = room.matchId ?: return Mono.just(false)
-        if (room.status != RoomStatus.ACTIVE) return Mono.just(false)
-
-        return matchRepository.findById(matchId)
-            .flatMap { match ->
-                if (match.status == MatchStatus.FINISHED || match.phase == MatchPhase.FINISHED) {
-                    settleAndMarkRoomFinished(room, match).thenReturn(true)
-                } else {
-                    Mono.just(false)
-                }
-            }
-            .defaultIfEmpty(false)
     }
 
     private fun settleAndMarkRoomFinished(room: RoomDocument, match: MatchDocument): Mono<RoomDocument> {
@@ -2820,10 +2841,7 @@ class LobbyService(
                     Mono.just(room)
                 } else {
                     roomRepository.save(
-                        room.copy(
-                            status = RoomStatus.FINISHED,
-                            updatedAt = match.updatedAt,
-                        ),
+                        room.afterFinishedRound(match.updatedAt),
                     )
                 },
             )
@@ -2907,6 +2925,7 @@ class LobbyService(
         roomId: String,
         amount: Long,
         startAttemptId: String? = null,
+        roundId: String? = null,
     ): Mono<List<WalletReservation>> {
         val reservations = mutableListOf<WalletReservation>()
         log.info(
@@ -2925,6 +2944,8 @@ class LobbyService(
                     amount,
                     seat.ipAddress,
                     startAttemptId,
+                    roundId = roundId,
+                    platformSessionToken = seat.sessionToken,
                 )
                     .doOnNext { reservation -> reservations.add(reservation) }
             }
