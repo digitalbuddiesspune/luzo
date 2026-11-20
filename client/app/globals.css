@@ -1071,23 +1071,29 @@ img {
   display: grid;
   place-items: center;
   min-width: 0;
+  width: 100%;
+  aspect-ratio: 656 / 1199;
   padding: 0;
   border: 0;
   background: transparent;
   cursor: pointer;
   border-radius: 1.15rem;
+  transition: filter 150ms ease;
 }
 
 .player-mode-image-button img {
   display: block;
   width: 100%;
-  height: auto;
-  max-height: 14rem;
+  height: 100%;
   object-fit: contain;
 }
 
 .player-mode-image-button:hover {
   filter: brightness(1.06);
+}
+
+.player-mode-image-button:active {
+  filter: brightness(0.94);
 }
 
 .player-mode-image-button:focus-visible {
@@ -5166,4 +5172,46 @@ body:has(.screen-provider-opening)::before {
   color: #ffe5a0;
   text-align: center;
   font-size: 0.85rem;
+}
+
+/* Size the home artwork against its container and the available screen height. */
+.screen-menu:has(.menu-home-layout-modern) > .screen-content-shell {
+  overflow-y: auto;
+}
+
+.menu-home-layout.menu-home-layout-modern {
+  flex: 1 0 auto;
+  height: auto;
+  min-height: min-content;
+  justify-content: center;
+  gap: clamp(0.75rem, 2dvh, 1.25rem);
+  padding-block: clamp(0.75rem, 2dvh, 1.25rem);
+  overflow: visible;
+}
+
+.menu-home-hero.menu-home-hero-modern {
+  flex: none;
+}
+
+.menu-home-hero-modern .menu-ludo-hero.menu-ludo-hero-modern {
+  width: min(90%, 20rem, 38dvh);
+  height: auto;
+}
+
+.menu-home-cta-group {
+  width: min(100%, 23rem, max(18rem, 42dvh));
+  gap: clamp(0.75rem, 2dvh, 1rem);
+  flex-shrink: 0;
+}
+
+.menu-home-player-options {
+  align-items: start;
+  gap: clamp(0.5rem, 1.5dvh, 0.875rem);
+  padding: 0.25rem;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .player-mode-image-button {
+    transition: none;
+  }
 }
