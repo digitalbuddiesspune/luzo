@@ -108,3 +108,6 @@ button {
 .stagger-4 {
   animation-delay: 0.16s;
 }
+html {
+  scroll-behavior: smooth;
+}

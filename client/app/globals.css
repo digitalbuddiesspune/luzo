@@ -1,7 +1,7 @@
 @import "./classic-board.css";
 
 :root {
-  --desktop-frame-width: 520px;
+  --desktop-frame-width: 420px;
   --screen-content-max-width: 32rem;
   --app-background-image: url("/assets/MenuBg.png");
   --app-background-position: center top;
@@ -1037,7 +1037,6 @@ img {
 .menu-ludo-hero-modern {
   width: min(82vw, 21rem);
   max-width: 100%;
-  animation: menu-home-float 5.5s ease-in-out infinite;
 }
 
 .menu-home-cta-group {
@@ -1066,6 +1065,34 @@ img {
   box-shadow:
     inset 0 0.1rem 0 rgba(255, 255, 255, 0.22),
     0 0.65rem 1.15rem rgba(0, 0, 0, 0.28);
+}
+
+.player-mode-image-button {
+  display: grid;
+  place-items: center;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  border-radius: 1.15rem;
+}
+
+.player-mode-image-button img {
+  display: block;
+  width: 100%;
+  height: auto;
+  max-height: 14rem;
+  object-fit: contain;
+}
+
+.player-mode-image-button:hover {
+  filter: brightness(1.06);
+}
+
+.player-mode-image-button:focus-visible {
+  outline: 3px solid #ffe56a;
+  outline-offset: 3px;
 }
 
 .player-mode-card-blue {
@@ -1181,17 +1208,6 @@ img {
   to {
     opacity: 1;
     transform: translateY(0);
-  }
-}
-
-@keyframes menu-home-float {
-  0%,
-  100% {
-    transform: translateY(0);
-  }
-
-  50% {
-    transform: translateY(-0.45rem);
   }
 }
 

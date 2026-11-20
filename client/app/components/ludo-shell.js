@@ -3704,6 +3704,29 @@ function PlayerAvatarIcon({ players }) {
 }
 
 function PlayerModeCard({ players, tone, onPlay }) {
+  if (players === 2 || players === 4) {
+    return (
+      <button
+        type="button"
+        className="player-mode-image-button"
+        onClick={onPlay}
+        aria-label={`Play ${players === 2 ? "two" : "four"}-player game`}
+      >
+        <img
+          src={
+            players === 2
+              ? "/assets/duo_game_mode-Photoroom%20(1).png"
+              : "/assets/four_player_game_mode-Photoroom%20(1).png"
+          }
+          alt=""
+          width={656}
+          height={1199}
+          draggable={false}
+        />
+      </button>
+    );
+  }
+
   return (
     <article className={`player-mode-card player-mode-card-${tone}`}>
       <div className="player-mode-top">
@@ -3748,30 +3771,12 @@ function MenuScreen({
 
       <section className="menu-home-layout menu-home-layout-modern">
         <div className="menu-home-hero menu-home-hero-modern">
-          <div className="menu-home-brand">
-            <h1 className="menu-home-brand-name" aria-label="PotLudo">
-              <span className="menu-home-logo-curve" aria-hidden="true">
-                <span className="menu-home-logo-char menu-home-logo-pot" style={{ "--r": -20, "--y": 0.02 }}>P</span>
-                <span className="menu-home-logo-char menu-home-logo-pot" style={{ "--r": -12, "--y": -0.08 }}>o</span>
-                <span className="menu-home-logo-char menu-home-logo-pot" style={{ "--r": -5, "--y": -0.14 }}>t</span>
-                <span className="menu-home-logo-char menu-home-logo-ludo" style={{ "--r": 2, "--y": -0.16 }}>L</span>
-                <span className="menu-home-logo-char menu-home-logo-ludo" style={{ "--r": 9, "--y": -0.12 }}>u</span>
-                <span className="menu-home-logo-char menu-home-logo-ludo" style={{ "--r": 15, "--y": -0.05 }}>d</span>
-                <span className="menu-home-logo-char menu-home-logo-ludo" style={{ "--r": 22, "--y": 0.04 }}>o</span>
-              </span>
-            </h1>
-            <p className="menu-home-brand-tagline">
-              <span className="menu-home-tag-star" aria-hidden="true" />
-              Roll, race, and win the pot.
-              <span className="menu-home-tag-star" aria-hidden="true" />
-            </p>
-          </div>
           <img
             className="menu-ludo-hero menu-ludo-hero-modern"
-            src="/assets/LudoHome.png"
-            alt=""
-            width={978}
-            height={717}
+            src="/assets/brand.webp"
+            alt="Ludo logo"
+            width={1536}
+            height={1024}
             draggable={false}
           />
         </div>
