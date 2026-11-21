@@ -5215,3 +5215,6 @@ body:has(.screen-provider-opening)::before {
     transition: none;
   }
 }
+
+.menu-tournament-link { display: block; padding: .8rem; text-align: center; color: #ffdfa0; font-weight: 700; text-decoration: none; border: 1px solid #ffdfa055; border-radius: 14px; background: #112957cc; min-height: 44px; }
+.menu-tournament-link:focus-visible { outline: 3px solid white; outline-offset: 3px; }

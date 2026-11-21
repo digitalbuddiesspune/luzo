@@ -135,4 +135,4 @@ app:
       turn-credential: ${APP_REALTIME_WEB_RTC_TURN_CREDENTIAL:}
 
   web:
-    allowed-origin-patterns: ${APP_WEB_ALLOWED_ORIGIN_PATTERNS:http://localhost:3000,http://127.0.0.1:3000,http://localhost:3005,http://127.0.0.1:3005,https://*.vercel.app,https://www.fashionbuddies.in}
+    allowed-origin-patterns: ${APP_WEB_ALLOWED_ORIGIN_PATTERNS:http://localhost:3000,http://127.0.0.1:3000,http://localhost:3005,http://127.0.0.1:3005,http://localhost:5174,http://127.0.0.1:5174,https://*.vercel.app,https://www.fashionbuddies.in}

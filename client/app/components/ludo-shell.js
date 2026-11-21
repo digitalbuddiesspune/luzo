@@ -4,6 +4,7 @@
 
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import Link from "next/link";
 import {
   PLAY_ROUTES,
   cloneMockBootState,
@@ -3798,6 +3799,7 @@ function MenuScreen({
               onPlay={() => onModeSelect("online4")}
             />
           </div>
+          <Link className="menu-tournament-link" href="/tournaments">Tournament Mode →</Link>
           {IS_FRIENDS_MODE_VISIBLE ? (
             <button type="button" className="private-room-primary-button menu-custom-room-button" onClick={() => onModeSelect("friends")}>
               Custom Room <span>Create or join with friends</span>
@@ -8939,3 +8941,6 @@ function LocalBoardPageShell({ mode, appState }) {
 export default function LudoShell() {
   return <MenuPageShell appState={cloneMockBootState()} />;
 }
+
+// Tournament sessions reuse the board without entering Classic matchmaking.
+export { BoardScreen as TournamentGameBoard };

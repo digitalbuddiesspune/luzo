@@ -13,6 +13,8 @@ import { DashboardPage } from "./pages/DashboardPage";
 import { LoginPage } from "./pages/LoginPage";
 import { PlatformsPage } from "./pages/PlatformsPage";
 import { ProfitLossPage } from "./pages/ProfitLossPage";
+import { TournamentsPage } from "./pages/TournamentsPage";
+import { CreateTournamentPage } from "./pages/CreateTournamentPage";
 import { SettingsPage } from "./pages/SettingsPage";
 
 function App() {
@@ -33,6 +35,8 @@ function App() {
   const [users, setUsers] = useState([]);
   const [usersPagination, setUsersPagination] = useState(null);
   const [selectedGame, setSelectedGame] = useState(null);
+  const [editingTournament, setEditingTournament] = useState(null);
+  const [selectedTournamentId, setSelectedTournamentId] = useState(null);
   const [loading, setLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState("");
@@ -241,6 +245,9 @@ function App() {
   const handleRefreshActivePage = () => refreshPage(activePage);
 
   const handleNavigate = (page) => {
+    if (page === "create-tournament") {
+      setEditingTournament(null);
+    }
     setActivePage(page);
     void refreshPage(page);
   };
@@ -261,6 +268,11 @@ function App() {
     dashboard: { title: "Dashboard", hint: "Live overview" },
     platforms: { title: "Platforms", hint: "Per-partner breakdown" },
     "profit-loss": { title: "Profit & Loss", hint: "Games, users & filters" },
+    tournaments: { title: "Tournaments", hint: "Registration, brackets & rewards" },
+    "create-tournament": {
+      title: editingTournament ? "Edit Tournament" : "Create Tournament",
+      hint: "Configure, preview & publish",
+    },
     settings: { title: "Settings", hint: "Platform fee & monetization" },
   }[activePage] || { title: "Admin", hint: "" };
 
@@ -401,6 +413,35 @@ function App() {
               usersPagination={usersPagination}
               onUsersPageChange={loadUsers}
               onSelectGame={setSelectedGame}
+            />
+          ) : null}
+
+          {activePage === "tournaments" ? (
+            <TournamentsPage
+              initialSelectedId={selectedTournamentId}
+              onCreateNew={() => {
+                setEditingTournament(null);
+                setActivePage("create-tournament");
+              }}
+              onEditDraft={(tournament) => {
+                setEditingTournament(tournament);
+                setActivePage("create-tournament");
+              }}
+            />
+          ) : null}
+
+          {activePage === "create-tournament" ? (
+            <CreateTournamentPage
+              editingTournament={editingTournament}
+              onDone={(tournamentId) => {
+                setEditingTournament(null);
+                setSelectedTournamentId(tournamentId);
+                setActivePage("tournaments");
+              }}
+              onCancel={() => {
+                setEditingTournament(null);
+                setActivePage("tournaments");
+              }}
             />
           ) : null}
 

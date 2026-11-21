@@ -511,7 +511,10 @@ export async function ensureGuestSession(defaultDisplayName) {
 
   const storedSession = readStoredSession();
 
-  if (storedSession?.sessionToken) {
+  if (
+    storedSession?.sessionToken &&
+    (OPERATOR_PLATFORM_ENABLED || !storedSession.isOperatorSession)
+  ) {
     try {
       return await refreshStoredSession(storedSession);
     } catch (error) {

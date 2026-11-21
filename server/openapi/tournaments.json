@@ -1,0 +1,1344 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "PotLudo Tournament API",
+    "version": "1.0.0",
+    "description": "Free knockout tournaments. Existing X-Session-Token identity and opaque admin Bearer sessions. Paid drafts can be saved; payment routes and paid publication return 423. Requires MongoDB transactions (replica set or sharded deployment)."
+  },
+  "servers": [
+    {
+      "url": "http://localhost:8080"
+    }
+  ],
+  "paths": {
+    "/api/tournaments": {
+      "get": {
+        "summary": "List published tournaments",
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid configuration or input"
+          },
+          "401": {
+            "description": "Missing or expired session"
+          },
+          "403": {
+            "description": "Not assigned or not authorized"
+          },
+          "404": {
+            "description": "Not found"
+          },
+          "409": {
+            "description": "Invalid transition, capacity exhausted, or concurrent change; refresh before retrying"
+          },
+          "423": {
+            "description": "Paid entry and cash operations disabled"
+          }
+        }
+      }
+    },
+    "/api/tournaments/my": {
+      "get": {
+        "summary": "List my registrations and history",
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid configuration or input"
+          },
+          "401": {
+            "description": "Missing or expired session"
+          },
+          "403": {
+            "description": "Not assigned or not authorized"
+          },
+          "404": {
+            "description": "Not found"
+          },
+          "409": {
+            "description": "Invalid transition, capacity exhausted, or concurrent change; refresh before retrying"
+          },
+          "423": {
+            "description": "Paid entry and cash operations disabled"
+          }
+        },
+        "security": [
+          {
+            "PlayerSession": []
+          }
+        ]
+      }
+    },
+    "/api/tournaments/{id}": {
+      "get": {
+        "summary": "Tournament snapshot",
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid configuration or input"
+          },
+          "401": {
+            "description": "Missing or expired session"
+          },
+          "403": {
+            "description": "Not assigned or not authorized"
+          },
+          "404": {
+            "description": "Not found"
+          },
+          "409": {
+            "description": "Invalid transition, capacity exhausted, or concurrent change; refresh before retrying"
+          },
+          "423": {
+            "description": "Paid entry and cash operations disabled"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/tournaments/{id}/bracket": {
+      "get": {
+        "summary": "Bracket and full-capacity preview",
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid configuration or input"
+          },
+          "401": {
+            "description": "Missing or expired session"
+          },
+          "403": {
+            "description": "Not assigned or not authorized"
+          },
+          "404": {
+            "description": "Not found"
+          },
+          "409": {
+            "description": "Invalid transition, capacity exhausted, or concurrent change; refresh before retrying"
+          },
+          "423": {
+            "description": "Paid entry and cash operations disabled"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/tournaments/{id}/players": {
+      "get": {
+        "summary": "Participant list",
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid configuration or input"
+          },
+          "401": {
+            "description": "Missing or expired session"
+          },
+          "403": {
+            "description": "Not assigned or not authorized"
+          },
+          "404": {
+            "description": "Not found"
+          },
+          "409": {
+            "description": "Invalid transition, capacity exhausted, or concurrent change; refresh before retrying"
+          },
+          "423": {
+            "description": "Paid entry and cash operations disabled"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/tournaments/{id}/results": {
+      "get": {
+        "summary": "Standings and settled point rewards",
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid configuration or input"
+          },
+          "401": {
+            "description": "Missing or expired session"
+          },
+          "403": {
+            "description": "Not assigned or not authorized"
+          },
+          "404": {
+            "description": "Not found"
+          },
+          "409": {
+            "description": "Invalid transition, capacity exhausted, or concurrent change; refresh before retrying"
+          },
+          "423": {
+            "description": "Paid entry and cash operations disabled"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/tournaments/{id}/register": {
+      "post": {
+        "summary": "register",
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid configuration or input"
+          },
+          "401": {
+            "description": "Missing or expired session"
+          },
+          "403": {
+            "description": "Not assigned or not authorized"
+          },
+          "404": {
+            "description": "Not found"
+          },
+          "409": {
+            "description": "Invalid transition, capacity exhausted, or concurrent change; refresh before retrying"
+          },
+          "423": {
+            "description": "Paid entry and cash operations disabled"
+          }
+        },
+        "security": [
+          {
+            "PlayerSession": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/tournaments/{id}/cancel-registration": {
+      "post": {
+        "summary": "cancel-registration",
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid configuration or input"
+          },
+          "401": {
+            "description": "Missing or expired session"
+          },
+          "403": {
+            "description": "Not assigned or not authorized"
+          },
+          "404": {
+            "description": "Not found"
+          },
+          "409": {
+            "description": "Invalid transition, capacity exhausted, or concurrent change; refresh before retrying"
+          },
+          "423": {
+            "description": "Paid entry and cash operations disabled"
+          }
+        },
+        "security": [
+          {
+            "PlayerSession": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/tournament-matches/my": {
+      "get": {
+        "summary": "Read own tournament match",
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid configuration or input"
+          },
+          "401": {
+            "description": "Missing or expired session"
+          },
+          "403": {
+            "description": "Not assigned or not authorized"
+          },
+          "404": {
+            "description": "Not found"
+          },
+          "409": {
+            "description": "Invalid transition, capacity exhausted, or concurrent change; refresh before retrying"
+          },
+          "423": {
+            "description": "Paid entry and cash operations disabled"
+          }
+        },
+        "security": [
+          {
+            "PlayerSession": []
+          }
+        ]
+      }
+    },
+    "/api/tournament-matches/{id}": {
+      "get": {
+        "summary": "Read own tournament match",
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid configuration or input"
+          },
+          "401": {
+            "description": "Missing or expired session"
+          },
+          "403": {
+            "description": "Not assigned or not authorized"
+          },
+          "404": {
+            "description": "Not found"
+          },
+          "409": {
+            "description": "Invalid transition, capacity exhausted, or concurrent change; refresh before retrying"
+          },
+          "423": {
+            "description": "Paid entry and cash operations disabled"
+          }
+        },
+        "security": [
+          {
+            "PlayerSession": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/tournament-matches/{id}/status": {
+      "get": {
+        "summary": "Read own tournament match",
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid configuration or input"
+          },
+          "401": {
+            "description": "Missing or expired session"
+          },
+          "403": {
+            "description": "Not assigned or not authorized"
+          },
+          "404": {
+            "description": "Not found"
+          },
+          "409": {
+            "description": "Invalid transition, capacity exhausted, or concurrent change; refresh before retrying"
+          },
+          "423": {
+            "description": "Paid entry and cash operations disabled"
+          }
+        },
+        "security": [
+          {
+            "PlayerSession": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/tournament-matches/{id}/join": {
+      "post": {
+        "summary": "Check in or reconnect; never creates a second match",
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid configuration or input"
+          },
+          "401": {
+            "description": "Missing or expired session"
+          },
+          "403": {
+            "description": "Not assigned or not authorized"
+          },
+          "404": {
+            "description": "Not found"
+          },
+          "409": {
+            "description": "Invalid transition, capacity exhausted, or concurrent change; refresh before retrying"
+          },
+          "423": {
+            "description": "Paid entry and cash operations disabled"
+          }
+        },
+        "security": [
+          {
+            "PlayerSession": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/tournament-rewards/my": {
+      "get": {
+        "summary": "My non-cash point settlements",
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid configuration or input"
+          },
+          "401": {
+            "description": "Missing or expired session"
+          },
+          "403": {
+            "description": "Not assigned or not authorized"
+          },
+          "404": {
+            "description": "Not found"
+          },
+          "409": {
+            "description": "Invalid transition, capacity exhausted, or concurrent change; refresh before retrying"
+          },
+          "423": {
+            "description": "Paid entry and cash operations disabled"
+          }
+        },
+        "security": [
+          {
+            "PlayerSession": []
+          }
+        ]
+      }
+    },
+    "/api/tournament-payments/create": {
+      "post": {
+        "summary": "Disabled until approval and payment integration",
+        "responses": {
+          "423": {
+            "description": "No money collected. This operation is disabled."
+          }
+        }
+      }
+    },
+    "/api/tournament-payments/webhook": {
+      "post": {
+        "summary": "Disabled until approval and payment integration",
+        "responses": {
+          "423": {
+            "description": "No money collected. This operation is disabled."
+          }
+        }
+      }
+    },
+    "/api/tournament-payments/{id}": {
+      "get": {
+        "summary": "Disabled until approval and payment integration",
+        "responses": {
+          "423": {
+            "description": "No money collected. This operation is disabled."
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/tournament-payments/{id}/refund": {
+      "post": {
+        "summary": "Disabled until approval and payment integration",
+        "responses": {
+          "423": {
+            "description": "No money collected. This operation is disabled."
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/admin/tournaments": {
+      "get": {
+        "summary": "List all tournaments",
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid configuration or input"
+          },
+          "401": {
+            "description": "Missing or expired session"
+          },
+          "403": {
+            "description": "Not assigned or not authorized"
+          },
+          "404": {
+            "description": "Not found"
+          },
+          "409": {
+            "description": "Invalid transition, capacity exhausted, or concurrent change; refresh before retrying"
+          },
+          "423": {
+            "description": "Paid entry and cash operations disabled"
+          }
+        },
+        "security": [
+          {
+            "AdminSession": []
+          }
+        ]
+      },
+      "post": {
+        "summary": "Create a draft",
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid configuration or input"
+          },
+          "401": {
+            "description": "Missing or expired session"
+          },
+          "403": {
+            "description": "Not assigned or not authorized"
+          },
+          "404": {
+            "description": "Not found"
+          },
+          "409": {
+            "description": "Invalid transition, capacity exhausted, or concurrent change; refresh before retrying"
+          },
+          "423": {
+            "description": "Paid entry and cash operations disabled"
+          }
+        },
+        "security": [
+          {
+            "AdminSession": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TournamentConfig"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/tournaments/preview": {
+      "post": {
+        "summary": "Validate and preview a bracket",
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid configuration or input"
+          },
+          "401": {
+            "description": "Missing or expired session"
+          },
+          "403": {
+            "description": "Not assigned or not authorized"
+          },
+          "404": {
+            "description": "Not found"
+          },
+          "409": {
+            "description": "Invalid transition, capacity exhausted, or concurrent change; refresh before retrying"
+          },
+          "423": {
+            "description": "Paid entry and cash operations disabled"
+          }
+        },
+        "security": [
+          {
+            "AdminSession": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TournamentConfig"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/tournaments/{id}": {
+      "get": {
+        "summary": "Full administrative snapshot",
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid configuration or input"
+          },
+          "401": {
+            "description": "Missing or expired session"
+          },
+          "403": {
+            "description": "Not assigned or not authorized"
+          },
+          "404": {
+            "description": "Not found"
+          },
+          "409": {
+            "description": "Invalid transition, capacity exhausted, or concurrent change; refresh before retrying"
+          },
+          "423": {
+            "description": "Paid entry and cash operations disabled"
+          }
+        },
+        "security": [
+          {
+            "AdminSession": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      },
+      "put": {
+        "summary": "Edit an unpublished draft",
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid configuration or input"
+          },
+          "401": {
+            "description": "Missing or expired session"
+          },
+          "403": {
+            "description": "Not assigned or not authorized"
+          },
+          "404": {
+            "description": "Not found"
+          },
+          "409": {
+            "description": "Invalid transition, capacity exhausted, or concurrent change; refresh before retrying"
+          },
+          "423": {
+            "description": "Paid entry and cash operations disabled"
+          }
+        },
+        "security": [
+          {
+            "AdminSession": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TournamentConfig"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/tournaments/{id}/publish": {
+      "post": {
+        "summary": "publish",
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid configuration or input"
+          },
+          "401": {
+            "description": "Missing or expired session"
+          },
+          "403": {
+            "description": "Not assigned or not authorized"
+          },
+          "404": {
+            "description": "Not found"
+          },
+          "409": {
+            "description": "Invalid transition, capacity exhausted, or concurrent change; refresh before retrying"
+          },
+          "423": {
+            "description": "Paid entry and cash operations disabled"
+          }
+        },
+        "security": [
+          {
+            "AdminSession": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/admin/tournaments/{id}/start": {
+      "post": {
+        "summary": "start",
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid configuration or input"
+          },
+          "401": {
+            "description": "Missing or expired session"
+          },
+          "403": {
+            "description": "Not assigned or not authorized"
+          },
+          "404": {
+            "description": "Not found"
+          },
+          "409": {
+            "description": "Invalid transition, capacity exhausted, or concurrent change; refresh before retrying"
+          },
+          "423": {
+            "description": "Paid entry and cash operations disabled"
+          }
+        },
+        "security": [
+          {
+            "AdminSession": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/admin/tournaments/{id}/cancel": {
+      "post": {
+        "summary": "cancel",
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid configuration or input"
+          },
+          "401": {
+            "description": "Missing or expired session"
+          },
+          "403": {
+            "description": "Not assigned or not authorized"
+          },
+          "404": {
+            "description": "Not found"
+          },
+          "409": {
+            "description": "Invalid transition, capacity exhausted, or concurrent change; refresh before retrying"
+          },
+          "423": {
+            "description": "Paid entry and cash operations disabled"
+          }
+        },
+        "security": [
+          {
+            "AdminSession": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AdminAction"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/tournaments/{id}/force-complete": {
+      "post": {
+        "summary": "force-complete",
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid configuration or input"
+          },
+          "401": {
+            "description": "Missing or expired session"
+          },
+          "403": {
+            "description": "Not assigned or not authorized"
+          },
+          "404": {
+            "description": "Not found"
+          },
+          "409": {
+            "description": "Invalid transition, capacity exhausted, or concurrent change; refresh before retrying"
+          },
+          "423": {
+            "description": "Paid entry and cash operations disabled"
+          }
+        },
+        "security": [
+          {
+            "AdminSession": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AdminAction"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/tournaments/{id}/disqualify": {
+      "post": {
+        "summary": "disqualify",
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid configuration or input"
+          },
+          "401": {
+            "description": "Missing or expired session"
+          },
+          "403": {
+            "description": "Not assigned or not authorized"
+          },
+          "404": {
+            "description": "Not found"
+          },
+          "409": {
+            "description": "Invalid transition, capacity exhausted, or concurrent change; refresh before retrying"
+          },
+          "423": {
+            "description": "Paid entry and cash operations disabled"
+          }
+        },
+        "security": [
+          {
+            "AdminSession": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AdminAction"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/tournaments/{id}/restart-match": {
+      "post": {
+        "summary": "restart-match",
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid configuration or input"
+          },
+          "401": {
+            "description": "Missing or expired session"
+          },
+          "403": {
+            "description": "Not assigned or not authorized"
+          },
+          "404": {
+            "description": "Not found"
+          },
+          "409": {
+            "description": "Invalid transition, capacity exhausted, or concurrent change; refresh before retrying"
+          },
+          "423": {
+            "description": "Paid entry and cash operations disabled"
+          }
+        },
+        "security": [
+          {
+            "AdminSession": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AdminAction"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/tournaments/{id}/resolve-match": {
+      "post": {
+        "summary": "resolve-match",
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid configuration or input"
+          },
+          "401": {
+            "description": "Missing or expired session"
+          },
+          "403": {
+            "description": "Not assigned or not authorized"
+          },
+          "404": {
+            "description": "Not found"
+          },
+          "409": {
+            "description": "Invalid transition, capacity exhausted, or concurrent change; refresh before retrying"
+          },
+          "423": {
+            "description": "Paid entry and cash operations disabled"
+          }
+        },
+        "security": [
+          {
+            "AdminSession": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AdminAction"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/tournaments/{id}/analytics": {
+      "get": {
+        "summary": "analytics",
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid configuration or input"
+          },
+          "401": {
+            "description": "Missing or expired session"
+          },
+          "403": {
+            "description": "Not assigned or not authorized"
+          },
+          "404": {
+            "description": "Not found"
+          },
+          "409": {
+            "description": "Invalid transition, capacity exhausted, or concurrent change; refresh before retrying"
+          },
+          "423": {
+            "description": "Paid entry and cash operations disabled"
+          }
+        },
+        "security": [
+          {
+            "AdminSession": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/admin/tournaments/{id}/audit": {
+      "get": {
+        "summary": "audit",
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid configuration or input"
+          },
+          "401": {
+            "description": "Missing or expired session"
+          },
+          "403": {
+            "description": "Not assigned or not authorized"
+          },
+          "404": {
+            "description": "Not found"
+          },
+          "409": {
+            "description": "Invalid transition, capacity exhausted, or concurrent change; refresh before retrying"
+          },
+          "423": {
+            "description": "Paid entry and cash operations disabled"
+          }
+        },
+        "security": [
+          {
+            "AdminSession": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "PlayerSession": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "X-Session-Token"
+      },
+      "AdminSession": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "Existing opaque admin session token, not a JWT."
+      }
+    },
+    "schemas": {
+      "TournamentConfig": {
+        "type": "object",
+        "required": [
+          "name",
+          "registrationStart",
+          "registrationEnd",
+          "startAt"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 100
+          },
+          "description": {
+            "type": "string",
+            "maxLength": 4000
+          },
+          "bannerUrl": {
+            "type": "string"
+          },
+          "entryType": {
+            "type": "string",
+            "enum": [
+              "FREE",
+              "PAID"
+            ],
+            "default": "FREE"
+          },
+          "gameFormat": {
+            "type": "integer",
+            "enum": [
+              2,
+              4
+            ]
+          },
+          "maxParticipants": {
+            "type": "integer",
+            "minimum": 2,
+            "maximum": 512
+          },
+          "entryFee": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "prizePoints": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 1000000
+          },
+          "qualifiersPerRound": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 3
+            }
+          },
+          "joinTimeoutSeconds": {
+            "type": "integer",
+            "minimum": 30,
+            "maximum": 1800
+          },
+          "matchDurationSeconds": {
+            "type": "integer",
+            "minimum": 300,
+            "maximum": 14400
+          },
+          "reconnectSeconds": {
+            "type": "integer",
+            "minimum": 15,
+            "maximum": 300
+          },
+          "rules": {
+            "type": "string",
+            "minLength": 20,
+            "maxLength": 8000
+          },
+          "registrationStart": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "registrationEnd": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "startAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "AdminAction": {
+        "type": "object",
+        "required": [
+          "reason"
+        ],
+        "properties": {
+          "reason": {
+            "type": "string",
+            "minLength": 5,
+            "maxLength": 1000
+          },
+          "userId": {
+            "type": "string"
+          },
+          "matchId": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  }
+}

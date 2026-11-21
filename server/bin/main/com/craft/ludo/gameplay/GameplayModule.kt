@@ -71,6 +71,7 @@ import reactor.util.retry.Retry
 enum class RoomMode {
     ONLINE_PUBLIC,
     PRIVATE_FRIENDS,
+    TOURNAMENT,
 }
 
 enum class RoomStatus {
@@ -181,6 +182,8 @@ data class MatchDocument(
     val id: String = newId("match"),
     val roomId: String,
     val roomCode: String,
+    val tournamentId: String? = null,
+    val tournamentFinishingOrder: List<String> = emptyList(),
     val mode: RoomMode,
     val status: MatchStatus,
     val phase: MatchPhase,
@@ -1300,6 +1303,7 @@ class MatchService(
     private val sessionLifecyclePublisher: SessionLifecyclePublisher,
     private val clock: Clock,
     appProperties: AppProperties,
+    private val participationGate: GameParticipationGate? = null,
 ) {
     private val log = LoggerFactory.getLogger(MatchService::class.java)
     private val turnTimeoutSeconds = appProperties.gameplay.turnTimeoutSeconds
@@ -1388,7 +1392,8 @@ class MatchService(
             updatedAt = now,
         )
 
-        return roomRepository.findById(room.id)
+        return (participationGate?.acquire(room, matchId) ?: Mono.empty())
+            .then(roomRepository.findById(room.id))
             .flatMap { latestRoom ->
                 if (latestRoom.matchId != null && latestRoom.status == RoomStatus.ACTIVE) {
                     return@flatMap matchRepository.findById(latestRoom.matchId)
@@ -1469,6 +1474,12 @@ class MatchService(
             }
             .flatMap { saved ->
                 realtimeService.publishMatchSnapshot(saved).thenReturn(saved)
+            }
+            .onErrorResume { error ->
+                matchRepository.existsById(matchId).flatMap { exists ->
+                    (if (exists) Mono.empty() else participationGate?.release(matchId) ?: Mono.empty())
+                        .then(Mono.error(error))
+                }
             }
     }
 
@@ -1778,7 +1789,9 @@ class MatchService(
         val matchForRoll = match
         val rollingPlayer = matchForRoll.players[playerIndex]
         val diceContext = buildDiceRollContext(matchForRoll.players, playerIndex)
-        val rollDecision = if (rollingPlayer.isBot) {
+        val rollDecision = if (match.mode == RoomMode.TOURNAMENT) {
+            BotDiceDecision(dice = randomDice(match.consecutiveSixCount))
+        } else if (rollingPlayer.isBot) {
             rollBotDice(
                 consecutiveSixCount = matchForRoll.consecutiveSixCount,
                 players = matchForRoll.players,
@@ -1949,6 +1962,9 @@ class MatchService(
             sequence = match.sequence + 1,
             events = prependEvent(match.events, activePlayer.displayName, detail, now),
         )
+        if (match.mode == RoomMode.TOURNAMENT && hasWon) {
+            return recordTournamentFinish(nextMatch, activePlayer.userId, now, advanceDelayMillis)
+        }
         return if (hasWon) nextMatch.withFinishedBoard(WinnerReason.HOME) else nextMatch
     }
 
@@ -1977,6 +1993,9 @@ class MatchService(
     }
 
     private fun persistHumanMissedTurn(match: MatchDocument, now: Instant): Mono<MatchDocument> {
+        if (match.mode == RoomMode.TOURNAMENT) {
+            return persistMatchTransition(recordTournamentForfeit(match, now, advanceDelayMillis))
+        }
         val playerIndex = match.currentPlayerIndex
         val activePlayer = match.players[playerIndex]
         val abandonedId = newId("abandoned")
@@ -2206,7 +2225,8 @@ class MatchService(
     private fun nextAvailablePlayerIndex(match: MatchDocument, startingIndex: Int): Int {
         repeat(match.players.size) { offset ->
             val candidateIndex = (startingIndex + offset) % match.players.size
-            if (!match.players[candidateIndex].isEffectivelyAbandoned()) {
+            if (!match.players[candidateIndex].isEffectivelyAbandoned() &&
+                (match.mode != RoomMode.TOURNAMENT || match.players[candidateIndex].userId !in match.tournamentFinishingOrder)) {
                 return candidateIndex
             }
         }
@@ -2257,7 +2277,9 @@ class MatchService(
                     roomRepository.findById(saved.roomId)
                         .flatMap { room ->
                             val winnerUserId = saved.winnerUserId
-                            val settlement = if (winnerUserId.isNullOrBlank()) {
+                            val settlement = if (saved.mode == RoomMode.TOURNAMENT) {
+                                Mono.empty()
+                            } else if (winnerUserId.isNullOrBlank()) {
                                 log.warn(
                                     "Finished match '{}' is missing a winner. Finalizing room '{}' without payout.",
                                     saved.id,
@@ -2319,7 +2341,7 @@ class MatchService(
                     Mono.empty()
                 }
 
-                roomUpdate.then(realtimeService.publishMatchSnapshot(saved)).thenReturn(saved)
+                roomUpdate.then(participationGate?.sync(saved) ?: Mono.empty()).then(realtimeService.publishMatchSnapshot(saved)).thenReturn(saved)
             }
     }
 }

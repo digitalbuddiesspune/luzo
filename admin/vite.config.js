@@ -8,6 +8,10 @@ export default defineConfig({
   server: {
     port: 5174,
     proxy: {
+      '/api/admin/tournaments': {
+        target: 'http://localhost:8080',
+        changeOrigin: true,
+      },
       '/api': {
         target: 'http://localhost:8083',
         changeOrigin: true,

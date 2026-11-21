@@ -1,4 +1,5 @@
 const NAV_ITEMS = [
+  { id: "tournaments", label: "Tournaments", icon: "platforms" },
   { id: "dashboard", label: "Dashboard", icon: "dashboard" },
   { id: "platforms", label: "Platforms", icon: "platforms" },
   { id: "profit-loss", label: "Profit & Loss", icon: "profit" },
@@ -94,7 +95,9 @@ export function Sidebar({ activePage, onNavigate, mobileOpen, onClose, admin, on
             Menu
           </p>
           {NAV_ITEMS.map((item) => {
-            const active = activePage === item.id;
+            const active =
+              activePage === item.id ||
+              (item.id === "tournaments" && activePage === "create-tournament");
 
             return (
               <button

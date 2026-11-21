@@ -14,11 +14,13 @@ import org.springframework.http.HttpStatus
 import org.springframework.http.MediaType
 import org.springframework.stereotype.Service
 import org.springframework.web.reactive.function.client.WebClient
+import org.springframework.web.reactive.function.client.WebClientRequestException
 import org.springframework.web.reactive.function.client.WebClientResponseException
 import reactor.core.publisher.Mono
 import reactor.core.scheduler.Schedulers
 import java.math.BigDecimal
 import java.time.Duration
+import java.util.concurrent.TimeoutException
 
 /** Session paths remain on WebClient; wallet adapters use in.oreng:game-sdk. */
 object ProviderSdkPaths {
@@ -81,6 +83,18 @@ class ProviderGameSdkClient(
                 )
             }
             .onErrorMap(WebClientResponseException::class.java, ::toGatewayError)
+            .onErrorMap(WebClientRequestException::class.java) {
+                DomainException(
+                    HttpStatus.BAD_GATEWAY,
+                    "Unable to reach the provider session service. Please try again shortly.",
+                )
+            }
+            .onErrorMap(TimeoutException::class.java) {
+                DomainException(
+                    HttpStatus.GATEWAY_TIMEOUT,
+                    "Provider session validation timed out. Please try again shortly.",
+                )
+            }
     }
 
     fun publishEvent(
