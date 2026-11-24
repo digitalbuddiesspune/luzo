@@ -77,7 +77,7 @@ export function CreateTournamentPage({ editingTournament, onDone, onCancel }) {
       </div>
 
       <p className="tadmin-info">
-        Free tournaments award non-cash points. Paid configurations can be saved as drafts; publishing, payment collection, refunds, and cash prizes remain disabled.
+        Free tournaments award non-cash points. Paid tournaments deduct the entry fee from each player&apos;s wallet on registration, refund on cancellation, and settle the prize pool to the champion on completion.
       </p>
 
       {error ? (
@@ -105,7 +105,7 @@ export function CreateTournamentPage({ editingTournament, onDone, onCancel }) {
               onChange={(e) => setForm({ ...form, entryType: e.target.value })}
             >
               <option value="FREE">Free</option>
-              <option value="PAID">Paid — draft only</option>
+              <option value="PAID">Paid</option>
             </select>
           </label>
           <label>
@@ -194,7 +194,7 @@ export function CreateTournamentPage({ editingTournament, onDone, onCancel }) {
             type="submit"
             data-action="publish"
             className="tadmin-primary"
-            disabled={pending || form.entryType === "PAID"}
+            disabled={pending}
           >
             {pending ? "Publishing…" : "Publish"}
           </button>

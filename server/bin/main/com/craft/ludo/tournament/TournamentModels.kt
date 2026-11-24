@@ -1,15 +1,14 @@
 package com.craft.ludo.tournament
 
+import com.craft.ludo.wallet.WalletReservation
 import org.springframework.data.annotation.Id
 import org.springframework.data.annotation.Version
 import org.springframework.data.mongodb.core.mapping.Document
 import java.time.Instant
 
-// Tournament money operations intentionally have no enable switch. Approval and a
-// verified payment implementation are prerequisites for changing this policy.
 object TournamentPolicy {
-    const val PAID_ENTRY_ENABLED = false
-    const val CASH_PRIZES_ENABLED = false
+    const val PAID_ENTRY_ENABLED = true
+    const val CASH_PRIZES_ENABLED = true
     const val MAX_CAPACITY = 512
 }
 
@@ -47,6 +46,7 @@ data class TournamentRegistration(
     val status: String = "CONFIRMED",
     val paymentStatus: String = "NOT_REQUIRED",
     val entryFee: Long = 0,
+    val walletReservation: WalletReservation? = null,
 )
 
 @Document("tournament_rounds")

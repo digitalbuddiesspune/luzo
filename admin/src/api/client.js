@@ -149,10 +149,17 @@ export function fetchPlatformSettings() {
   return settingsRequest("/");
 }
 
-export function updatePlatformSettings({ platformFeePerPlayer }) {
+export function updatePlatformSettings(payload) {
+  const body = {};
+  if (payload?.platformFeePerPlayer !== undefined) {
+    body.platformFeePerPlayer = payload.platformFeePerPlayer;
+  }
+  if (payload?.gameLevels !== undefined) {
+    body.gameLevels = payload.gameLevels;
+  }
   return settingsRequest("/", {
     method: "PUT",
-    body: JSON.stringify({ platformFeePerPlayer }),
+    body: JSON.stringify(body),
   });
 }
 

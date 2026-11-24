@@ -682,11 +682,19 @@ export function subscribeOperatorGatewayLogs(sessionToken, onEvent) {
   };
 }
 
-export async function joinOnlineMatch(sessionToken, maxPlayers = 4) {
+export async function fetchGameLevels(players) {
+  const query = players === 2 || players === 4 ? `?players=${players}` : "";
+  return requestJson(`/api/v1/lobby/levels${query}`);
+}
+
+export async function joinOnlineMatch(sessionToken, maxPlayers = 4, levelId = null) {
   return requestJson("/api/v1/lobby/online/join", {
     method: "POST",
     sessionToken,
-    body: { maxPlayers },
+    body: {
+      maxPlayers,
+      ...(levelId ? { levelId } : {}),
+    },
   });
 }
 

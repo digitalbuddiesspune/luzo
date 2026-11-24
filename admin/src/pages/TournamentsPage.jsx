@@ -133,7 +133,7 @@ export function TournamentsPage({ initialSelectedId = null, onCreateNew, onEditD
           ["Completed", count("COMPLETED")],
           ["Participants", items.reduce((n, t) => n + t.registeredParticipants, 0)],
           ["Disputed", items.reduce((n, t) => n + t.matches.filter((m) => m.status === "DISPUTED").length, 0)],
-          ["Entry collections", 0],
+          ["Entry collections", items.reduce((n, t) => n + t.registrations.filter((r) => r.paymentStatus === "PAID").reduce((s, r) => s + (r.entryFee || 0), 0), 0)],
           ["Pending rewards", items.reduce((n, t) => n + t.rewards.filter((r) => r.status !== "SETTLED").length, 0)],
         ].map(([title, value]) => (
           <div key={title}>
@@ -191,7 +191,7 @@ export function TournamentsPage({ initialSelectedId = null, onCreateNew, onEditD
                     <button onClick={() => onEditDraft?.(selected)}>Edit</button>
                     <button
                       className="tadmin-primary"
-                      disabled={pending || selected.config.entryType === "PAID"}
+                      disabled={pending}
                       onClick={() => perform(`/${selected.id}/publish`)}
                     >
                       Publish
@@ -365,8 +365,17 @@ export function TournamentsPage({ initialSelectedId = null, onCreateNew, onEditD
 
             {tab === "Rewards" ? (
               <>
-                <h4>Champion reward: {selected.config.prizePoints} points</h4>
-                <p>Verified entry collections: 0. No paid entries or refunds.</p>
+                <h4>
+                  {selected.config.entryType === "PAID"
+                    ? `Entry fee: ₹${selected.config.entryFee} · Champion reward: ${selected.config.prizePoints} points`
+                    : `Champion reward: ${selected.config.prizePoints} points`}
+                </h4>
+                <p>
+                  Verified entry collections: ₹
+                  {selected.registrations
+                    .filter((r) => r.paymentStatus === "PAID")
+                    .reduce((s, r) => s + (r.entryFee || 0), 0)}
+                </p>
                 <button
                   onClick={() => exportCsv(`${selected.id}-rewards.csv`, selected.rewards)}
                   disabled={!selected.rewards.length}

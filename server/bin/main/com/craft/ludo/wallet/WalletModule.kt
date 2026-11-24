@@ -100,11 +100,73 @@ data class IdempotencyKeyDocument(
     val createdAt: Instant,
 )
 
+data class GameLevelConfig(
+    val id: String = "",
+    val name: String = "",
+    val entryFee: Long = 100,
+    val playerModes: List<Int> = listOf(2, 4),
+    val enabled: Boolean = true,
+    val sortOrder: Int = 0,
+)
+
+data class ResolvedPlatformSettings(
+    val currency: String,
+    val platformFeePerPlayer: Long,
+    val gameLevels: List<GameLevelConfig>,
+)
+
+val DEFAULT_GAME_LEVELS: List<GameLevelConfig> = listOf(
+    GameLevelConfig(id = "level_1", name = "LEVEL 1", entryFee = 100, playerModes = listOf(2, 4), enabled = true, sortOrder = 1),
+    GameLevelConfig(id = "level_2", name = "LEVEL 2", entryFee = 200, playerModes = listOf(2, 4), enabled = true, sortOrder = 2),
+    GameLevelConfig(id = "level_3", name = "LEVEL 3", entryFee = 500, playerModes = listOf(2, 4), enabled = true, sortOrder = 3),
+    GameLevelConfig(id = "level_4", name = "LEVEL 4", entryFee = 1000, playerModes = listOf(2, 4), enabled = true, sortOrder = 4),
+    GameLevelConfig(id = "level_5", name = "LEVEL 5", entryFee = 2000, playerModes = listOf(2, 4), enabled = true, sortOrder = 5),
+    GameLevelConfig(id = "level_6", name = "LEVEL 6", entryFee = 3000, playerModes = listOf(2, 4), enabled = true, sortOrder = 6),
+    GameLevelConfig(id = "level_7", name = "LEVEL 7", entryFee = 5000, playerModes = listOf(2, 4), enabled = true, sortOrder = 7),
+)
+
+fun calculateLevelPrizePool(
+    entryFee: Long,
+    maxPlayers: Int,
+    platformFeePerPlayer: Long,
+): Long {
+    val safeEntry = entryFee.coerceAtLeast(0L)
+    val safePlayers = maxPlayers.coerceAtLeast(0)
+    val safeFee = platformFeePerPlayer.coerceAtLeast(0L)
+    val grossPot = safeEntry * safePlayers
+    val totalFee = safeFee * safePlayers
+    return (grossPot - totalFee).coerceAtLeast(0L)
+}
+
+fun normalizeGameLevels(levels: List<GameLevelConfig>?): List<GameLevelConfig> {
+    if (levels.isNullOrEmpty()) {
+        return DEFAULT_GAME_LEVELS
+    }
+    return levels
+        .mapIndexed { index, level ->
+            val safeModes = level.playerModes.filter { it == 2 || it == 4 }.distinct().sorted()
+            val safeEntry = if (level.entryFee > 0) level.entryFee else 100L
+            val safeName = level.name.trim().ifEmpty { "LEVEL ${index + 1}" }
+            val safeId = level.id.trim().ifEmpty { "level_${index + 1}" }
+            val safeOrder = if (level.sortOrder > 0) level.sortOrder else index + 1
+            GameLevelConfig(
+                id = safeId,
+                name = safeName,
+                entryFee = safeEntry,
+                playerModes = if (safeModes.isEmpty()) listOf(2, 4) else safeModes,
+                enabled = level.enabled,
+                sortOrder = safeOrder,
+            )
+        }
+        .sortedBy { it.sortOrder }
+}
+
 @Document("platform_settings")
 data class PlatformSettingsDocument(
     @Id
     val id: String = GLOBAL_PLATFORM_SETTINGS_ID,
     val platformFeePerPlayer: Long = 10,
+    val gameLevels: List<GameLevelConfig>? = null,
     val updatedAt: Instant = Instant.EPOCH,
 )
 
@@ -717,6 +779,24 @@ class WalletService(
         return mongoTemplate.findById(GLOBAL_PLATFORM_SETTINGS_ID, PlatformSettingsDocument::class.java)
             .map { settings -> settings.platformFeePerPlayer.coerceAtLeast(0) }
             .defaultIfEmpty(defaultPlatformFeePerPlayer.coerceAtLeast(0))
+    }
+
+    fun resolvePlatformSettings(): Mono<ResolvedPlatformSettings> {
+        return mongoTemplate.findById(GLOBAL_PLATFORM_SETTINGS_ID, PlatformSettingsDocument::class.java)
+            .map { settings ->
+                ResolvedPlatformSettings(
+                    currency = walletCurrency,
+                    platformFeePerPlayer = settings.platformFeePerPlayer.coerceAtLeast(0),
+                    gameLevels = normalizeGameLevels(settings.gameLevels),
+                )
+            }
+            .defaultIfEmpty(
+                ResolvedPlatformSettings(
+                    currency = walletCurrency,
+                    platformFeePerPlayer = defaultPlatformFeePerPlayer.coerceAtLeast(0),
+                    gameLevels = DEFAULT_GAME_LEVELS,
+                ),
+            )
     }
 
     private fun payoutWinnerWithFee(

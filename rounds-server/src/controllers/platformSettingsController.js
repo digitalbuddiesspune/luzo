@@ -15,10 +15,14 @@ function createPlatformSettingsController(platformSettingsService) {
       try {
         const settings = await platformSettingsService.updateSettings({
           platformFeePerPlayer: req.body?.platformFeePerPlayer,
+          gameLevels: req.body?.gameLevels,
         });
         res.json(settings);
       } catch (error) {
-        if (error?.code === "INVALID_PLATFORM_FEE") {
+        if (
+          error?.code === "INVALID_PLATFORM_FEE" ||
+          error?.code === "INVALID_GAME_LEVELS"
+        ) {
           next(new HttpError(400, error.code, error.message));
           return;
         }

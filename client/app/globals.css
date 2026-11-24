@@ -5218,3 +5218,496 @@ body:has(.screen-provider-opening)::before {
 
 .menu-tournament-link { display: block; padding: .8rem; text-align: center; color: #ffdfa0; font-weight: 700; text-decoration: none; border: 1px solid #ffdfa055; border-radius: 14px; background: #112957cc; min-height: 44px; }
 .menu-tournament-link:focus-visible { outline: 3px solid white; outline-offset: 3px; }
+
+
+/* Game mode level picker modal */
+.level-picker-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  background: rgba(6, 18, 15, 0.78);
+  backdrop-filter: blur(6px);
+}
+
+.level-picker-modal {
+  width: 100%;
+  max-width: 400px;
+  max-height: 82vh;
+  display: flex;
+  flex-direction: column;
+  border-radius: 22px;
+  border: 1px solid rgba(255, 224, 130, 0.28);
+  background: linear-gradient(180deg, #103227 0%, #091d17 100%);
+  color: #f4fbf7;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.55);
+  overflow: hidden;
+}
+
+.level-picker-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 18px 20px 14px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.level-picker-eyebrow {
+  display: block;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: #f5d26b;
+}
+
+.level-picker-header h2 {
+  margin: 2px 0 0;
+  font-size: 18px;
+  font-weight: 800;
+  color: #ffffff;
+}
+
+.level-picker-close {
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  background: rgba(255, 255, 255, 0.08);
+  color: #ffffff;
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.level-picker-balance {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 20px;
+  background: rgba(255, 255, 255, 0.04);
+  font-size: 12px;
+  color: rgba(244, 251, 247, 0.78);
+}
+
+.level-picker-balance strong {
+  color: #f5d26b;
+  font-weight: 800;
+}
+
+.level-picker-status {
+  margin: 12px 20px 0;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: rgba(239, 68, 68, 0.16);
+  border: 1px solid rgba(248, 113, 113, 0.35);
+  color: #fecaca;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.level-picker-list {
+  padding: 14px 20px 20px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.level-picker-empty {
+  text-align: center;
+  padding: 24px 12px;
+  color: rgba(244, 251, 247, 0.72);
+  font-size: 13px;
+}
+
+.level-picker-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  padding: 14px 16px;
+  border-radius: 16px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: linear-gradient(135deg, rgba(28, 92, 68, 0.65) 0%, rgba(16, 52, 39, 0.85) 100%);
+  color: #ffffff;
+  text-align: left;
+  cursor: pointer;
+  transition: transform 140ms ease, border-color 140ms ease, background 140ms ease;
+}
+
+.level-picker-card:hover {
+  transform: translateY(-1px);
+  border-color: rgba(245, 210, 107, 0.6);
+}
+
+.level-picker-card.is-low-balance {
+  opacity: 0.62;
+}
+
+.level-picker-card-info {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.level-picker-card-name {
+  font-size: 15px;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+}
+
+.level-picker-card-prize {
+  font-size: 12px;
+  color: #9be8bd;
+  font-weight: 600;
+}
+
+.level-picker-card-cta {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+}
+
+.level-picker-fee-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 6px 12px;
+  border-radius: 999px;
+  background: linear-gradient(180deg, #f8da78 0%, #e0a82e 100%);
+  color: #1f1604;
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.level-picker-low-tag {
+  font-size: 10px;
+  font-weight: 700;
+  color: #fca5a5;
+}
+
+
+/* ==========================================================================
+   Online Level Selection Screen
+   ========================================================================== */
+
+.screen-level-select {
+  display: flex;
+  flex-direction: column;
+  min-height: 100dvh;
+  background: linear-gradient(180deg, #0b2458 0%, #07193f 50%, #05112e 100%);
+  padding-bottom: 1.5rem;
+}
+
+.level-select-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.7rem 0.95rem;
+  background: linear-gradient(180deg, rgba(22, 68, 150, 0.95) 0%, rgba(12, 42, 102, 0.95) 100%);
+  border-bottom: 1px solid rgba(130, 180, 255, 0.28);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
+}
+
+.level-select-brand {
+  display: flex;
+  align-items: center;
+}
+
+.level-select-logo {
+  height: 2.35rem;
+  width: auto;
+  object-fit: contain;
+  filter: drop-shadow(0 2px 6px rgba(0, 0, 0, 0.4));
+}
+
+.level-select-wallet {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.38rem 0.85rem;
+  border-radius: 999px;
+  background: rgba(6, 20, 56, 0.72);
+  border: 1px solid rgba(140, 186, 255, 0.32);
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.45);
+}
+
+.level-select-wallet-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.level-select-wallet-value {
+  font-size: 0.95rem;
+  font-weight: 800;
+  letter-spacing: 0.01em;
+  color: #ffffff;
+  font-variant-numeric: tabular-nums;
+}
+
+.level-select-home-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.55rem;
+  height: 2.55rem;
+  border-radius: 0.65rem;
+  background: rgba(12, 34, 82, 0.75);
+  border: 1px solid rgba(145, 190, 255, 0.35);
+  color: #ffffff;
+  cursor: pointer;
+  transition: transform 0.14s ease, background-color 0.14s ease;
+}
+
+.level-select-home-button:hover {
+  background: rgba(24, 58, 130, 0.9);
+}
+
+.level-select-home-button:active {
+  transform: scale(0.94);
+}
+
+.level-select-mode-bar {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.55rem;
+  padding: 0.75rem 0.95rem 0.25rem;
+}
+
+.level-select-mode-pill {
+  border-radius: 0.75rem;
+  border: 1px solid rgba(150, 195, 255, 0.26);
+  background: rgba(10, 30, 74, 0.65);
+  color: rgba(224, 238, 255, 0.78);
+  padding: 0.55rem 0.75rem;
+  font-size: 0.85rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: all 0.16s ease;
+}
+
+.level-select-mode-pill.is-active {
+  background: linear-gradient(135deg, #2478ff 0%, #4ba3ff 100%);
+  border-color: rgba(255, 255, 255, 0.55);
+  color: #ffffff;
+  box-shadow: 0 4px 14px rgba(36, 120, 255, 0.42);
+}
+
+.level-select-banner {
+  margin: 0.55rem 0.95rem 0;
+  padding: 0.65rem 0.85rem;
+  border-radius: 0.75rem;
+  font-size: 0.82rem;
+  font-weight: 700;
+  line-height: 1.35;
+}
+
+.level-select-banner.is-warning {
+  background: rgba(245, 158, 11, 0.18);
+  border: 1px solid rgba(251, 191, 36, 0.55);
+  color: #fef3c7;
+}
+
+.level-select-banner.is-error {
+  background: rgba(225, 29, 72, 0.2);
+  border: 1px solid rgba(251, 113, 133, 0.55);
+  color: #ffe4e6;
+}
+
+.level-select-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.78rem;
+  padding: 0.75rem 0.95rem 1.25rem;
+  overflow-y: auto;
+}
+
+.level-select-empty {
+  margin-top: 2rem;
+  padding: 1.5rem;
+  text-align: center;
+  border-radius: 1rem;
+  background: rgba(11, 32, 78, 0.65);
+  border: 1px solid rgba(150, 195, 255, 0.22);
+  color: rgba(226, 238, 255, 0.88);
+  font-size: 0.92rem;
+  font-weight: 600;
+}
+
+.level-card {
+  position: relative;
+  display: flex;
+  align-items: stretch;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.9rem 1rem;
+  border-radius: 1rem;
+  border: 1.5px solid rgba(255, 255, 255, 0.32);
+  box-shadow:
+    0 10px 22px rgba(0, 0, 0, 0.34),
+    inset 0 1px 0 rgba(255, 255, 255, 0.3);
+  overflow: hidden;
+}
+
+.level-card-green {
+  background: linear-gradient(125deg, #0d6a33 0%, #1e8f48 52%, #31b663 100%);
+}
+
+.level-card-purple {
+  background: linear-gradient(125deg, #4b22a8 0%, #6d34d9 52%, #9a57ff 100%);
+}
+
+.level-card-orange {
+  background: linear-gradient(125deg, #984805 0%, #c7690f 52%, #ea9327 100%);
+}
+
+.level-card-blue {
+  background: linear-gradient(125deg, #124496 0%, #2468cc 52%, #4e94f7 100%);
+}
+
+.level-card-red {
+  background: linear-gradient(125deg, #92231b 0%, #c0392b 52%, #e6614d 100%);
+}
+
+.level-card-teal {
+  background: linear-gradient(125deg, #095556 0%, #117c7c 52%, #29afa3 100%);
+}
+
+.level-card-gold {
+  background: linear-gradient(125deg, #7d6608 0%, #a88912 52%, #d4b12c 100%);
+}
+
+.level-card-left {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 0.55rem;
+  min-width: 0;
+}
+
+.level-card-title {
+  margin: 0;
+  font-size: 1.38rem;
+  font-weight: 900;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: #ffffff;
+  text-shadow: 0 2px 6px rgba(0, 0, 0, 0.32);
+  line-height: 1.1;
+}
+
+.level-card-entry-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.35rem 0.72rem 0.35rem 0.42rem;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.32);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  width: fit-content;
+}
+
+.level-card-coin {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.65rem;
+  height: 1.65rem;
+  border-radius: 999px;
+  background: radial-gradient(circle at 35% 30%, #fff1a8 0%, #f5b91a 55%, #b97704 100%);
+  color: #6b3e00;
+  font-size: 0.95rem;
+  font-weight: 900;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.35);
+  flex-shrink: 0;
+}
+
+.level-card-entry-copy {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.1;
+}
+
+.level-card-entry-label {
+  font-size: 0.68rem;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.86);
+}
+
+.level-card-entry-value {
+  font-size: 0.95rem;
+  font-weight: 900;
+  color: #ffffff;
+  font-variant-numeric: tabular-nums;
+}
+
+.level-card-right {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 0.55rem;
+  flex-shrink: 0;
+}
+
+.level-card-prize {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  line-height: 1.12;
+}
+
+.level-card-prize-label {
+  font-size: 0.74rem;
+  font-weight: 700;
+  color: rgba(255, 255, 255, 0.9);
+}
+
+.level-card-prize-value {
+  font-size: 1.12rem;
+  font-weight: 900;
+  color: #ffffff;
+  text-shadow: 0 1px 4px rgba(0, 0, 0, 0.25);
+  font-variant-numeric: tabular-nums;
+}
+
+.level-card-join-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.5rem 1.05rem;
+  border: none;
+  border-radius: 999px;
+  background: #ffffff;
+  color: #0e3a2d;
+  font-size: 0.82rem;
+  font-weight: 900;
+  letter-spacing: 0.03em;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.24);
+  cursor: pointer;
+  transition: transform 0.14s ease, box-shadow 0.14s ease;
+}
+
+.level-card-join-button:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.3);
+}
+
+.level-card-join-button:active {
+  transform: scale(0.96);
+}
+
+.level-card-join-arrow {
+  font-size: 1rem;
+  line-height: 1;
+}

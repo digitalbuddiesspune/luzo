@@ -17,6 +17,7 @@ import com.craft.ludo.gameplay.bot.upsertStalkPlan
 import com.craft.ludo.session.SessionLifecyclePublisher
 import com.craft.ludo.wallet.WalletReservation
 import com.craft.ludo.wallet.WalletService
+import com.craft.ludo.wallet.calculateLevelPrizePool
 import com.fasterxml.jackson.annotation.JsonAlias
 import com.fasterxml.jackson.annotation.JsonProperty
 import com.fasterxml.jackson.databind.ObjectMapper
@@ -51,6 +52,7 @@ import org.springframework.web.bind.annotation.PostMapping
 import org.springframework.web.bind.annotation.RequestBody
 import org.springframework.web.bind.annotation.RequestHeader
 import org.springframework.web.bind.annotation.RequestMapping
+import org.springframework.web.bind.annotation.RequestParam
 import org.springframework.web.bind.annotation.ResponseStatus
 import org.springframework.web.bind.annotation.RestController
 import org.springframework.web.reactive.handler.SimpleUrlHandlerMapping
@@ -121,6 +123,8 @@ data class RoomDocument(
     val status: RoomStatus,
     val maxPlayers: Int,
     val entryFee: Long = 100,
+    val levelId: String? = null,
+    val levelName: String? = null,
     val roomName: String? = null,
     val hostUserId: String? = null,
     val createdAt: Instant,
@@ -234,6 +238,8 @@ data class RoomSummaryResponse(
     val status: RoomStatus,
     val maxPlayers: Int,
     val entryFee: Long,
+    val levelId: String? = null,
+    val levelName: String? = null,
     val livePot: Long,
     val realPlayerCount: Int,
     val occupiedSeats: Int,
@@ -316,6 +322,24 @@ data class JoinPrivateRoomRequest(
 
 data class JoinOnlineMatchRequest(
     val maxPlayers: Int? = null,
+    val levelId: String? = null,
+)
+
+data class GameLevelResponse(
+    val id: String,
+    val name: String,
+    val entryFee: Long,
+    val playerModes: List<Int>,
+    val prizePool2p: Long,
+    val prizePool4p: Long,
+    val prizePool: Long,
+    val sortOrder: Int,
+)
+
+data class GameLevelsResponse(
+    val currency: String,
+    val platformFeePerPlayer: Long,
+    val levels: List<GameLevelResponse>,
 )
 
 data class TransferPrivateRoomHostRequest(
@@ -747,6 +771,8 @@ internal fun RoomDocument.toSummary(): RoomSummaryResponse {
         status = status,
         maxPlayers = maxPlayers,
         entryFee = entryFee,
+        levelId = levelId,
+        levelName = levelName,
         livePot = walletReservations.sumOf { it.amount },
         realPlayerCount = countRealSeats(this),
         occupiedSeats = seats.size,
@@ -2379,8 +2405,48 @@ class LobbyService(
             .map(RoomDocument::toSummary)
     }
 
-    fun joinOnlineMatch(principal: SessionPrincipal, requestedMaxPlayers: Int?): Mono<JoinOnlineMatchResponse> {
-        return onlineMatchmakingService.joinOnlineMatch(principal, requestedMaxPlayers)
+    fun listGameLevels(requestedPlayers: Int?): Mono<GameLevelsResponse> {
+        val playerFilter = when (requestedPlayers) {
+            null -> null
+            2, 4 -> requestedPlayers
+            else -> return Mono.error(
+                DomainException(HttpStatus.BAD_REQUEST, "players must be 2 or 4."),
+            )
+        }
+        return walletService.resolvePlatformSettings().map { settings ->
+            val filtered = settings.gameLevels
+                .filter { level ->
+                    level.enabled && (playerFilter == null || playerFilter in level.playerModes)
+                }
+                .map { level ->
+                    val prize2p = calculateLevelPrizePool(level.entryFee, 2, settings.platformFeePerPlayer)
+                    val prize4p = calculateLevelPrizePool(level.entryFee, 4, settings.platformFeePerPlayer)
+                    val effectivePlayers = playerFilter ?: if (2 in level.playerModes) 2 else 4
+                    GameLevelResponse(
+                        id = level.id,
+                        name = level.name,
+                        entryFee = level.entryFee,
+                        playerModes = level.playerModes,
+                        prizePool2p = prize2p,
+                        prizePool4p = prize4p,
+                        prizePool = if (effectivePlayers == 2) prize2p else prize4p,
+                        sortOrder = level.sortOrder,
+                    )
+                }
+            GameLevelsResponse(
+                currency = settings.currency,
+                platformFeePerPlayer = settings.platformFeePerPlayer,
+                levels = filtered,
+            )
+        }
+    }
+
+    fun joinOnlineMatch(
+        principal: SessionPrincipal,
+        requestedMaxPlayers: Int?,
+        requestedLevelId: String? = null,
+    ): Mono<JoinOnlineMatchResponse> {
+        return onlineMatchmakingService.joinOnlineMatch(principal, requestedMaxPlayers, requestedLevelId)
     }
 
     fun processDueWaitingRooms(): Mono<Void> {
@@ -3072,6 +3138,11 @@ class LobbyController(
     @GetMapping("/rooms")
     fun listRooms(): Flux<RoomSummaryResponse> = lobbyService.listRooms()
 
+    @GetMapping("/levels")
+    fun listLevels(
+        @RequestParam(required = false) players: Int?,
+    ): Mono<GameLevelsResponse> = lobbyService.listGameLevels(players)
+
     @PostMapping("/online/join")
     fun joinOnlineMatch(
         @RequestHeader("X-Session-Token") sessionToken: String,
@@ -3083,6 +3154,7 @@ class LobbyController(
                 lobbyService.joinOnlineMatch(
                     principal.copy(ipAddress = clientIp(request)),
                     requestBody?.maxPlayers,
+                    requestBody?.levelId,
                 )
             }
     }

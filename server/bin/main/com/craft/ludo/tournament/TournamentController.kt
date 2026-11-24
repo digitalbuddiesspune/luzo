@@ -12,7 +12,7 @@ import reactor.core.publisher.Mono
 internal fun tournamentSummary(t: TournamentDocument) = mapOf(
     "id" to t.id, "config" to t.config, "status" to t.status, "registeredParticipants" to t.registeredParticipants,
     "currentRound" to t.currentRound, "championId" to t.championId, "version" to t.version,
-    "paidEntryEnabled" to false, "cashPrizesEnabled" to false,
+    "paidEntryEnabled" to TournamentPolicy.PAID_ENTRY_ENABLED, "cashPrizesEnabled" to TournamentPolicy.CASH_PRIZES_ENABLED,
 )
 internal fun tournamentView(t: TournamentDocument) = tournamentSummary(t) + mapOf(
     "participants" to t.participants, "rounds" to t.rounds, "matches" to t.matches, "rewards" to t.rewards,
@@ -70,7 +70,8 @@ class TournamentAdminController(private val service: TournamentService, private 
     @PostMapping("/{id}/{action:disqualify|restart-match|resolve-match|force-complete}") fun intervene(@PathVariable id: String, @PathVariable action: String, @RequestHeader("Authorization") token: String, @RequestBody request: TournamentAdminAction) = auth.requireAdmin(token).flatMap { service.intervene(id, it, action, request) }
     @GetMapping("/{id}/analytics") fun analytics(@PathVariable id: String, @RequestHeader("Authorization") token: String) = auth.requireAdmin(token).flatMap { service.get(id) }.map { t -> mapOf(
         "participants" to t.registeredParticipants, "matches" to t.matches.size, "completedMatches" to t.matches.count { it.resultVerified },
-        "disputedMatches" to t.matches.count { it.status == TournamentMatchStatus.DISPUTED }, "verifiedEntryCollections" to 0,
+        "disputedMatches" to t.matches.count { it.status == TournamentMatchStatus.DISPUTED },
+        "verifiedEntryCollections" to t.registrations.filter { it.paymentStatus == "PAID" }.sumOf { it.entryFee },
         "pendingRewards" to t.rewards.count { it.status != "SETTLED" }, "settledPoints" to t.rewards.sumOf { it.amount },
     ) }
     @GetMapping("/{id}/audit") fun audit(@PathVariable id: String, @RequestHeader("Authorization") token: String) = auth.requireAdmin(token).flatMapMany {

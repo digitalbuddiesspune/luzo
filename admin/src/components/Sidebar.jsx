@@ -1,5 +1,6 @@
 const NAV_ITEMS = [
   { id: "tournaments", label: "Tournaments", icon: "platforms" },
+  { id: "levels", label: "Levels", icon: "levels" },
   { id: "dashboard", label: "Dashboard", icon: "dashboard" },
   { id: "platforms", label: "Platforms", icon: "platforms" },
   { id: "profit-loss", label: "Profit & Loss", icon: "profit" },
@@ -26,6 +27,16 @@ function NavIcon({ name }) {
         <circle cx="7" cy="17" r="3" />
         <circle cx="17" cy="17" r="3" />
         <path d="M10 7h4M7 10v4M17 10v4M10 17h4" strokeLinecap="round" />
+      </svg>
+    );
+  }
+
+  if (name === "levels") {
+    return (
+      <svg className="h-[18px] w-[18px] shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+        <path d="M12 3l9 4.5-9 4.5-9-4.5L12 3z" strokeLinejoin="round" />
+        <path d="M3 12l9 4.5 9-4.5" strokeLinecap="round" strokeLinejoin="round" />
+        <path d="M3 16.5L12 21l9-4.5" strokeLinecap="round" strokeLinejoin="round" />
       </svg>
     );
   }

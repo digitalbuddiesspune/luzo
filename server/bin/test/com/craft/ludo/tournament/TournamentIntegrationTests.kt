@@ -76,8 +76,8 @@ class TournamentIntegrationTests {
         http.get().uri("/api/admin/tournaments").header("Authorization", "Bearer $adminToken").exchange().expectStatus().isOk
         http.post().uri("/api/tournament-payments/create").exchange().expectStatus().isEqualTo(423)
         val t = service.create(config().copy(entryType = EntryType.PAID, entryFee = 100), "test-admin").block()!!
-        http.post().uri("/api/admin/tournaments/${t.id}/publish").header("Authorization", "Bearer $adminToken").exchange().expectStatus().isEqualTo(423)
-        assertThat(service.get(t.id).block()!!.status).isEqualTo(TournamentStatus.DRAFT)
+        http.post().uri("/api/admin/tournaments/${t.id}/publish").header("Authorization", "Bearer $adminToken").exchange().expectStatus().isOk
+        assertThat(service.get(t.id).block()!!.status).isEqualTo(TournamentStatus.REGISTRATION_OPEN)
     }
     @Test fun `concurrent registration cannot exceed capacity and duplicate registration is idempotent`() {
         val t = cup()

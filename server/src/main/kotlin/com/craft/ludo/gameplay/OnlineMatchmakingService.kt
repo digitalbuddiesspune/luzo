@@ -57,25 +57,72 @@ class OnlineMatchmakingService(
         }
     }
 
-    fun joinOnlineMatch(principal: SessionPrincipal, requestedMaxPlayers: Int?): Mono<JoinOnlineMatchResponse> {
+    private data class ResolvedOnlineLevel(
+        val levelId: String?,
+        val levelName: String?,
+        val entryFee: Long,
+    )
+
+    fun joinOnlineMatch(
+        principal: SessionPrincipal,
+        requestedMaxPlayers: Int?,
+        requestedLevelId: String? = null,
+    ): Mono<JoinOnlineMatchResponse> {
         val maxPlayers = normalizeOnlineMaxPlayers(requestedMaxPlayers)
+        val normalizedLevelId = requestedLevelId?.trim()?.takeIf { it.isNotEmpty() }
         log.info(
-            "Ludo online lobby join requested userId={} displayName={} requestedMaxPlayers={} resolvedMaxPlayers={}",
+            "Ludo online lobby join requested userId={} displayName={} requestedMaxPlayers={} resolvedMaxPlayers={} levelId={}",
             principal.id,
             principal.displayName,
             requestedMaxPlayers,
             maxPlayers,
+            normalizedLevelId,
         )
-        return walletService.requireSufficientBalance(principal.id, onlineEntryFee)
-            .then(
-                instanceCoordinator.withLock("online-join", principal.id) {
-                    joinUnlocked(principal, maxPlayers)
-                }
-                    .switchIfEmpty(
-                        Mono.delay(Duration.ofMillis(250))
-                            .then(joinUnlocked(principal, maxPlayers)),
+        return resolveOnlineLevel(maxPlayers, normalizedLevelId)
+            .flatMap { level ->
+                walletService.requireSufficientBalance(principal.id, level.entryFee)
+                    .then(
+                        instanceCoordinator.withLock("online-join", principal.id) {
+                            joinUnlocked(principal, maxPlayers, level)
+                        }
+                            .switchIfEmpty(
+                                Mono.delay(Duration.ofMillis(250))
+                                    .then(joinUnlocked(principal, maxPlayers, level)),
+                            ),
+                    )
+            }
+    }
+
+    private fun resolveOnlineLevel(
+        maxPlayers: Int,
+        requestedLevelId: String?,
+    ): Mono<ResolvedOnlineLevel> {
+        if (requestedLevelId.isNullOrBlank()) {
+            return Mono.just(ResolvedOnlineLevel(levelId = null, levelName = null, entryFee = onlineEntryFee))
+        }
+        return walletService.resolvePlatformSettings().flatMap { settings ->
+            val matched = settings.gameLevels.firstOrNull { level ->
+                level.enabled &&
+                    level.id.equals(requestedLevelId, ignoreCase = true) &&
+                    maxPlayers in level.playerModes
+            }
+            if (matched == null) {
+                Mono.error(
+                    DomainException(
+                        HttpStatus.BAD_REQUEST,
+                        "Selected level is not available for $maxPlayers-player matches.",
                     ),
-            )
+                )
+            } else {
+                Mono.just(
+                    ResolvedOnlineLevel(
+                        levelId = matched.id,
+                        levelName = matched.name,
+                        entryFee = matched.entryFee,
+                    ),
+                )
+            }
+        }
     }
 
     fun processDueWaitingRooms(): Mono<Void> {
@@ -141,13 +188,17 @@ class OnlineMatchmakingService(
             }
     }
 
-    private fun joinUnlocked(principal: SessionPrincipal, maxPlayers: Int): Mono<JoinOnlineMatchResponse> {
+    private fun joinUnlocked(
+        principal: SessionPrincipal,
+        maxPlayers: Int,
+        level: ResolvedOnlineLevel,
+    ): Mono<JoinOnlineMatchResponse> {
         return findExistingPublicRoomForUser(principal.id)
-            .flatMap { room -> handleExistingRoom(room, principal, maxPlayers) }
+            .flatMap { room -> handleExistingRoom(room, principal, maxPlayers, level) }
             .switchIfEmpty(
-                findJoinablePublicRoom(principal, maxPlayers)
-                    .flatMap { room -> joinExistingWaitingRoom(room, principal, maxPlayers) }
-                    .switchIfEmpty(createWaitingRoom(principal, maxPlayers)),
+                findJoinablePublicRoom(principal, maxPlayers, level)
+                    .flatMap { room -> joinExistingWaitingRoom(room, principal, maxPlayers, level) }
+                    .switchIfEmpty(createWaitingRoom(principal, maxPlayers, level)),
             )
     }
 
@@ -155,11 +206,12 @@ class OnlineMatchmakingService(
         room: RoomDocument,
         principal: SessionPrincipal,
         maxPlayers: Int,
+        level: ResolvedOnlineLevel,
     ): Mono<JoinOnlineMatchResponse> {
         val now = Instant.now(clock)
 
         if (room.status == RoomStatus.ACTIVE && room.matchId != null) {
-            return respondForActiveRoom(room, principal, maxPlayers)
+            return respondForActiveRoom(room, principal, maxPlayers, level)
         }
 
         if (isStuckOnlineLobbyRoom(room, now) || isCorruptOnlineWaitingRoom(room)) {
@@ -172,7 +224,7 @@ class OnlineMatchmakingService(
                 room.ownerInstanceId,
             )
             // Normal wait — never startImmediately here or a failing start will recreate rooms every poll.
-            return finishLobbyRoom(room).then(createWaitingRoom(principal, maxPlayers, startImmediately = false))
+            return finishLobbyRoom(room).then(createWaitingRoom(principal, maxPlayers, level, startImmediately = false))
         }
 
         if (room.status == RoomStatus.STARTING && room.matchId == null) {
@@ -180,21 +232,34 @@ class OnlineMatchmakingService(
         }
 
         if (room.status == RoomStatus.WAITING && room.matchId == null) {
+            val matchesRequestedBucket =
+                room.maxPlayers == maxPlayers &&
+                    room.entryFee == level.entryFee &&
+                    room.levelId == level.levelId
+            if (!matchesRequestedBucket) {
+                return leaveLobby(room, principal.id)
+                    .then(
+                        findJoinablePublicRoom(principal, maxPlayers, level)
+                            .flatMap { target -> joinExistingWaitingRoom(target, principal, maxPlayers, level) }
+                            .switchIfEmpty(createWaitingRoom(principal, maxPlayers, level)),
+                    )
+            }
+
             val hydrated = hydrateDeadlineIfNeeded(room, now)
             return hydrated.flatMap { waitingRoom ->
                 if (shouldStartOnlineWaitingRoom(waitingRoom, Instant.now(clock))) {
                     startPublicRoom(waitingRoom.id)
-                        .flatMap { started -> toJoinResponse(started, principal, maxPlayers) }
+                        .flatMap { started -> toJoinResponse(started, principal, maxPlayers, level) }
                         .switchIfEmpty(
                             Mono.defer {
                                 // Peer may hold the claim, or start rolled back to WAITING.
                                 // Never spawn a replacement room on empty — that is the lobby loop.
-                                respondWithCurrentLobby(principal, maxPlayers)
+                                respondWithCurrentLobby(principal, maxPlayers, level)
                             },
                         )
                         .onErrorResume { error ->
                             logStartFailure(waitingRoom, error)
-                            respondWithCurrentLobby(principal, maxPlayers, error.message)
+                            respondWithCurrentLobby(principal, maxPlayers, level, error.message)
                         }
                 } else {
                     Mono.just(JoinOnlineMatchResponse(room = waitingRoom.toSummary()))
@@ -202,7 +267,7 @@ class OnlineMatchmakingService(
             }
         }
 
-        return finishLobbyRoom(room).then(createWaitingRoom(principal, maxPlayers, startImmediately = false))
+        return finishLobbyRoom(room).then(createWaitingRoom(principal, maxPlayers, level, startImmediately = false))
     }
 
     /**
@@ -212,6 +277,7 @@ class OnlineMatchmakingService(
     private fun respondWithCurrentLobby(
         principal: SessionPrincipal,
         maxPlayers: Int,
+        level: ResolvedOnlineLevel,
         startFailureMessage: String? = null,
     ): Mono<JoinOnlineMatchResponse> {
         return findExistingPublicRoomForUser(principal.id)
@@ -221,7 +287,7 @@ class OnlineMatchmakingService(
                     startFailureMessage = startFailureMessage,
                 )
             }
-            .switchIfEmpty(createWaitingRoom(principal, maxPlayers, startImmediately = false))
+            .switchIfEmpty(createWaitingRoom(principal, maxPlayers, level, startImmediately = false))
     }
 
     private fun hydrateDeadlineIfNeeded(room: RoomDocument, now: Instant): Mono<RoomDocument> {
@@ -254,6 +320,7 @@ class OnlineMatchmakingService(
         room: RoomDocument,
         principal: SessionPrincipal,
         maxPlayers: Int,
+        level: ResolvedOnlineLevel,
     ): Mono<JoinOnlineMatchResponse> {
         rejectSameSourceRealPlayer(room.seats, principal, room.id, room.code)
 
@@ -280,21 +347,23 @@ class OnlineMatchmakingService(
         )
             .doOnNext { saved ->
                 log.info(
-                    "Ludo online lobby joined roomId={} roomCode={} userId={} realSeats={} maxPlayers={}",
+                    "Ludo online lobby joined roomId={} roomCode={} userId={} realSeats={} maxPlayers={} levelId={} entryFee={}",
                     saved.id,
                     saved.code,
                     principal.id,
                     countRealSeats(saved),
                     saved.maxPlayers,
+                    saved.levelId,
+                    saved.entryFee,
                 )
             }
             .flatMap { saved ->
                 if (isOnlineWaitingRoomFull(saved) || shouldStartOnlineWaitingRoom(saved, Instant.now(clock))) {
                     startPublicRoom(saved.id)
-                        .flatMap { started -> toJoinResponse(started, principal, maxPlayers) }
+                        .flatMap { started -> toJoinResponse(started, principal, maxPlayers, level) }
                         .onErrorResume { error ->
                             logStartFailure(saved, error)
-                            respondWithCurrentLobby(principal, maxPlayers)
+                            respondWithCurrentLobby(principal, maxPlayers, level)
                         }
                 } else {
                     Mono.just(JoinOnlineMatchResponse(room = saved.toSummary()))
@@ -305,6 +374,7 @@ class OnlineMatchmakingService(
     private fun createWaitingRoom(
         principal: SessionPrincipal,
         maxPlayers: Int,
+        level: ResolvedOnlineLevel,
         startImmediately: Boolean = false,
     ): Mono<JoinOnlineMatchResponse> {
         val now = Instant.now(clock)
@@ -313,7 +383,9 @@ class OnlineMatchmakingService(
             mode = RoomMode.ONLINE_PUBLIC,
             status = RoomStatus.WAITING,
             maxPlayers = maxPlayers,
-            entryFee = onlineEntryFee,
+            entryFee = level.entryFee,
+            levelId = level.levelId,
+            levelName = level.levelName,
             ownerInstanceId = instanceCoordinator.instanceId,
             createdAt = now,
             updatedAt = now,
@@ -340,12 +412,13 @@ class OnlineMatchmakingService(
         return roomRepository.save(room)
             .doOnNext { saved ->
                 log.info(
-                    "Ludo online lobby created roomId={} roomCode={} userId={} maxPlayers={} entryFee={} waitingDeadlineAt={} startImmediately={}",
+                    "Ludo online lobby created roomId={} roomCode={} userId={} maxPlayers={} entryFee={} levelId={} waitingDeadlineAt={} startImmediately={}",
                     saved.id,
                     saved.code,
                     principal.id,
                     saved.maxPlayers,
                     saved.entryFee,
+                    saved.levelId,
                     saved.effectiveWaitingDeadlineAt(),
                     startImmediately,
                 )
@@ -355,12 +428,12 @@ class OnlineMatchmakingService(
                     return@flatMap Mono.just(JoinOnlineMatchResponse(room = saved.toSummary()))
                 }
                 startPublicRoom(saved.id)
-                    .flatMap { started -> toJoinResponse(started, principal, maxPlayers) }
-                    .switchIfEmpty(respondWithCurrentLobby(principal, maxPlayers))
+                    .flatMap { started -> toJoinResponse(started, principal, maxPlayers, level) }
+                    .switchIfEmpty(respondWithCurrentLobby(principal, maxPlayers, level))
                     .onErrorResume { error ->
                         logStartFailure(saved, error)
                         // Prefer the rolled-back WAITING seat over a stale pre-start summary.
-                        respondWithCurrentLobby(principal, maxPlayers)
+                        respondWithCurrentLobby(principal, maxPlayers, level)
                     }
             }
     }
@@ -621,14 +694,15 @@ class OnlineMatchmakingService(
         room: RoomDocument,
         principal: SessionPrincipal,
         maxPlayers: Int,
+        level: ResolvedOnlineLevel,
     ): Mono<JoinOnlineMatchResponse> {
         if (room.status == RoomStatus.ACTIVE && room.matchId != null) {
-            return respondForActiveRoom(room, principal, maxPlayers)
+            return respondForActiveRoom(room, principal, maxPlayers, level)
         }
         if (room.status == RoomStatus.FINISHED || room.matchId == null && room.status != RoomStatus.STARTING &&
             room.status != RoomStatus.WAITING
         ) {
-            return createWaitingRoom(principal, maxPlayers)
+            return createWaitingRoom(principal, maxPlayers, level)
         }
         return Mono.just(JoinOnlineMatchResponse(room = room.toSummary()))
     }
@@ -637,8 +711,9 @@ class OnlineMatchmakingService(
         room: RoomDocument,
         principal: SessionPrincipal,
         maxPlayers: Int,
+        level: ResolvedOnlineLevel,
     ): Mono<JoinOnlineMatchResponse> {
-        val matchId = room.matchId ?: return finishLobbyRoom(room).then(createWaitingRoom(principal, maxPlayers))
+        val matchId = room.matchId ?: return finishLobbyRoom(room).then(createWaitingRoom(principal, maxPlayers, level))
 
         return matchRepository.findById(matchId)
             .flatMap { match ->
@@ -649,11 +724,11 @@ class OnlineMatchmakingService(
                 when {
                     match.status == MatchStatus.FINISHED || match.phase == MatchPhase.FINISHED -> {
                         settleAndMarkRoomFinished(room, match)
-                            .then(createWaitingRoom(principal, maxPlayers))
+                            .then(createWaitingRoom(principal, maxPlayers, level))
                     }
                     !userStillActive -> {
                         releaseAbandonedUserFromActiveRoom(room, match, principal.id)
-                            .then(createWaitingRoom(principal, maxPlayers))
+                            .then(createWaitingRoom(principal, maxPlayers, level))
                     }
                     else -> Mono.just(
                         JoinOnlineMatchResponse(
@@ -672,7 +747,7 @@ class OnlineMatchmakingService(
                         room.code,
                         matchId,
                     )
-                    finishLobbyRoom(room).then(createWaitingRoom(principal, maxPlayers))
+                    finishLobbyRoom(room).then(createWaitingRoom(principal, maxPlayers, level))
                 },
             )
     }
@@ -690,13 +765,19 @@ class OnlineMatchmakingService(
         return mongoTemplate.findOne(query, RoomDocument::class.java)
     }
 
-    private fun findJoinablePublicRoom(principal: SessionPrincipal, maxPlayers: Int): Mono<RoomDocument> {
+    private fun findJoinablePublicRoom(
+        principal: SessionPrincipal,
+        maxPlayers: Int,
+        level: ResolvedOnlineLevel,
+    ): Mono<RoomDocument> {
         val now = Instant.now(clock)
         return roomRepository.findAllByStatusOrderByCreatedAtAsc(RoomStatus.WAITING)
             .filter { room ->
                 room.mode == RoomMode.ONLINE_PUBLIC &&
                     room.matchId == null &&
                     room.maxPlayers == maxPlayers &&
+                    room.entryFee == level.entryFee &&
+                    room.levelId == level.levelId &&
                     room.seats.size < room.maxPlayers &&
                     room.seats.none { it.userId == principal.id } &&
                     room.seats.none { it.isBot } &&
