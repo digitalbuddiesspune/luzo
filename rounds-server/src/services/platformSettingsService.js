@@ -4,14 +4,25 @@ const SETTINGS_ID = "global";
 const COLLECTION = "platform_settings";
 
 const DEFAULT_GAME_LEVELS = [
-  { id: "level_1", name: "LEVEL 1", entryFee: 100, playerModes: [2, 4], enabled: true, sortOrder: 1 },
-  { id: "level_2", name: "LEVEL 2", entryFee: 200, playerModes: [2, 4], enabled: true, sortOrder: 2 },
-  { id: "level_3", name: "LEVEL 3", entryFee: 500, playerModes: [2, 4], enabled: true, sortOrder: 3 },
-  { id: "level_4", name: "LEVEL 4", entryFee: 1000, playerModes: [2, 4], enabled: true, sortOrder: 4 },
-  { id: "level_5", name: "LEVEL 5", entryFee: 2000, playerModes: [2, 4], enabled: true, sortOrder: 5 },
-  { id: "level_6", name: "LEVEL 6", entryFee: 3000, playerModes: [2, 4], enabled: true, sortOrder: 6 },
-  { id: "level_7", name: "LEVEL 7", entryFee: 5000, playerModes: [2, 4], enabled: true, sortOrder: 7 },
+  { id: "level_1", name: "LEVEL 1", entryFee: 100, prizePool2p: null, prizePool4p: null, playerModes: [2, 4], enabled: true, sortOrder: 1 },
+  { id: "level_2", name: "LEVEL 2", entryFee: 200, prizePool2p: null, prizePool4p: null, playerModes: [2, 4], enabled: true, sortOrder: 2 },
+  { id: "level_3", name: "LEVEL 3", entryFee: 500, prizePool2p: null, prizePool4p: null, playerModes: [2, 4], enabled: true, sortOrder: 3 },
+  { id: "level_4", name: "LEVEL 4", entryFee: 1000, prizePool2p: null, prizePool4p: null, playerModes: [2, 4], enabled: true, sortOrder: 4 },
+  { id: "level_5", name: "LEVEL 5", entryFee: 2000, prizePool2p: null, prizePool4p: null, playerModes: [2, 4], enabled: true, sortOrder: 5 },
+  { id: "level_6", name: "LEVEL 6", entryFee: 3000, prizePool2p: null, prizePool4p: null, playerModes: [2, 4], enabled: true, sortOrder: 6 },
+  { id: "level_7", name: "LEVEL 7", entryFee: 5000, prizePool2p: null, prizePool4p: null, playerModes: [2, 4], enabled: true, sortOrder: 7 },
 ];
+
+function normalizeOptionalPrizePool(value) {
+  if (value === null || value === undefined || value === "") {
+    return null;
+  }
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed < 0) {
+    return null;
+  }
+  return parsed;
+}
 
 function normalizeFee(value, fallback = config.platformFeePerPlayer) {
   const parsed = Number(value);
@@ -56,6 +67,8 @@ function normalizeStoredLevels(levels) {
         id,
         name,
         entryFee: safeEntryFee,
+        prizePool2p: normalizeOptionalPrizePool(level?.prizePool2p),
+        prizePool4p: normalizeOptionalPrizePool(level?.prizePool4p),
         playerModes: normalizePlayerModes(level?.playerModes),
         enabled: level?.enabled !== false,
         sortOrder,
@@ -126,10 +139,40 @@ function validateGameLevels(levels) {
     }
     seenIds.add(uniqueId);
 
+    let prizePool2p = null;
+    if (raw?.prizePool2p !== null && raw?.prizePool2p !== undefined && raw?.prizePool2p !== "") {
+      const parsed2p = Number(raw.prizePool2p);
+      if (!Number.isInteger(parsed2p) || parsed2p < 0 || parsed2p > 10_000_000) {
+        const error = new Error(
+          `Level "${name}" 2P prize pool must be an integer between 0 and 10000000.`,
+        );
+        error.status = 400;
+        error.code = "INVALID_GAME_LEVELS";
+        throw error;
+      }
+      prizePool2p = parsed2p;
+    }
+
+    let prizePool4p = null;
+    if (raw?.prizePool4p !== null && raw?.prizePool4p !== undefined && raw?.prizePool4p !== "") {
+      const parsed4p = Number(raw.prizePool4p);
+      if (!Number.isInteger(parsed4p) || parsed4p < 0 || parsed4p > 10_000_000) {
+        const error = new Error(
+          `Level "${name}" 4P prize pool must be an integer between 0 and 10000000.`,
+        );
+        error.status = 400;
+        error.code = "INVALID_GAME_LEVELS";
+        throw error;
+      }
+      prizePool4p = parsed4p;
+    }
+
     return {
       id: uniqueId,
       name,
       entryFee,
+      prizePool2p,
+      prizePool4p,
       playerModes,
       enabled: raw?.enabled !== false,
       sortOrder: index + 1,

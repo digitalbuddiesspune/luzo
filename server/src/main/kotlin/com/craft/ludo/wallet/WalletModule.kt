@@ -104,6 +104,8 @@ data class GameLevelConfig(
     val id: String = "",
     val name: String = "",
     val entryFee: Long = 100,
+    val prizePool2p: Long? = null,
+    val prizePool4p: Long? = null,
     val playerModes: List<Int> = listOf(2, 4),
     val enabled: Boolean = true,
     val sortOrder: Int = 0,
@@ -138,6 +140,22 @@ fun calculateLevelPrizePool(
     return (grossPot - totalFee).coerceAtLeast(0L)
 }
 
+fun resolveLevelPrizePool(
+    level: GameLevelConfig,
+    maxPlayers: Int,
+    platformFeePerPlayer: Long,
+): Long {
+    val custom = when (maxPlayers) {
+        2 -> level.prizePool2p
+        4 -> level.prizePool4p
+        else -> null
+    }
+    if (custom != null && custom >= 0L) {
+        return custom
+    }
+    return calculateLevelPrizePool(level.entryFee, maxPlayers, platformFeePerPlayer)
+}
+
 fun normalizeGameLevels(levels: List<GameLevelConfig>?): List<GameLevelConfig> {
     if (levels.isNullOrEmpty()) {
         return DEFAULT_GAME_LEVELS
@@ -153,6 +171,8 @@ fun normalizeGameLevels(levels: List<GameLevelConfig>?): List<GameLevelConfig> {
                 id = safeId,
                 name = safeName,
                 entryFee = safeEntry,
+                prizePool2p = level.prizePool2p?.takeIf { it >= 0L },
+                prizePool4p = level.prizePool4p?.takeIf { it >= 0L },
                 playerModes = if (safeModes.isEmpty()) listOf(2, 4) else safeModes,
                 enabled = level.enabled,
                 sortOrder = safeOrder,
@@ -769,9 +789,10 @@ class WalletService(
         winnerUserId: String,
         reservations: List<WalletReservation>,
         roomId: String? = null,
+        prizePoolOverride: Long? = null,
     ): Mono<Void> {
         return resolvePlatformFeePerPlayer().flatMap { platformFeePerPlayer ->
-            payoutWinnerWithFee(matchId, winnerUserId, reservations, platformFeePerPlayer, roomId)
+            payoutWinnerWithFee(matchId, winnerUserId, reservations, platformFeePerPlayer, roomId, prizePoolOverride)
         }
     }
 
@@ -805,6 +826,7 @@ class WalletService(
         reservations: List<WalletReservation>,
         platformFeePerPlayer: Long,
         roomId: String? = null,
+        prizePoolOverride: Long? = null,
     ): Mono<Void> {
         val paidReservations = reservations.filter { it.amount > 0 }
         val realPaidReservations = paidReservations.filterNot { it.synthetic }
@@ -819,20 +841,21 @@ class WalletService(
         val winnerIsSynthetic = winnerReservation?.synthetic == true
         // Bot/synthetic winners cannot receive payouts; the platform keeps the pot.
         val isHouseWinner = winnerUserId == houseUserId || winnerIsSynthetic
-        val rakeAmount = if (isHouseWinner) {
-            0L
-        } else {
-            calculateFlatPlatformFeeAmount(paidReservations, platformFeePerPlayer)
+        val validOverride = prizePoolOverride?.takeIf { it >= 0L }
+        val rakeAmount = when {
+            isHouseWinner -> 0L
+            validOverride != null -> (potAmount - validOverride).coerceAtLeast(0L)
+            else -> calculateFlatPlatformFeeAmount(paidReservations, platformFeePerPlayer)
         }
         val winnerUsesOperatorWallet = winnerReservation?.operatorUserId != null ||
             winnerReservation?.operatorToken != null ||
             winnerReservation?.operatorId != null
         val winnerHasConfirmedExternalDebit = winnerReservation?.externalDebitTransactionId != null &&
             winnerReservation.externalDebitConfirmed
-        val winnerLedgerPayoutAmount = if (isHouseWinner) {
-            calculateHouseWinAmount(paidReservations)
-        } else {
-            calculateWinnerLedgerPayoutAmount(
+        val winnerLedgerPayoutAmount = when {
+            isHouseWinner -> calculateHouseWinAmount(paidReservations)
+            validOverride != null -> if (winnerUsesOperatorWallet && !winnerHasConfirmedExternalDebit) 0L else validOverride
+            else -> calculateWinnerLedgerPayoutAmount(
                 winnerUserId = winnerUserId,
                 paidReservations = paidReservations,
                 platformFeePerPlayer = platformFeePerPlayer,

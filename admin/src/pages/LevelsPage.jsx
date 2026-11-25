@@ -1,4 +1,4 @@
-import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useState } from "react";
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useState } from "react";
 import { fetchPlatformSettings, updatePlatformSettings } from "../api/client";
 import { formatAmount } from "../utils/format";
 
@@ -12,10 +12,20 @@ const LEVEL_GRADIENTS = [
   "linear-gradient(135deg, #9a7d0a 0%, #d4b029 100%)",
 ];
 
-function computePrizePool(entryFee, players, platformFeePerPlayer) {
+function computeAutoPrizePool(entryFee, players, platformFeePerPlayer) {
   const fee = Number(entryFee);
   if (!Number.isFinite(fee) || fee <= 0) return 0;
   return Math.max(0, fee * players - platformFeePerPlayer * players);
+}
+
+function parseOptionalPrizePool(raw) {
+  const trimmed = String(raw ?? "").trim();
+  if (!trimmed) return null;
+  const parsed = Number(trimmed);
+  if (!Number.isInteger(parsed) || parsed < 0 || parsed > 10_000_000) {
+    return Number.NaN;
+  }
+  return parsed;
 }
 
 function makeSlug(name, fallbackIndex) {
@@ -27,9 +37,44 @@ function makeSlug(name, fallbackIndex) {
   return base || `level_${fallbackIndex}`;
 }
 
+function validateDraft(draft) {
+  const name = String(draft.name ?? "").trim();
+  if (!name || name.length > 48) {
+    return "Level name must be between 1 and 48 characters.";
+  }
+  const fee = Number(draft.entryFee);
+  if (!Number.isInteger(fee) || fee < 1 || fee > 1_000_000) {
+    return "Entry fee must be a whole number from 1 to 1,000,000.";
+  }
+  const p2 = parseOptionalPrizePool(draft.prizePool2p);
+  if (Number.isNaN(p2)) {
+    return "2P prize pool must be a whole number from 0 to 10,000,000.";
+  }
+  const p4 = parseOptionalPrizePool(draft.prizePool4p);
+  if (Number.isNaN(p4)) {
+    return "4P prize pool must be a whole number from 0 to 10,000,000.";
+  }
+  if (!Array.isArray(draft.playerModes) || draft.playerModes.length === 0) {
+    return "Select at least 2 Player or 4 Player.";
+  }
+  return "";
+}
+
+function toPayload(levelsList) {
+  return levelsList.map((lvl, index) => ({
+    id: lvl.id,
+    name: String(lvl.name).trim(),
+    entryFee: Number(lvl.entryFee),
+    prizePool2p: parseOptionalPrizePool(lvl.prizePool2p),
+    prizePool4p: parseOptionalPrizePool(lvl.prizePool4p),
+    playerModes: [...lvl.playerModes].sort((a, b) => a - b),
+    enabled: lvl.enabled !== false,
+    sortOrder: index + 1,
+  }));
+}
+
 export const LevelsPage = forwardRef(function LevelsPage({ currency = "INR" }, ref) {
   const [levels, setLevels] = useState([]);
-  const [savedSnapshot, setSavedSnapshot] = useState("[]");
   const [platformFee, setPlatformFee] = useState(10);
   const [updatedAt, setUpdatedAt] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -37,9 +82,15 @@ export const LevelsPage = forwardRef(function LevelsPage({ currency = "INR" }, r
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
 
+  // Active level being edited
+  const [editingId, setEditingId] = useState(null);
+  const [editDraft, setEditDraft] = useState(null);
+
   // Quick-add form state
   const [newName, setNewName] = useState("");
   const [newEntryFee, setNewEntryFee] = useState("100");
+  const [newPrize2p, setNewPrize2p] = useState("");
+  const [newPrize4p, setNewPrize4p] = useState("");
   const [newModes, setNewModes] = useState([2, 4]);
 
   const applySettings = useCallback((settings) => {
@@ -48,11 +99,15 @@ export const LevelsPage = forwardRef(function LevelsPage({ currency = "INR" }, r
       id: lvl.id || `level_${idx + 1}`,
       name: lvl.name || `LEVEL ${idx + 1}`,
       entryFee: String(lvl.entryFee ?? 100),
-      playerModes: Array.isArray(lvl.playerModes) && lvl.playerModes.length > 0 ? lvl.playerModes : [2, 4],
+      prizePool2p:
+        lvl.prizePool2p !== null && lvl.prizePool2p !== undefined ? String(lvl.prizePool2p) : "",
+      prizePool4p:
+        lvl.prizePool4p !== null && lvl.prizePool4p !== undefined ? String(lvl.prizePool4p) : "",
+      playerModes:
+        Array.isArray(lvl.playerModes) && lvl.playerModes.length > 0 ? lvl.playerModes : [2, 4],
       enabled: lvl.enabled !== false,
     }));
     setLevels(normalized);
-    setSavedSnapshot(JSON.stringify(normalized));
     setPlatformFee(settings.platformFeePerPlayer ?? 10);
     setUpdatedAt(settings.updatedAt || null);
   }, []);
@@ -90,116 +145,124 @@ export const LevelsPage = forwardRef(function LevelsPage({ currency = "INR" }, r
     loadSettings().catch(() => {});
   }, [loadSettings]);
 
-  const validationError = useMemo(() => {
-    if (levels.length === 0) {
-      return "At least one level is required.";
-    }
-    for (let i = 0; i < levels.length; i += 1) {
-      const lvl = levels[i];
-      if (!String(lvl.name || "").trim()) {
-        return `Level #${i + 1} needs a name.`;
-      }
-      const fee = Number(lvl.entryFee);
-      if (!Number.isInteger(fee) || fee < 1 || fee > 1_000_000) {
-        return `"${lvl.name}" entry fee must be a whole number from 1 to 1,000,000.`;
-      }
-      if (!Array.isArray(lvl.playerModes) || lvl.playerModes.length === 0) {
-        return `"${lvl.name}" must be enabled for 2 Player, 4 Player, or both.`;
-      }
-    }
-    return "";
-  }, [levels]);
-
-  const dirty = JSON.stringify(levels) !== savedSnapshot;
-
-  const updateLevelField = (index, patch) => {
+  const persistLevels = async (nextLevels, successText) => {
+    setSaving(true);
+    setError("");
     setMessage("");
-    setLevels((prev) => prev.map((item, idx) => (idx === index ? { ...item, ...patch } : item)));
+    try {
+      const settings = await updatePlatformSettings({
+        gameLevels: toPayload(nextLevels),
+      });
+      applySettings(settings);
+      setMessage(successText);
+      return true;
+    } catch (saveError) {
+      setError(saveError.message || "Failed to save game levels.");
+      return false;
+    } finally {
+      setSaving(false);
+    }
   };
 
-  const toggleLevelMode = (index, mode) => {
+  const startEditing = (level) => {
+    setError("");
     setMessage("");
-    setLevels((prev) =>
-      prev.map((item, idx) => {
-        if (idx !== index) return item;
-        const has = item.playerModes.includes(mode);
-        const nextModes = has
-          ? item.playerModes.filter((m) => m !== mode)
-          : [...item.playerModes, mode].sort((a, b) => a - b);
-        return { ...item, playerModes: nextModes };
-      }),
-    );
-  };
-
-  const moveLevel = (index, direction) => {
-    const target = index + direction;
-    if (target < 0 || target >= levels.length) return;
-    setMessage("");
-    setLevels((prev) => {
-      const copy = [...prev];
-      const [moved] = copy.splice(index, 1);
-      copy.splice(target, 0, moved);
-      return copy;
+    setEditingId(level.id);
+    setEditDraft({
+      ...level,
+      playerModes: [...level.playerModes],
     });
   };
 
-  const removeLevel = (index) => {
-    setMessage("");
-    setLevels((prev) => prev.filter((_, idx) => idx !== index));
+  const cancelEditing = () => {
+    setEditingId(null);
+    setEditDraft(null);
+    setError("");
   };
 
-  const handleAddLevel = (event) => {
+  const handleSaveEdit = async (event) => {
     event.preventDefault();
-    const trimmedName = newName.trim() || `LEVEL ${levels.length + 1}`;
-    const fee = Number(newEntryFee);
-    if (!Number.isInteger(fee) || fee < 1 || fee > 1_000_000) {
-      setError("New level entry fee must be a whole number from 1 to 1,000,000.");
-      return;
-    }
-    if (newModes.length === 0) {
-      setError("Select at least 2 Player or 4 Player for the new level.");
+    if (!editDraft || saving) return;
+
+    const draftError = validateDraft(editDraft);
+    if (draftError) {
+      setError(draftError);
       return;
     }
 
-    setError("");
-    setMessage("");
-    const id = `${makeSlug(trimmedName, levels.length + 1)}_${Date.now().toString(36).slice(-4)}`;
-    setLevels((prev) => [
-      ...prev,
+    const nextLevels = levels.map((lvl) => (lvl.id === editingId ? { ...editDraft } : lvl));
+    const ok = await persistLevels(nextLevels, `Updated "${editDraft.name.trim()}".`);
+    if (ok) {
+      setEditingId(null);
+      setEditDraft(null);
+    }
+  };
+
+  const handleToggleEnabled = async (level) => {
+    if (saving) return;
+    const nextLevels = levels.map((lvl) =>
+      lvl.id === level.id ? { ...lvl, enabled: !lvl.enabled } : lvl,
+    );
+    await persistLevels(
+      nextLevels,
+      `"${level.name}" is now ${!level.enabled ? "active" : "hidden"}.`,
+    );
+  };
+
+  const handleMoveLevel = async (index, direction) => {
+    const target = index + direction;
+    if (target < 0 || target >= levels.length || saving) return;
+    const nextLevels = [...levels];
+    const [moved] = nextLevels.splice(index, 1);
+    nextLevels.splice(target, 0, moved);
+    await persistLevels(nextLevels, "Level order updated.");
+  };
+
+  const handleRemoveLevel = async (level) => {
+    if (levels.length <= 1 || saving) return;
+    const nextLevels = levels.filter((lvl) => lvl.id !== level.id);
+    const ok = await persistLevels(nextLevels, `Deleted "${level.name}".`);
+    if (ok && editingId === level.id) {
+      setEditingId(null);
+      setEditDraft(null);
+    }
+  };
+
+  const handleAddLevel = async (event) => {
+    event.preventDefault();
+    if (saving) return;
+
+    const draft = {
+      name: newName.trim() || `LEVEL ${levels.length + 1}`,
+      entryFee: newEntryFee,
+      prizePool2p: newPrize2p,
+      prizePool4p: newPrize4p,
+      playerModes: newModes,
+    };
+    const draftError = validateDraft(draft);
+    if (draftError) {
+      setError(draftError);
+      return;
+    }
+
+    const id = `${makeSlug(draft.name, levels.length + 1)}_${Date.now().toString(36).slice(-4)}`;
+    const nextLevels = [
+      ...levels,
       {
         id,
-        name: trimmedName,
-        entryFee: String(fee),
+        name: draft.name,
+        entryFee: String(Number(draft.entryFee)),
+        prizePool2p: draft.prizePool2p.trim(),
+        prizePool4p: draft.prizePool4p.trim(),
         playerModes: [...newModes].sort((a, b) => a - b),
         enabled: true,
       },
-    ]);
-    setNewName("");
-    setNewEntryFee(String(fee));
-  };
-
-  const handleSave = async () => {
-    if (validationError || saving) return;
-
-    setSaving(true);
-    setMessage("");
-    setError("");
-    try {
-      const payload = levels.map((lvl, index) => ({
-        id: lvl.id,
-        name: String(lvl.name).trim(),
-        entryFee: Number(lvl.entryFee),
-        playerModes: lvl.playerModes,
-        enabled: lvl.enabled !== false,
-        sortOrder: index + 1,
-      }));
-      const settings = await updatePlatformSettings({ gameLevels: payload });
-      applySettings(settings);
-      setMessage("Game levels saved. Players will see the updated levels immediately.");
-    } catch (saveError) {
-      setError(saveError.message || "Failed to save game levels.");
-    } finally {
-      setSaving(false);
+    ];
+    const ok = await persistLevels(nextLevels, `Added "${draft.name}".`);
+    if (ok) {
+      setNewName("");
+      setNewPrize2p("");
+      setNewPrize4p("");
     }
   };
 
@@ -212,42 +275,35 @@ export const LevelsPage = forwardRef(function LevelsPage({ currency = "INR" }, r
     );
   }
 
+  const autoNew2p = computeAutoPrizePool(newEntryFee, 2, platformFee);
+  const autoNew4p = computeAutoPrizePool(newEntryFee, 4, platformFee);
+
   return (
-    <div className="mx-auto max-w-5xl space-y-6 animate-fade-up">
-      {/* Header summary + save bar */}
+    <div className="mx-auto max-w-6xl space-y-6 animate-fade-up">
+      {/* Header summary */}
       <section className="flex flex-wrap items-center justify-between gap-4 rounded-2xl border border-[var(--color-line)] bg-white p-6 shadow-[var(--shadow-card)]">
         <div className="min-w-0 flex-1">
           <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-[var(--accent)]">
             Matchmaking Tiers
           </p>
           <h2 className="mt-1 text-xl font-extrabold tracking-tight text-[var(--color-ink)]">
-            Game Levels &amp; Entry Fees
+            Game Levels, Entry Fees &amp; Prize Pools
           </h2>
           <p className="mt-1.5 text-sm text-[var(--color-muted)]">
-            Configure the levels players choose from in 2-Player and 4-Player online matches. Prize
-            pools automatically deduct the current platform fee of{" "}
+            Click <strong>Edit</strong> on any level to change its name, entry fee, 2-Player or
+            4-Player prize pool, and mode availability. Blank prize pools auto-calculate using the{" "}
             <strong className="text-[var(--color-ink)]">
               {formatAmount(platformFee, currency)}
             </strong>{" "}
-            per seat.
+            per-seat platform fee.
           </p>
         </div>
 
-        <div className="flex flex-wrap items-center gap-2.5">
-          {updatedAt ? (
-            <span className="text-xs text-[var(--color-muted)]">
-              Saved {new Date(updatedAt).toLocaleString("en-IN")}
-            </span>
-          ) : null}
-          <button
-            type="button"
-            onClick={handleSave}
-            disabled={!dirty || Boolean(validationError) || saving}
-            className="rounded-xl bg-[var(--accent)] px-5 py-2.5 text-sm font-bold text-white shadow-sm transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-40"
-          >
-            {saving ? "Saving…" : dirty ? "Save levels" : "All saved"}
-          </button>
-        </div>
+        {updatedAt ? (
+          <span className="text-xs text-[var(--color-muted)]">
+            Last updated {new Date(updatedAt).toLocaleString("en-IN")}
+          </span>
+        ) : null}
       </section>
 
       {message ? (
@@ -255,9 +311,9 @@ export const LevelsPage = forwardRef(function LevelsPage({ currency = "INR" }, r
           {message}
         </p>
       ) : null}
-      {error || validationError ? (
+      {error ? (
         <p className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-medium text-rose-700">
-          {error || validationError}
+          {error}
         </p>
       ) : null}
 
@@ -270,7 +326,7 @@ export const LevelsPage = forwardRef(function LevelsPage({ currency = "INR" }, r
           Add new level
         </p>
         <div className="mt-3 grid gap-3 sm:grid-cols-12 sm:items-end">
-          <label className="block sm:col-span-4">
+          <label className="block sm:col-span-3">
             <span className="text-xs font-semibold text-[var(--color-muted)]">Level name</span>
             <input
               type="text"
@@ -278,13 +334,13 @@ export const LevelsPage = forwardRef(function LevelsPage({ currency = "INR" }, r
               placeholder={`LEVEL ${levels.length + 1}`}
               value={newName}
               onChange={(event) => setNewName(event.target.value)}
-              className="mt-1.5 w-full rounded-xl border border-[var(--color-line)] bg-[#f8faf9] px-3.5 py-2.5 text-sm font-semibold text-[var(--color-ink)] outline-none ring-[var(--accent)] focus:ring-2"
+              className="mt-1.5 w-full rounded-xl border border-[var(--color-line)] bg-[#f8faf9] px-3 py-2.5 text-sm font-semibold text-[var(--color-ink)] outline-none ring-[var(--accent)] focus:ring-2"
             />
           </label>
 
-          <label className="block sm:col-span-3">
+          <label className="block sm:col-span-2">
             <span className="text-xs font-semibold text-[var(--color-muted)]">
-              Entry fee ({currency})
+              Entry ({currency})
             </span>
             <input
               type="number"
@@ -293,15 +349,47 @@ export const LevelsPage = forwardRef(function LevelsPage({ currency = "INR" }, r
               step={1}
               value={newEntryFee}
               onChange={(event) => setNewEntryFee(event.target.value)}
-              className="mt-1.5 w-full rounded-xl border border-[var(--color-line)] bg-[#f8faf9] px-3.5 py-2.5 text-sm font-semibold tabular-nums text-[var(--color-ink)] outline-none ring-[var(--accent)] focus:ring-2"
+              className="mt-1.5 w-full rounded-xl border border-[var(--color-line)] bg-[#f8faf9] px-3 py-2.5 text-sm font-semibold tabular-nums text-[var(--color-ink)] outline-none ring-[var(--accent)] focus:ring-2"
             />
           </label>
 
-          <div className="sm:col-span-3">
-            <span className="block text-xs font-semibold text-[var(--color-muted)]">
-              Player modes
+          <label className="block sm:col-span-2">
+            <span className="text-xs font-semibold text-[var(--color-muted)]">
+              2P Prize ({currency})
             </span>
-            <div className="mt-1.5 flex gap-2">
+            <input
+              type="number"
+              min={0}
+              max={10_000_000}
+              step={1}
+              placeholder={`Auto: ${autoNew2p}`}
+              value={newPrize2p}
+              onChange={(event) => setNewPrize2p(event.target.value)}
+              disabled={!newModes.includes(2)}
+              className="mt-1.5 w-full rounded-xl border border-[var(--color-line)] bg-[#f8faf9] px-3 py-2.5 text-sm font-semibold tabular-nums text-[var(--color-ink)] outline-none ring-[var(--accent)] focus:ring-2 disabled:opacity-45"
+            />
+          </label>
+
+          <label className="block sm:col-span-2">
+            <span className="text-xs font-semibold text-[var(--color-muted)]">
+              4P Prize ({currency})
+            </span>
+            <input
+              type="number"
+              min={0}
+              max={10_000_000}
+              step={1}
+              placeholder={`Auto: ${autoNew4p}`}
+              value={newPrize4p}
+              onChange={(event) => setNewPrize4p(event.target.value)}
+              disabled={!newModes.includes(4)}
+              className="mt-1.5 w-full rounded-xl border border-[var(--color-line)] bg-[#f8faf9] px-3 py-2.5 text-sm font-semibold tabular-nums text-[var(--color-ink)] outline-none ring-[var(--accent)] focus:ring-2 disabled:opacity-45"
+            />
+          </label>
+
+          <div className="sm:col-span-2">
+            <span className="block text-xs font-semibold text-[var(--color-muted)]">Modes</span>
+            <div className="mt-1.5 flex gap-1.5">
               {[2, 4].map((mode) => {
                 const active = newModes.includes(mode);
                 return (
@@ -315,7 +403,7 @@ export const LevelsPage = forwardRef(function LevelsPage({ currency = "INR" }, r
                           : [...prev, mode].sort((a, b) => a - b),
                       )
                     }
-                    className={`flex-1 rounded-xl border px-3 py-2 text-xs font-bold transition ${
+                    className={`flex-1 rounded-xl border px-2.5 py-2 text-xs font-bold transition ${
                       active
                         ? "border-[var(--accent)] bg-[var(--accent-soft)] text-[var(--accent)]"
                         : "border-[var(--color-line)] bg-white text-[var(--color-muted)]"
@@ -328,10 +416,11 @@ export const LevelsPage = forwardRef(function LevelsPage({ currency = "INR" }, r
             </div>
           </div>
 
-          <div className="sm:col-span-2">
+          <div className="sm:col-span-1">
             <button
               type="submit"
-              className="w-full rounded-xl border border-[var(--accent)] bg-white px-4 py-2.5 text-sm font-bold text-[var(--accent)] transition hover:bg-[var(--accent-soft)]"
+              disabled={saving}
+              className="w-full rounded-xl bg-[var(--accent)] px-3 py-2.5 text-sm font-bold text-white shadow-sm transition hover:brightness-105 disabled:opacity-50"
             >
               + Add
             </button>
@@ -343,16 +432,201 @@ export const LevelsPage = forwardRef(function LevelsPage({ currency = "INR" }, r
       <section className="space-y-3">
         {levels.map((level, index) => {
           const gradient = LEVEL_GRADIENTS[index % LEVEL_GRADIENTS.length];
-          const prize2p = computePrizePool(level.entryFee, 2, platformFee);
-          const prize4p = computePrizePool(level.entryFee, 4, platformFee);
+          const isEditing = editingId === level.id && editDraft !== null;
+          const auto2p = computeAutoPrizePool(
+            isEditing ? editDraft.entryFee : level.entryFee,
+            2,
+            platformFee,
+          );
+          const auto4p = computeAutoPrizePool(
+            isEditing ? editDraft.entryFee : level.entryFee,
+            4,
+            platformFee,
+          );
+          const effective2p = level.prizePool2p !== "" ? Number(level.prizePool2p) : auto2p;
+          const effective4p = level.prizePool4p !== "" ? Number(level.prizePool4p) : auto4p;
           const has2p = level.playerModes.includes(2);
           const has4p = level.playerModes.includes(4);
+
+          if (isEditing) {
+            const draftHas2p = editDraft.playerModes.includes(2);
+            const draftHas4p = editDraft.playerModes.includes(4);
+
+            return (
+              <form
+                key={level.id}
+                onSubmit={handleSaveEdit}
+                className="rounded-2xl border-2 border-[var(--accent)] bg-white p-5 shadow-[var(--shadow-card)]"
+              >
+                <div className="mb-3 flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-2.5">
+                    <div
+                      className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-xs font-black text-white shadow-sm"
+                      style={{ background: gradient }}
+                      aria-hidden
+                    >
+                      {index + 1}
+                    </div>
+                    <p className="text-sm font-extrabold text-[var(--color-ink)]">
+                      Editing {level.name}
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={cancelEditing}
+                      disabled={saving}
+                      className="rounded-xl border border-[var(--color-line)] bg-white px-3.5 py-2 text-xs font-bold text-[var(--color-muted)] transition hover:bg-[#f4f7f5]"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="submit"
+                      disabled={saving}
+                      className="rounded-xl bg-[var(--accent)] px-4 py-2 text-xs font-bold text-white shadow-sm transition hover:brightness-105 disabled:opacity-50"
+                    >
+                      {saving ? "Saving…" : "Save changes"}
+                    </button>
+                  </div>
+                </div>
+
+                <div className="grid gap-3 sm:grid-cols-12 sm:items-end">
+                  <label className="block sm:col-span-3">
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-[var(--color-muted)]">
+                      Level Name
+                    </span>
+                    <input
+                      type="text"
+                      maxLength={48}
+                      value={editDraft.name}
+                      onChange={(event) =>
+                        setEditDraft((prev) => ({ ...prev, name: event.target.value }))
+                      }
+                      className="mt-1 w-full rounded-xl border border-[var(--color-line)] bg-[#f8faf9] px-3 py-2 text-sm font-bold text-[var(--color-ink)] outline-none ring-[var(--accent)] focus:ring-2"
+                    />
+                  </label>
+
+                  <label className="block sm:col-span-2">
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-[var(--color-muted)]">
+                      Entry ({currency})
+                    </span>
+                    <input
+                      type="number"
+                      min={1}
+                      max={1_000_000}
+                      step={1}
+                      value={editDraft.entryFee}
+                      onChange={(event) =>
+                        setEditDraft((prev) => ({ ...prev, entryFee: event.target.value }))
+                      }
+                      className="mt-1 w-full rounded-xl border border-[var(--color-line)] bg-[#f8faf9] px-3 py-2 text-sm font-bold tabular-nums text-[var(--color-ink)] outline-none ring-[var(--accent)] focus:ring-2"
+                    />
+                  </label>
+
+                  <label className="block sm:col-span-2">
+                    <span className="flex items-center justify-between text-[10px] font-bold uppercase tracking-wider text-[var(--color-muted)]">
+                      <span>2P Prize</span>
+                      {editDraft.prizePool2p !== "" ? (
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setEditDraft((prev) => ({ ...prev, prizePool2p: "" }))
+                          }
+                          className="text-[10px] font-semibold text-[var(--accent)] hover:underline"
+                        >
+                          Auto
+                        </button>
+                      ) : null}
+                    </span>
+                    <input
+                      type="number"
+                      min={0}
+                      max={10_000_000}
+                      step={1}
+                      placeholder={`Auto: ${auto2p}`}
+                      value={editDraft.prizePool2p}
+                      disabled={!draftHas2p}
+                      onChange={(event) =>
+                        setEditDraft((prev) => ({ ...prev, prizePool2p: event.target.value }))
+                      }
+                      className="mt-1 w-full rounded-xl border border-[var(--color-line)] bg-[#f8faf9] px-3 py-2 text-sm font-bold tabular-nums text-[var(--color-ink)] outline-none ring-[var(--accent)] focus:ring-2 disabled:opacity-45"
+                    />
+                  </label>
+
+                  <label className="block sm:col-span-2">
+                    <span className="flex items-center justify-between text-[10px] font-bold uppercase tracking-wider text-[var(--color-muted)]">
+                      <span>4P Prize</span>
+                      {editDraft.prizePool4p !== "" ? (
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setEditDraft((prev) => ({ ...prev, prizePool4p: "" }))
+                          }
+                          className="text-[10px] font-semibold text-[var(--accent)] hover:underline"
+                        >
+                          Auto
+                        </button>
+                      ) : null}
+                    </span>
+                    <input
+                      type="number"
+                      min={0}
+                      max={10_000_000}
+                      step={1}
+                      placeholder={`Auto: ${auto4p}`}
+                      value={editDraft.prizePool4p}
+                      disabled={!draftHas4p}
+                      onChange={(event) =>
+                        setEditDraft((prev) => ({ ...prev, prizePool4p: event.target.value }))
+                      }
+                      className="mt-1 w-full rounded-xl border border-[var(--color-line)] bg-[#f8faf9] px-3 py-2 text-sm font-bold tabular-nums text-[var(--color-ink)] outline-none ring-[var(--accent)] focus:ring-2 disabled:opacity-45"
+                    />
+                  </label>
+
+                  <div className="sm:col-span-3">
+                    <span className="block text-[10px] font-bold uppercase tracking-wider text-[var(--color-muted)]">
+                      Modes
+                    </span>
+                    <div className="mt-1 flex gap-1.5">
+                      {[2, 4].map((mode) => {
+                        const active = editDraft.playerModes.includes(mode);
+                        return (
+                          <button
+                            key={mode}
+                            type="button"
+                            onClick={() =>
+                              setEditDraft((prev) => {
+                                const has = prev.playerModes.includes(mode);
+                                const nextModes = has
+                                  ? prev.playerModes.filter((m) => m !== mode)
+                                  : [...prev.playerModes, mode].sort((a, b) => a - b);
+                                return { ...prev, playerModes: nextModes };
+                              })
+                            }
+                            className={`flex-1 rounded-lg border px-2 py-2 text-xs font-bold transition ${
+                              active
+                                ? "border-[var(--accent)] bg-[var(--accent-soft)] text-[var(--accent)]"
+                                : "border-[var(--color-line)] bg-white text-[var(--color-muted)]"
+                            }`}
+                          >
+                            {mode}P
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </div>
+              </form>
+            );
+          }
 
           return (
             <div
               key={level.id}
               className={`rounded-2xl border bg-white p-4 shadow-[var(--shadow-card)] transition ${
-                level.enabled ? "border-[var(--color-line)]" : "border-dashed border-slate-300 opacity-70"
+                level.enabled
+                  ? "border-[var(--color-line)]"
+                  : "border-dashed border-slate-300 opacity-70"
               }`}
             >
               <div className="flex flex-col gap-4 lg:flex-row lg:items-center">
@@ -368,8 +642,8 @@ export const LevelsPage = forwardRef(function LevelsPage({ currency = "INR" }, r
                   <div className="flex flex-col gap-1">
                     <button
                       type="button"
-                      onClick={() => moveLevel(index, -1)}
-                      disabled={index === 0}
+                      onClick={() => handleMoveLevel(index, -1)}
+                      disabled={index === 0 || saving}
                       className="rounded-md border border-[var(--color-line)] px-2 py-0.5 text-[10px] font-bold text-[var(--color-muted)] hover:bg-[#f4f7f5] disabled:opacity-30"
                       aria-label={`Move ${level.name} up`}
                     >
@@ -377,8 +651,8 @@ export const LevelsPage = forwardRef(function LevelsPage({ currency = "INR" }, r
                     </button>
                     <button
                       type="button"
-                      onClick={() => moveLevel(index, 1)}
-                      disabled={index === levels.length - 1}
+                      onClick={() => handleMoveLevel(index, 1)}
+                      disabled={index === levels.length - 1 || saving}
                       className="rounded-md border border-[var(--color-line)] px-2 py-0.5 text-[10px] font-bold text-[var(--color-muted)] hover:bg-[#f4f7f5] disabled:opacity-30"
                       aria-label={`Move ${level.name} down`}
                     >
@@ -387,82 +661,101 @@ export const LevelsPage = forwardRef(function LevelsPage({ currency = "INR" }, r
                   </div>
                 </div>
 
-                {/* Editable fields */}
+                {/* Read-only level summary */}
                 <div className="grid flex-1 gap-3 sm:grid-cols-12 sm:items-center">
-                  <label className="block sm:col-span-4">
-                    <span className="text-[10px] font-bold uppercase tracking-wider text-[var(--color-muted)]">
-                      Level Name
-                    </span>
-                    <input
-                      type="text"
-                      maxLength={48}
-                      value={level.name}
-                      onChange={(event) => updateLevelField(index, { name: event.target.value })}
-                      className="mt-1 w-full rounded-xl border border-[var(--color-line)] bg-[#f8faf9] px-3 py-2 text-sm font-bold text-[var(--color-ink)] outline-none ring-[var(--accent)] focus:ring-2"
-                    />
-                  </label>
-
-                  <label className="block sm:col-span-3">
-                    <span className="text-[10px] font-bold uppercase tracking-wider text-[var(--color-muted)]">
-                      Entry Fee ({currency})
-                    </span>
-                    <input
-                      type="number"
-                      min={1}
-                      max={1_000_000}
-                      step={1}
-                      value={level.entryFee}
-                      onChange={(event) => updateLevelField(index, { entryFee: event.target.value })}
-                      className="mt-1 w-full rounded-xl border border-[var(--color-line)] bg-[#f8faf9] px-3 py-2 text-sm font-bold tabular-nums text-[var(--color-ink)] outline-none ring-[var(--accent)] focus:ring-2"
-                    />
-                  </label>
+                  <div className="sm:col-span-3">
+                    <p className="text-[10px] font-bold uppercase tracking-wider text-[var(--color-muted)]">
+                      Level
+                    </p>
+                    <p className="mt-0.5 text-base font-extrabold text-[var(--color-ink)]">
+                      {level.name}
+                    </p>
+                  </div>
 
                   <div className="sm:col-span-2">
-                    <span className="block text-[10px] font-bold uppercase tracking-wider text-[var(--color-muted)]">
+                    <p className="text-[10px] font-bold uppercase tracking-wider text-[var(--color-muted)]">
+                      Entry Fee
+                    </p>
+                    <p className="mt-0.5 text-sm font-bold tabular-nums text-[var(--color-ink)]">
+                      {formatAmount(Number(level.entryFee), currency)}
+                    </p>
+                  </div>
+
+                  <div className="sm:col-span-2">
+                    <p className="text-[10px] font-bold uppercase tracking-wider text-[var(--color-muted)]">
+                      2P Prize Pool
+                    </p>
+                    <p
+                      className={`mt-0.5 text-sm font-bold tabular-nums ${
+                        has2p ? "text-[var(--color-ink)]" : "text-[var(--color-muted)] line-through"
+                      }`}
+                    >
+                      {formatAmount(effective2p, currency)}
+                      {level.prizePool2p !== "" ? (
+                        <span className="ml-1.5 rounded bg-[var(--accent-soft)] px-1.5 py-0.5 text-[10px] font-bold text-[var(--accent)]">
+                          Custom
+                        </span>
+                      ) : null}
+                    </p>
+                  </div>
+
+                  <div className="sm:col-span-2">
+                    <p className="text-[10px] font-bold uppercase tracking-wider text-[var(--color-muted)]">
+                      4P Prize Pool
+                    </p>
+                    <p
+                      className={`mt-0.5 text-sm font-bold tabular-nums ${
+                        has4p ? "text-[var(--color-ink)]" : "text-[var(--color-muted)] line-through"
+                      }`}
+                    >
+                      {formatAmount(effective4p, currency)}
+                      {level.prizePool4p !== "" ? (
+                        <span className="ml-1.5 rounded bg-[var(--accent-soft)] px-1.5 py-0.5 text-[10px] font-bold text-[var(--accent)]">
+                          Custom
+                        </span>
+                      ) : null}
+                    </p>
+                  </div>
+
+                  <div className="sm:col-span-3">
+                    <p className="text-[10px] font-bold uppercase tracking-wider text-[var(--color-muted)]">
                       Modes
-                    </span>
+                    </p>
                     <div className="mt-1 flex gap-1.5">
                       {[2, 4].map((mode) => {
                         const active = level.playerModes.includes(mode);
                         return (
-                          <button
+                          <span
                             key={mode}
-                            type="button"
-                            onClick={() => toggleLevelMode(index, mode)}
-                            className={`flex-1 rounded-lg border px-2 py-1.5 text-xs font-bold transition ${
+                            className={`rounded-lg px-2.5 py-1 text-xs font-bold ${
                               active
-                                ? "border-[var(--accent)] bg-[var(--accent-soft)] text-[var(--accent)]"
-                                : "border-[var(--color-line)] bg-white text-[var(--color-muted)]"
+                                ? "bg-[var(--accent-soft)] text-[var(--accent)]"
+                                : "bg-slate-100 text-slate-400"
                             }`}
                           >
                             {mode}P
-                          </button>
+                          </span>
                         );
                       })}
                     </div>
                   </div>
-
-                  <div className="sm:col-span-3">
-                    <span className="block text-[10px] font-bold uppercase tracking-wider text-[var(--color-muted)]">
-                      Prize Pool Preview
-                    </span>
-                    <div className="mt-1 space-y-0.5 text-xs font-semibold tabular-nums text-[var(--color-ink)]">
-                      <p className={has2p ? "" : "text-[var(--color-muted)] line-through"}>
-                        2P: {formatAmount(prize2p, currency)}
-                      </p>
-                      <p className={has4p ? "" : "text-[var(--color-muted)] line-through"}>
-                        4P: {formatAmount(prize4p, currency)}
-                      </p>
-                    </div>
-                  </div>
                 </div>
 
-                {/* Enable + Delete */}
+                {/* Actions: Edit, Active/Hidden, Delete */}
                 <div className="flex items-center justify-end gap-2 border-t border-[var(--color-line)]/70 pt-3 lg:border-t-0 lg:pt-0">
                   <button
                     type="button"
-                    onClick={() => updateLevelField(index, { enabled: !level.enabled })}
-                    className={`rounded-xl px-3 py-2 text-xs font-bold transition ${
+                    onClick={() => startEditing(level)}
+                    disabled={saving}
+                    className="rounded-xl border border-[var(--accent)] bg-white px-3.5 py-2 text-xs font-bold text-[var(--accent)] transition hover:bg-[var(--accent-soft)] disabled:opacity-40"
+                  >
+                    Edit
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleToggleEnabled(level)}
+                    disabled={saving}
+                    className={`rounded-xl px-3 py-2 text-xs font-bold transition disabled:opacity-40 ${
                       level.enabled
                         ? "bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200"
                         : "bg-slate-100 text-slate-600 ring-1 ring-slate-200"
@@ -472,8 +765,8 @@ export const LevelsPage = forwardRef(function LevelsPage({ currency = "INR" }, r
                   </button>
                   <button
                     type="button"
-                    onClick={() => removeLevel(index)}
-                    disabled={levels.length <= 1}
+                    onClick={() => handleRemoveLevel(level)}
+                    disabled={levels.length <= 1 || saving}
                     className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-bold text-rose-700 transition hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-40"
                   >
                     Delete

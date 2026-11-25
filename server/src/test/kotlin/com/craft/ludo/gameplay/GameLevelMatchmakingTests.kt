@@ -4,6 +4,7 @@ import com.craft.ludo.wallet.DEFAULT_GAME_LEVELS
 import com.craft.ludo.wallet.GameLevelConfig
 import com.craft.ludo.wallet.calculateLevelPrizePool
 import com.craft.ludo.wallet.normalizeGameLevels
+import com.craft.ludo.wallet.resolveLevelPrizePool
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
@@ -38,5 +39,28 @@ class GameLevelMatchmakingTests {
         assertEquals(listOf(2), normalized[0].playerModes)
         assertEquals(listOf(4), normalized[1].playerModes)
         assertEquals(DEFAULT_GAME_LEVELS.size, normalizeGameLevels(emptyList()).size)
+    }
+
+    @Test
+    fun `resolveLevelPrizePool prefers admin custom prize pool and falls back to auto calculation`() {
+        val customLevel = GameLevelConfig(
+            id = "level_1",
+            name = "LEVEL 1",
+            entryFee = 100L,
+            prizePool2p = 190L,
+            prizePool4p = 380L,
+        )
+        assertEquals(190L, resolveLevelPrizePool(customLevel, maxPlayers = 2, platformFeePerPlayer = 10L))
+        assertEquals(380L, resolveLevelPrizePool(customLevel, maxPlayers = 4, platformFeePerPlayer = 10L))
+
+        val autoLevel = GameLevelConfig(
+            id = "level_2",
+            name = "LEVEL 2",
+            entryFee = 200L,
+            prizePool2p = null,
+            prizePool4p = null,
+        )
+        assertEquals(380L, resolveLevelPrizePool(autoLevel, maxPlayers = 2, platformFeePerPlayer = 10L))
+        assertEquals(760L, resolveLevelPrizePool(autoLevel, maxPlayers = 4, platformFeePerPlayer = 10L))
     }
 }

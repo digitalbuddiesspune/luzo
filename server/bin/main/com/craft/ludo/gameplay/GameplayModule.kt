@@ -17,7 +17,7 @@ import com.craft.ludo.gameplay.bot.upsertStalkPlan
 import com.craft.ludo.session.SessionLifecyclePublisher
 import com.craft.ludo.wallet.WalletReservation
 import com.craft.ludo.wallet.WalletService
-import com.craft.ludo.wallet.calculateLevelPrizePool
+import com.craft.ludo.wallet.resolveLevelPrizePool
 import com.fasterxml.jackson.annotation.JsonAlias
 import com.fasterxml.jackson.annotation.JsonProperty
 import com.fasterxml.jackson.databind.ObjectMapper
@@ -125,6 +125,7 @@ data class RoomDocument(
     val entryFee: Long = 100,
     val levelId: String? = null,
     val levelName: String? = null,
+    val prizePool: Long? = null,
     val roomName: String? = null,
     val hostUserId: String? = null,
     val createdAt: Instant,
@@ -240,6 +241,7 @@ data class RoomSummaryResponse(
     val entryFee: Long,
     val levelId: String? = null,
     val levelName: String? = null,
+    val prizePool: Long? = null,
     val livePot: Long,
     val realPlayerCount: Int,
     val occupiedSeats: Int,
@@ -773,6 +775,7 @@ internal fun RoomDocument.toSummary(): RoomSummaryResponse {
         entryFee = entryFee,
         levelId = levelId,
         levelName = levelName,
+        prizePool = prizePool,
         livePot = walletReservations.sumOf { it.amount },
         realPlayerCount = countRealSeats(this),
         occupiedSeats = seats.size,
@@ -2318,6 +2321,7 @@ class MatchService(
                                     winnerUserId = winnerUserId,
                                     reservations = room.walletReservations,
                                     roomId = room.id,
+                                    prizePoolOverride = room.prizePool,
                                 )
                                     .doOnSubscribe {
                                         log.info(
@@ -2419,8 +2423,8 @@ class LobbyService(
                     level.enabled && (playerFilter == null || playerFilter in level.playerModes)
                 }
                 .map { level ->
-                    val prize2p = calculateLevelPrizePool(level.entryFee, 2, settings.platformFeePerPlayer)
-                    val prize4p = calculateLevelPrizePool(level.entryFee, 4, settings.platformFeePerPlayer)
+                    val prize2p = resolveLevelPrizePool(level, 2, settings.platformFeePerPlayer)
+                    val prize4p = resolveLevelPrizePool(level, 4, settings.platformFeePerPlayer)
                     val effectivePlayers = playerFilter ?: if (2 in level.playerModes) 2 else 4
                     GameLevelResponse(
                         id = level.id,
@@ -2908,6 +2912,7 @@ class LobbyService(
                         winnerUserId = winnerUserId,
                         reservations = room.walletReservations,
                         roomId = room.id,
+                        prizePoolOverride = room.prizePool,
                     )
                 }
                 ?: Mono.empty()

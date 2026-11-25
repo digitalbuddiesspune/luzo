@@ -216,8 +216,8 @@ export const mockBootState = {
 
 export const PLAY_ROUTES = {
   online: "/play/online/",
-  online2: "/play/online/?players=2",
-  online4: "/play/online/?players=4",
+  online2: "/levels/?players=2",
+  online4: "/levels/?players=4",
   friends: "/play/private-room/",
   computer: "/play/computer/",
   local: "/play/local/",

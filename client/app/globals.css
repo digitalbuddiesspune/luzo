@@ -5220,198 +5220,31 @@ body:has(.screen-provider-opening)::before {
 .menu-tournament-link:focus-visible { outline: 3px solid white; outline-offset: 3px; }
 
 
-/* Game mode level picker modal */
-.level-picker-backdrop {
-  position: fixed;
-  inset: 0;
-  z-index: 60;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 16px;
-  background: rgba(6, 18, 15, 0.78);
-  backdrop-filter: blur(6px);
-}
-
-.level-picker-modal {
-  width: 100%;
-  max-width: 400px;
-  max-height: 82vh;
-  display: flex;
-  flex-direction: column;
-  border-radius: 22px;
-  border: 1px solid rgba(255, 224, 130, 0.28);
-  background: linear-gradient(180deg, #103227 0%, #091d17 100%);
-  color: #f4fbf7;
-  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.55);
-  overflow: hidden;
-}
-
-.level-picker-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 18px 20px 14px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
-}
-
-.level-picker-eyebrow {
-  display: block;
-  font-size: 10px;
-  font-weight: 800;
-  letter-spacing: 0.16em;
-  text-transform: uppercase;
-  color: #f5d26b;
-}
-
-.level-picker-header h2 {
-  margin: 2px 0 0;
-  font-size: 18px;
-  font-weight: 800;
-  color: #ffffff;
-}
-
-.level-picker-close {
-  width: 34px;
-  height: 34px;
-  border-radius: 10px;
-  border: 1px solid rgba(255, 255, 255, 0.16);
-  background: rgba(255, 255, 255, 0.08);
-  color: #ffffff;
-  font-size: 18px;
-  line-height: 1;
-  cursor: pointer;
-}
-
-.level-picker-balance {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 10px 20px;
-  background: rgba(255, 255, 255, 0.04);
-  font-size: 12px;
-  color: rgba(244, 251, 247, 0.78);
-}
-
-.level-picker-balance strong {
-  color: #f5d26b;
-  font-weight: 800;
-}
-
-.level-picker-status {
-  margin: 12px 20px 0;
-  padding: 10px 12px;
-  border-radius: 10px;
-  background: rgba(239, 68, 68, 0.16);
-  border: 1px solid rgba(248, 113, 113, 0.35);
-  color: #fecaca;
-  font-size: 12px;
-  font-weight: 600;
-}
-
-.level-picker-list {
-  padding: 14px 20px 20px;
-  overflow-y: auto;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-
-.level-picker-empty {
-  text-align: center;
-  padding: 24px 12px;
-  color: rgba(244, 251, 247, 0.72);
-  font-size: 13px;
-}
-
-.level-picker-card {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  width: 100%;
-  padding: 14px 16px;
-  border-radius: 16px;
-  border: 1px solid rgba(255, 255, 255, 0.14);
-  background: linear-gradient(135deg, rgba(28, 92, 68, 0.65) 0%, rgba(16, 52, 39, 0.85) 100%);
-  color: #ffffff;
-  text-align: left;
-  cursor: pointer;
-  transition: transform 140ms ease, border-color 140ms ease, background 140ms ease;
-}
-
-.level-picker-card:hover {
-  transform: translateY(-1px);
-  border-color: rgba(245, 210, 107, 0.6);
-}
-
-.level-picker-card.is-low-balance {
-  opacity: 0.62;
-}
-
-.level-picker-card-info {
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-}
-
-.level-picker-card-name {
-  font-size: 15px;
-  font-weight: 800;
-  letter-spacing: 0.02em;
-}
-
-.level-picker-card-prize {
-  font-size: 12px;
-  color: #9be8bd;
-  font-weight: 600;
-}
-
-.level-picker-card-cta {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  gap: 2px;
-}
-
-.level-picker-fee-pill {
-  display: inline-flex;
-  align-items: center;
-  padding: 6px 12px;
-  border-radius: 999px;
-  background: linear-gradient(180deg, #f8da78 0%, #e0a82e 100%);
-  color: #1f1604;
-  font-size: 13px;
-  font-weight: 900;
-}
-
-.level-picker-low-tag {
-  font-size: 10px;
-  font-weight: 700;
-  color: #fca5a5;
-}
-
-
 /* ==========================================================================
    Online Level Selection Screen
    ========================================================================== */
 
-.screen-level-select {
+.level-select-page {
   display: flex;
   flex-direction: column;
-  min-height: 100dvh;
+  height: 100svh;
+  height: 100dvh;
+  overflow: hidden;
   background: linear-gradient(180deg, #0b2458 0%, #07193f 50%, #05112e 100%);
-  padding-bottom: 1.5rem;
 }
 
 .level-select-header {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  flex-shrink: 0;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 0.75rem;
-  padding: 0.7rem 0.95rem;
-  background: linear-gradient(180deg, rgba(22, 68, 150, 0.95) 0%, rgba(12, 42, 102, 0.95) 100%);
+  width: 100%;
+  padding: calc(0.7rem + env(safe-area-inset-top)) 0.95rem 0.7rem;
+  background: linear-gradient(180deg, rgba(22, 68, 150, 0.98) 0%, rgba(12, 42, 102, 0.98) 100%);
   border-bottom: 1px solid rgba(130, 180, 255, 0.28);
   box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
 }
@@ -5446,7 +5279,7 @@ body:has(.screen-provider-opening)::before {
 }
 
 .level-select-wallet-value {
-  font-size: 0.95rem;
+  font-size: 0.84rem;
   font-weight: 800;
   letter-spacing: 0.01em;
   color: #ffffff;
@@ -5476,6 +5309,7 @@ body:has(.screen-provider-opening)::before {
 }
 
 .level-select-mode-bar {
+  flex-shrink: 0;
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 0.55rem;
@@ -5483,12 +5317,12 @@ body:has(.screen-provider-opening)::before {
 }
 
 .level-select-mode-pill {
-  border-radius: 0.75rem;
+  border-radius: 0.7rem;
   border: 1px solid rgba(150, 195, 255, 0.26);
   background: rgba(10, 30, 74, 0.65);
   color: rgba(224, 238, 255, 0.78);
-  padding: 0.55rem 0.75rem;
-  font-size: 0.85rem;
+  padding: 0.45rem 0.65rem;
+  font-size: 0.74rem;
   font-weight: 800;
   letter-spacing: 0.04em;
   text-transform: uppercase;
@@ -5525,11 +5359,14 @@ body:has(.screen-provider-opening)::before {
 }
 
 .level-select-list {
+  flex: 1 1 auto;
+  min-height: 0;
   display: flex;
   flex-direction: column;
   gap: 0.78rem;
-  padding: 0.75rem 0.95rem 1.25rem;
+  padding: 0.75rem 0.95rem calc(1.5rem + env(safe-area-inset-bottom));
   overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
 }
 
 .level-select-empty {
@@ -5546,15 +5383,16 @@ body:has(.screen-provider-opening)::before {
 
 .level-card {
   position: relative;
+  flex-shrink: 0;
   display: flex;
   align-items: stretch;
   justify-content: space-between;
-  gap: 0.75rem;
-  padding: 0.9rem 1rem;
-  border-radius: 1rem;
+  gap: 0.65rem;
+  padding: 0.72rem 0.88rem;
+  border-radius: 0.9rem;
   border: 1.5px solid rgba(255, 255, 255, 0.32);
   box-shadow:
-    0 10px 22px rgba(0, 0, 0, 0.34),
+    0 8px 18px rgba(0, 0, 0, 0.32),
     inset 0 1px 0 rgba(255, 255, 255, 0.3);
   overflow: hidden;
 }
@@ -5591,13 +5429,13 @@ body:has(.screen-provider-opening)::before {
   display: flex;
   flex-direction: column;
   justify-content: space-between;
-  gap: 0.55rem;
+  gap: 0.42rem;
   min-width: 0;
 }
 
 .level-card-title {
   margin: 0;
-  font-size: 1.38rem;
+  font-size: 1.08rem;
   font-weight: 900;
   letter-spacing: 0.02em;
   text-transform: uppercase;
@@ -5609,8 +5447,8 @@ body:has(.screen-provider-opening)::before {
 .level-card-entry-pill {
   display: inline-flex;
   align-items: center;
-  gap: 0.5rem;
-  padding: 0.35rem 0.72rem 0.35rem 0.42rem;
+  gap: 0.42rem;
+  padding: 0.26rem 0.62rem 0.26rem 0.34rem;
   border-radius: 999px;
   background: rgba(0, 0, 0, 0.32);
   border: 1px solid rgba(255, 255, 255, 0.14);
@@ -5621,12 +5459,12 @@ body:has(.screen-provider-opening)::before {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 1.65rem;
-  height: 1.65rem;
+  width: 1.38rem;
+  height: 1.38rem;
   border-radius: 999px;
   background: radial-gradient(circle at 35% 30%, #fff1a8 0%, #f5b91a 55%, #b97704 100%);
   color: #6b3e00;
-  font-size: 0.95rem;
+  font-size: 0.8rem;
   font-weight: 900;
   box-shadow: 0 2px 6px rgba(0, 0, 0, 0.35);
   flex-shrink: 0;
@@ -5639,13 +5477,13 @@ body:has(.screen-provider-opening)::before {
 }
 
 .level-card-entry-label {
-  font-size: 0.68rem;
+  font-size: 0.6rem;
   font-weight: 600;
   color: rgba(255, 255, 255, 0.86);
 }
 
 .level-card-entry-value {
-  font-size: 0.95rem;
+  font-size: 0.8rem;
   font-weight: 900;
   color: #ffffff;
   font-variant-numeric: tabular-nums;
@@ -5656,7 +5494,7 @@ body:has(.screen-provider-opening)::before {
   flex-direction: column;
   align-items: flex-end;
   justify-content: space-between;
-  gap: 0.55rem;
+  gap: 0.42rem;
   flex-shrink: 0;
 }
 
@@ -5668,13 +5506,13 @@ body:has(.screen-provider-opening)::before {
 }
 
 .level-card-prize-label {
-  font-size: 0.74rem;
+  font-size: 0.64rem;
   font-weight: 700;
   color: rgba(255, 255, 255, 0.9);
 }
 
 .level-card-prize-value {
-  font-size: 1.12rem;
+  font-size: 0.92rem;
   font-weight: 900;
   color: #ffffff;
   text-shadow: 0 1px 4px rgba(0, 0, 0, 0.25);
@@ -5684,13 +5522,13 @@ body:has(.screen-provider-opening)::before {
 .level-card-join-button {
   display: inline-flex;
   align-items: center;
-  gap: 0.35rem;
-  padding: 0.5rem 1.05rem;
+  gap: 0.28rem;
+  padding: 0.38rem 0.85rem;
   border: none;
   border-radius: 999px;
   background: #ffffff;
   color: #0e3a2d;
-  font-size: 0.82rem;
+  font-size: 0.72rem;
   font-weight: 900;
   letter-spacing: 0.03em;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.24);

@@ -6790,116 +6790,11 @@ function useOperatorGatewayConsoleLogs(sessionToken) {
   }, [sessionToken]);
 }
 
-function LevelPickerModal({
-  players,
-  levels,
-  currency,
-  availableBalance,
-  isLoading,
-  errorMessage,
-  onSelectLevel,
-  onClose,
-}) {
-  if (!players) {
-    return null;
-  }
-
-  const symbol = currency === "INR" ? "₹" : `${currency} `;
-
-  return (
-    <div
-      className="level-picker-backdrop"
-      role="dialog"
-      aria-modal="true"
-      aria-label={`Select level for ${players} Player mode`}
-      onClick={(event) => {
-        if (event.target === event.currentTarget) {
-          onClose();
-        }
-      }}
-    >
-      <div className="level-picker-modal">
-        <div className="level-picker-header">
-          <div>
-            <span className="level-picker-eyebrow">{players} Player Mode</span>
-            <h2>Select Level</h2>
-          </div>
-          <button
-            type="button"
-            className="level-picker-close"
-            onClick={onClose}
-            aria-label="Close level selector"
-          >
-            ×
-          </button>
-        </div>
-
-        <div className="level-picker-balance">
-          <span>Wallet Balance</span>
-          <strong>
-            {symbol}
-            {Number(availableBalance ?? 0).toLocaleString()}
-          </strong>
-        </div>
-
-        {errorMessage ? (
-          <p className="level-picker-status" role="alert">
-            {errorMessage}
-          </p>
-        ) : null}
-
-        <div className="level-picker-list">
-          {isLoading ? (
-            <p className="level-picker-empty">Loading levels…</p>
-          ) : !levels.length ? (
-            <p className="level-picker-empty">No levels available for {players}-player mode yet.</p>
-          ) : (
-            levels.map((level) => {
-              const prize = players === 2 ? level.prizePool2p : level.prizePool4p;
-              const isLowBalance = (availableBalance ?? 0) < level.entryFee;
-              return (
-                <button
-                  key={level.id}
-                  type="button"
-                  className={`level-picker-card ${isLowBalance ? "is-low-balance" : ""}`}
-                  onClick={() => onSelectLevel(level)}
-                >
-                  <div className="level-picker-card-info">
-                    <span className="level-picker-card-name">{level.name}</span>
-                    <span className="level-picker-card-prize">
-                      Win {symbol}
-                      {Number(prize ?? level.prizePool ?? 0).toLocaleString()}
-                    </span>
-                  </div>
-                  <div className="level-picker-card-cta">
-                    <span className="level-picker-fee-pill">
-                      {symbol}
-                      {Number(level.entryFee).toLocaleString()}
-                    </span>
-                    {isLowBalance ? (
-                      <span className="level-picker-low-tag">Low balance</span>
-                    ) : null}
-                  </div>
-                </button>
-              );
-            })
-          )}
-        </div>
-      </div>
-    </div>
-  );
-}
-
 export function MenuPageShell({ appState = mockBootState }) {
   const router = useRouter();
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
   const [isFriendsRoomOpen, setIsFriendsRoomOpen] = useState(false);
-  const [levelPickerPlayers, setLevelPickerPlayers] = useState(null);
-  const [gameLevels, setGameLevels] = useState([]);
-  const [levelsCurrency, setLevelsCurrency] = useState("INR");
-  const [isLevelsLoading, setIsLevelsLoading] = useState(false);
-  const [levelsError, setLevelsError] = useState("");
   const [friendsActiveTab, setFriendsActiveTab] = useState("create");
   const [friendsRoomName, setFriendsRoomName] = useState("Weekend Table");
   const [friendsDisplayName, setFriendsDisplayName] = useState(
@@ -6933,7 +6828,7 @@ export function MenuPageShell({ appState = mockBootState }) {
     return <OperatorAccessBlockedScreen message={accessMessage} />;
   }
 
-  async function handleModeSelect(modeKey) {
+  function handleModeSelect(modeKey) {
     if (modeKey === "friends") {
       setIsSettingsOpen(false);
       setFriendsStatusMessage("");
@@ -6941,47 +6836,7 @@ export function MenuPageShell({ appState = mockBootState }) {
       return;
     }
 
-    if (modeKey === "online2" || modeKey === "online4") {
-      const players = modeKey === "online2" ? 2 : 4;
-      setIsSettingsOpen(false);
-      setLevelPickerPlayers(players);
-      setLevelsError("");
-      setIsLevelsLoading(true);
-      try {
-        const response = await fetchGameLevels(players);
-        setGameLevels(Array.isArray(response?.levels) ? response.levels : []);
-        if (response?.currency) {
-          setLevelsCurrency(response.currency);
-        }
-      } catch (error) {
-        setGameLevels([]);
-        setLevelsError(error.message || "Unable to load levels.");
-      } finally {
-        setIsLevelsLoading(false);
-      }
-      return;
-    }
-
     navigateToMode(router, modeKey, () => setIsSettingsOpen(false));
-  }
-
-  function handleSelectGameLevel(level) {
-    const players = levelPickerPlayers;
-    if (!players || !level) return;
-
-    const available = hydratedAppState.wallet?.availableBalance ?? 0;
-    if (available < level.entryFee) {
-      setLevelsError(
-        `Insufficient wallet balance. You need ${level.entryFee} coins to join ${level.name}. Current balance: ${available}.`,
-      );
-      return;
-    }
-
-    const baseRoute = players === 2 ? PLAY_ROUTES.online2 : PLAY_ROUTES.online4;
-    const targetHref = `${baseRoute}&levelId=${encodeURIComponent(level.id)}&entryFee=${encodeURIComponent(level.entryFee)}`;
-    setLevelPickerPlayers(null);
-    setLevelsError("");
-    navigateToHref(router, targetHref);
   }
 
   function handleCloseFriendsRoom() {
@@ -7051,19 +6906,6 @@ export function MenuPageShell({ appState = mockBootState }) {
         onOpenWallet={undefined}
         overlay={
           <>
-            <LevelPickerModal
-              players={levelPickerPlayers}
-              levels={gameLevels}
-              currency={levelsCurrency || hydratedAppState.wallet?.currency || "INR"}
-              availableBalance={hydratedAppState.wallet?.availableBalance ?? 0}
-              isLoading={isLevelsLoading}
-              errorMessage={levelsError}
-              onSelectLevel={handleSelectGameLevel}
-              onClose={() => {
-                setLevelPickerPlayers(null);
-                setLevelsError("");
-              }}
-            />
             {IS_FRIENDS_MODE_VISIBLE ? (
               <FriendsRoomModal
                 isOpen={isFriendsRoomOpen}
@@ -8049,134 +7891,165 @@ function OnlineLevelSelectScreen({
   }
 
   return (
-    <AppFrame screenClassName="screen-level-select" backdrop={<GameBackdrop />}>
-      <header className="level-select-header">
-        <div className="level-select-brand">
-          <img
-            src="/assets/brand.webp"
-            alt="Ludo"
-            className="level-select-logo"
-            draggable={false}
-          />
-        </div>
-
-        <div className="level-select-wallet" aria-label="Wallet balance">
-          <span className="level-select-wallet-icon" aria-hidden="true">
-            <svg viewBox="0 0 24 24" width="18" height="18" fill="none">
-              <rect x="2.5" y="5.5" width="19" height="14" rx="3" fill="#c77d3b" stroke="#6c3912" strokeWidth="1.4" />
-              <path d="M15.5 10.5H21.5V14.5H15.5C14.4 14.5 13.5 13.6 13.5 12.5C13.5 11.4 14.4 10.5 15.5 10.5Z" fill="#e5a35d" stroke="#6c3912" strokeWidth="1.2" />
-              <circle cx="16.2" cy="12.5" r="1.1" fill="#fff7d7" />
-            </svg>
-          </span>
-          <span className="level-select-wallet-value">
-            {formatWalletBalancePill(wallet?.availableBalance)}
-          </span>
-        </div>
-
-        <button
-          type="button"
-          className="level-select-home-button"
-          onClick={onGoHome}
-          aria-label="Back to home"
-        >
-          <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M3 10.5L12 3l9 7.5" />
-            <path d="M5.5 9.5V20a1 1 0 0 0 1 1h4v-6h3v6h4a1 1 0 0 0 1-1V9.5" />
-          </svg>
-        </button>
-      </header>
-
-      <div className="level-select-mode-bar" role="tablist" aria-label="Player mode">
-        <button
-          type="button"
-          role="tab"
-          aria-selected={maxPlayers === 2}
-          className={`level-select-mode-pill ${maxPlayers === 2 ? "is-active" : ""}`}
-          onClick={() => onSwitchPlayers(2)}
-        >
-          2 Player
-        </button>
-        <button
-          type="button"
-          role="tab"
-          aria-selected={maxPlayers === 4}
-          className={`level-select-mode-pill ${maxPlayers === 4 ? "is-active" : ""}`}
-          onClick={() => onSwitchPlayers(4)}
-        >
-          4 Player
-        </button>
-      </div>
-
-      {noticeMessage ? (
-        <div className="level-select-banner is-warning" role="alert">
-          {noticeMessage}
-        </div>
-      ) : null}
-
-      {errorMessage ? (
-        <div className="level-select-banner is-error" role="alert">
-          {errorMessage}
-        </div>
-      ) : null}
-
-      <div className="level-select-list">
-        {isLoading ? (
-          <div className="level-select-empty">Loading levels…</div>
-        ) : levels.length === 0 ? (
-          <div className="level-select-empty">
-            No {maxPlayers}-player levels are available right now.
+    <main className="viewport-shell">
+      <section className="portrait-device level-select-page">
+        <header className="level-select-header">
+          <div className="level-select-brand">
+            <img
+              src="/assets/brand.webp"
+              alt="Ludo"
+              className="level-select-logo"
+              draggable={false}
+            />
           </div>
-        ) : (
-          levels.map((level, index) => {
-            const theme = LEVEL_CARD_THEMES[index % LEVEL_CARD_THEMES.length];
-            const prizePool =
-              level.prizePool ??
-              (maxPlayers === 2 ? level.prizePool2p : level.prizePool4p) ??
-              level.entryFee * maxPlayers;
-            return (
-              <article
-                key={level.id}
-                className={`level-card level-card-${theme}`}
-              >
-                <div className="level-card-left">
-                  <h2 className="level-card-title">{level.name}</h2>
-                  <div className="level-card-entry-pill">
-                    <span className="level-card-coin" aria-hidden="true">
-                      ₹
-                    </span>
-                    <div className="level-card-entry-copy">
-                      <span className="level-card-entry-label">Entry Fees</span>
-                      <strong className="level-card-entry-value">
-                        {formatLevelRupees(level.entryFee)}
-                      </strong>
+
+          <div className="level-select-wallet" aria-label="Wallet balance">
+            <span className="level-select-wallet-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" width="18" height="18" fill="none">
+                <rect x="2.5" y="5.5" width="19" height="14" rx="3" fill="#c77d3b" stroke="#6c3912" strokeWidth="1.4" />
+                <path d="M15.5 10.5H21.5V14.5H15.5C14.4 14.5 13.5 13.6 13.5 12.5C13.5 11.4 14.4 10.5 15.5 10.5Z" fill="#e5a35d" stroke="#6c3912" strokeWidth="1.2" />
+                <circle cx="16.2" cy="12.5" r="1.1" fill="#fff7d7" />
+              </svg>
+            </span>
+            <span className="level-select-wallet-value">
+              {formatWalletBalancePill(wallet?.availableBalance)}
+            </span>
+          </div>
+
+          <button
+            type="button"
+            className="level-select-home-button"
+            onClick={onGoHome}
+            aria-label="Back to home"
+          >
+            <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M3 10.5L12 3l9 7.5" />
+              <path d="M5.5 9.5V20a1 1 0 0 0 1 1h4v-6h3v6h4a1 1 0 0 0 1-1V9.5" />
+            </svg>
+          </button>
+        </header>
+
+        <div className="level-select-mode-bar" role="tablist" aria-label="Player mode">
+          <button
+            type="button"
+            role="tab"
+            aria-selected={maxPlayers === 2}
+            className={`level-select-mode-pill ${maxPlayers === 2 ? "is-active" : ""}`}
+            onClick={() => onSwitchPlayers(2)}
+          >
+            2 Player
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={maxPlayers === 4}
+            className={`level-select-mode-pill ${maxPlayers === 4 ? "is-active" : ""}`}
+            onClick={() => onSwitchPlayers(4)}
+          >
+            4 Player
+          </button>
+        </div>
+
+        {noticeMessage ? (
+          <div className="level-select-banner is-warning" role="alert">
+            {noticeMessage}
+          </div>
+        ) : null}
+
+        {errorMessage ? (
+          <div className="level-select-banner is-error" role="alert">
+            {errorMessage}
+          </div>
+        ) : null}
+
+        <div className="level-select-list">
+          {isLoading ? (
+            <div className="level-select-empty">Loading levels…</div>
+          ) : levels.length === 0 ? (
+            <div className="level-select-empty">
+              No {maxPlayers}-player levels are available right now.
+            </div>
+          ) : (
+            levels.map((level, index) => {
+              const theme = LEVEL_CARD_THEMES[index % LEVEL_CARD_THEMES.length];
+              const prizePool =
+                level.prizePool ??
+                (maxPlayers === 2 ? level.prizePool2p : level.prizePool4p) ??
+                level.entryFee * maxPlayers;
+              return (
+                <article
+                  key={level.id}
+                  className={`level-card level-card-${theme}`}
+                >
+                  <div className="level-card-left">
+                    <h2 className="level-card-title">{level.name}</h2>
+                    <div className="level-card-entry-pill">
+                      <span className="level-card-coin" aria-hidden="true">
+                        ₹
+                      </span>
+                      <div className="level-card-entry-copy">
+                        <span className="level-card-entry-label">Entry Fees</span>
+                        <strong className="level-card-entry-value">
+                          {formatLevelRupees(level.entryFee)}
+                        </strong>
+                      </div>
                     </div>
                   </div>
-                </div>
 
-                <div className="level-card-right">
-                  <div className="level-card-prize">
-                    <span className="level-card-prize-label">Prize Pool</span>
-                    <strong className="level-card-prize-value">
-                      {formatLevelRupees(prizePool)}
-                    </strong>
+                  <div className="level-card-right">
+                    <div className="level-card-prize">
+                      <span className="level-card-prize-label">Prize Pool</span>
+                      <strong className="level-card-prize-value">
+                        {formatLevelRupees(prizePool)}
+                      </strong>
+                    </div>
+                    <button
+                      type="button"
+                      className="level-card-join-button"
+                      onClick={() => handleJoinClick(level)}
+                    >
+                      <span>JOIN NOW</span>
+                      <span className="level-card-join-arrow" aria-hidden="true">
+                        ›
+                      </span>
+                    </button>
                   </div>
-                  <button
-                    type="button"
-                    className="level-card-join-button"
-                    onClick={() => handleJoinClick(level)}
-                  >
-                    <span>JOIN NOW</span>
-                    <span className="level-card-join-arrow" aria-hidden="true">
-                      ›
-                    </span>
-                  </button>
-                </div>
-              </article>
-            );
-          })
-        )}
-      </div>
-    </AppFrame>
+                </article>
+              );
+            })
+          )}
+        </div>
+      </section>
+    </main>
+  );
+}
+
+export function OnlineLevelsPageShell({ appState = mockBootState }) {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const playersParam = searchParams.get("players");
+  const maxPlayers = playersParam === "4" ? 4 : 2;
+
+  useSoundUnlock();
+  useGlobalButtonClickSound();
+
+  return (
+    <OnlineLevelSelectScreen
+      appState={appState}
+      maxPlayers={maxPlayers}
+      onSelectLevel={(level) => {
+        navigateToHref(
+          router,
+          `/play/online/?players=${maxPlayers}&levelId=${encodeURIComponent(level.id)}&entryFee=${level.entryFee}`,
+        );
+      }}
+      onSwitchPlayers={(nextPlayers) => {
+        navigateToHref(router, `/levels/?players=${nextPlayers}`, {
+          replace: true,
+        });
+      }}
+      onGoHome={() => navigateToMenu(router)}
+    />
   );
 }
 
@@ -8279,10 +8152,9 @@ function OnlineBoardPageShell({ appState, configuredMaxPlayers }) {
     setIsOnlineBootstrapping(true);
     settledMatchIdRef.current = null;
     setOnlineRestartKey((currentKey) => currentKey + 1);
-    const baseRoute = maxPlayers === 2 ? PLAY_ROUTES.online2 : PLAY_ROUTES.online4;
     const nextRoute = levelIdParam
-      ? `${baseRoute}&levelId=${encodeURIComponent(levelIdParam)}&entryFee=${selectedEntryFee}`
-      : baseRoute;
+      ? `/play/online/?players=${maxPlayers}&levelId=${encodeURIComponent(levelIdParam)}&entryFee=${selectedEntryFee}`
+      : `/levels/?players=${maxPlayers}`;
     navigateToHref(router, nextRoute, { replace: true });
   }, [levelIdParam, maxPlayers, router, selectedEntryFee]);
   useMatchResultSound(match, onlineUserPlayerId);
@@ -8926,19 +8798,15 @@ function OnlineBoardPageShell({ appState, configuredMaxPlayers }) {
         appState={composedAppState}
         maxPlayers={maxPlayers}
         onSelectLevel={(level) => {
-          const baseRoute =
-            maxPlayers === 2 ? PLAY_ROUTES.online2 : PLAY_ROUTES.online4;
           navigateToHref(
             router,
-            `${baseRoute}&levelId=${encodeURIComponent(level.id)}&entryFee=${level.entryFee}`,
+            `/play/online/?players=${maxPlayers}&levelId=${encodeURIComponent(level.id)}&entryFee=${level.entryFee}`,
           );
         }}
         onSwitchPlayers={(nextPlayers) => {
-          navigateToHref(
-            router,
-            nextPlayers === 2 ? PLAY_ROUTES.online2 : PLAY_ROUTES.online4,
-            { replace: true },
-          );
+          navigateToHref(router, `/levels/?players=${nextPlayers}`, {
+            replace: true,
+          });
         }}
         onGoHome={returnToMenu}
       />

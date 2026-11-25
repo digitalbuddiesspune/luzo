@@ -7,6 +7,7 @@ import com.craft.ludo.shared.config.AppProperties
 import com.craft.ludo.shared.support.newId
 import com.craft.ludo.wallet.WalletReservation
 import com.craft.ludo.wallet.WalletService
+import com.craft.ludo.wallet.resolveLevelPrizePool
 import org.slf4j.LoggerFactory
 import org.springframework.data.mongodb.core.FindAndModifyOptions
 import org.springframework.data.mongodb.core.ReactiveMongoTemplate
@@ -61,6 +62,7 @@ class OnlineMatchmakingService(
         val levelId: String?,
         val levelName: String?,
         val entryFee: Long,
+        val prizePool: Long? = null,
     )
 
     fun joinOnlineMatch(
@@ -119,6 +121,7 @@ class OnlineMatchmakingService(
                         levelId = matched.id,
                         levelName = matched.name,
                         entryFee = matched.entryFee,
+                        prizePool = resolveLevelPrizePool(matched, maxPlayers, settings.platformFeePerPlayer),
                     ),
                 )
             }
@@ -386,6 +389,7 @@ class OnlineMatchmakingService(
             entryFee = level.entryFee,
             levelId = level.levelId,
             levelName = level.levelName,
+            prizePool = level.prizePool,
             ownerInstanceId = instanceCoordinator.instanceId,
             createdAt = now,
             updatedAt = now,
@@ -940,6 +944,7 @@ class OnlineMatchmakingService(
                         winnerUserId = winnerUserId,
                         reservations = room.walletReservations,
                         roomId = room.id,
+                        prizePoolOverride = room.prizePool,
                     )
                 }
                 ?: Mono.empty()
