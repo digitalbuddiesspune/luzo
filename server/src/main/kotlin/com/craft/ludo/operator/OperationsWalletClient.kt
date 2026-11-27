@@ -331,9 +331,11 @@ class OperationsWalletClient(
             body.path("balance"),
             body.path("availableBalance"),
             body.path("amount"),
+            body.path("message"),
             body.path("data").path("balance"),
             body.path("data").path("availableBalance"),
             body.path("data").path("amount"),
+            body.path("data").path("message"),
             body.path("wallet").path("balance"),
         )
         for (node in candidates) {
