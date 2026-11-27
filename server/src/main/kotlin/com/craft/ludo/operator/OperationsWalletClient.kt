@@ -161,9 +161,9 @@ class OperationsWalletClient(
         )
 
         return postInternal(OperationsWalletPaths.CREDIT_TRANSFER, body, tranid = tranid)
-            .doOnSuccess {
+            .doOnSuccess { responseBody ->
                 log.info(
-                    "Operations wallet credit-transfer (2052) accepted partnerCode={} gid={} bet={} win={} gameType={} ttype={} tranid={}",
+                    "Operations wallet credit-transfer (2052) accepted partnerCode={} gid={} bet={} win={} gameType={} ttype={} tranid={} response={}",
                     normalizedPartner,
                     normalizedGid,
                     bet,
@@ -171,6 +171,7 @@ class OperationsWalletClient(
                     gameType,
                     ttype,
                     tranid,
+                    responseBody,
                 )
             }
     }

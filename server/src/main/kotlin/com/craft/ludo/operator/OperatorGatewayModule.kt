@@ -369,7 +369,10 @@ class OperatorGatewayClient(
             .setScale(0, RoundingMode.HALF_UP)
             .longValueExact()
         val isRefund = message.description.contains("refund", ignoreCase = true)
-        val gameType = if (isRefund) OperationsGameTypes.REFUND else OperationsGameTypes.SPIN
+        // Per Game Developer Guide:
+        // - refund (ttype 2): bet = refunded amount, win = 0
+        // - win-only payout (bet: 0, win > 0, ttype 1): use game_type = "bonus" (spin expects bet > 0)
+        val gameType = if (isRefund) OperationsGameTypes.REFUND else OperationsGameTypes.BONUS
 
         operatorGatewayLogStream.publish(
             OperatorGatewayLogEvent(
