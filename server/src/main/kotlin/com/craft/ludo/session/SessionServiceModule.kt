@@ -46,6 +46,13 @@ data class ExternalSessionBindingDocument(
     val operatorUserId: String? = null,
     val operatorId: String? = null,
     val operatorGameId: Int? = null,
+    val partnerCode: String? = null,
+    val gid: String? = null,
+    val gameCode: String? = null,
+    val currency: String = "INR",
+    val lang: String = "en",
+    val extsess: String? = null,
+    val closeUrl: String? = null,
     val validatedAt: Instant,
 )
 
@@ -76,6 +83,38 @@ class SessionBindingService(
                 )
                 bindingRepository.save(binding).thenReturn(validated)
             }
+    }
+
+    fun bindLaunchSession(
+        sessionToken: String,
+        userId: String,
+        displayName: String,
+        partnerCode: String?,
+        gid: String?,
+        gameCode: String?,
+        operatorUserId: String?,
+        currency: String,
+        lang: String,
+        extsess: String?,
+        closeUrl: String?,
+    ): Mono<ExternalSessionBindingDocument> {
+        val binding = ExternalSessionBindingDocument(
+            sessionToken = sessionToken.trim(),
+            userId = userId,
+            displayName = displayName,
+            operatorUserId = operatorUserId ?: userId,
+            operatorId = partnerCode,
+            operatorGameId = gid?.toIntOrNull(),
+            partnerCode = partnerCode,
+            gid = gid,
+            gameCode = gameCode,
+            currency = currency,
+            lang = lang,
+            extsess = extsess,
+            closeUrl = closeUrl,
+            validatedAt = Instant.now(clock),
+        )
+        return bindingRepository.save(binding)
     }
 
     fun findBindingBySessionToken(sessionToken: String): Mono<ExternalSessionBindingDocument> {

@@ -9,6 +9,7 @@ data class AppProperties(
     val gameplay: GameplayProperties = GameplayProperties(),
     val wallet: WalletProperties = WalletProperties(),
     val operator: OperatorProperties = OperatorProperties(),
+    val operationsWallet: OperationsWalletProperties = OperationsWalletProperties(),
     val instance: InstanceProperties = InstanceProperties(),
     val realtime: RealtimeProperties = RealtimeProperties(),
     val web: WebProperties = WebProperties(),
@@ -99,6 +100,15 @@ data class OperatorProperties(
     val creditDeadLetterRoutingKey: String = "games_cashout.dlq",
     val creditMaxRetries: Int = 5,
     val creditRetryDelayMillis: Long = 5_000,
+)
+
+data class OperationsWalletProperties(
+    val enabled: Boolean = false,
+    /** Operations service base URL (e.g. https://operations.dpbossking.com). */
+    val baseUrl: String = "https://operations.dpbossking.com",
+    /** Server-to-server X-Internal-Key header value. */
+    val internalKey: String = "",
+    val timeoutSeconds: Long = 5,
 )
 
 data class InstanceProperties(

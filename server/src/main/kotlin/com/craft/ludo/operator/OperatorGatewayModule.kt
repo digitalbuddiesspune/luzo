@@ -112,6 +112,7 @@ class OperatorGatewayClient(
     private val webClientBuilder: WebClient.Builder,
     private val operatorGatewayLogStream: OperatorGatewayLogStream,
     private val providerGameSdkClient: ProviderGameSdkClient,
+    private val operationsWalletClient: OperationsWalletClient,
     @Suppress("unused") private val rabbitTemplate: RabbitTemplate,
     appProperties: AppProperties,
 ) {
@@ -126,6 +127,10 @@ class OperatorGatewayClient(
         val debitAmount = request.amount
             .setScale(0, RoundingMode.HALF_UP)
             .longValueExact()
+
+        if (operationsWalletClient.isEnabled()) {
+            return debitViaOperationsWallet(request, debitAmount)
+        }
 
         if (providerGameSdkClient.hasWalletAccess()) {
             return debitViaProviderSdk(request, debitAmount)
@@ -248,6 +253,10 @@ class OperatorGatewayClient(
     }
 
     fun enqueueCredit(message: OperatorCreditQueueMessage): Mono<Void> {
+        if (operationsWalletClient.isEnabled()) {
+            return creditViaOperationsWallet(message)
+        }
+
         if (providerGameSdkClient.hasWalletAccess()) {
             return creditViaProviderSdk(message)
         }
@@ -298,6 +307,124 @@ class OperatorGatewayClient(
         }
 
         return creditViaHttp(creditUrl, message)
+    }
+
+    private fun debitViaOperationsWallet(request: OperatorDebitRequest, debitAmount: Long): Mono<String> {
+        operatorGatewayLogStream.publish(
+            OperatorGatewayLogEvent(
+                id = "operator_debit:${request.txnId}",
+                eventType = "operator_debit_api_called",
+                action = "Operations wallet debit (2052) called",
+                gameUserId = request.gameUserId,
+                userId = request.userId,
+                operatorId = request.operatorId,
+                txnId = request.txnId,
+                amount = request.amount,
+                description = request.description,
+                target = OperationsWalletPaths.CREDIT_TRANSFER,
+                createdAt = Instant.now(),
+                ip = request.ip,
+                gameId = request.gameId,
+                txnType = request.txnType,
+            ),
+        )
+
+        return operationsWalletClient.creditTransfer(
+            token = request.token,
+            partnerCode = request.operatorId,
+            gid = request.gameId,
+            bet = debitAmount,
+            win = 0L,
+            gameType = OperationsGameTypes.SPIN,
+            tranid = request.txnId,
+            ttype = 1,
+            userId = request.userId,
+            roundId = request.roundId,
+        ).map {
+            operatorGatewayLogStream.publish(
+                OperatorGatewayLogEvent(
+                    id = "operator_debit_accepted:${request.txnId}",
+                    eventType = "operator_debit_api_accepted",
+                    action = "Operations wallet debit (2052) accepted",
+                    gameUserId = request.gameUserId,
+                    userId = request.userId,
+                    operatorId = request.operatorId,
+                    txnId = request.txnId,
+                    amount = request.amount,
+                    description = request.description,
+                    target = OperationsWalletPaths.CREDIT_TRANSFER,
+                    createdAt = Instant.now(),
+                    ip = request.ip,
+                    gameId = request.gameId,
+                    txnType = request.txnType,
+                ),
+            )
+            request.txnId
+        }
+    }
+
+    private fun creditViaOperationsWallet(message: OperatorCreditQueueMessage): Mono<Void> {
+        val amountDecimal = message.amount.toBigDecimalOrNull() ?: BigDecimal.ZERO
+        val creditAmount = amountDecimal
+            .setScale(0, RoundingMode.HALF_UP)
+            .longValueExact()
+        val isRefund = message.description.contains("refund", ignoreCase = true)
+        val gameType = if (isRefund) OperationsGameTypes.REFUND else OperationsGameTypes.SPIN
+
+        operatorGatewayLogStream.publish(
+            OperatorGatewayLogEvent(
+                id = "operator_credit:${message.txn_id}",
+                eventType = "operator_credit_api_called",
+                action = "Operations wallet ${if (isRefund) "refund" else "win"} (2052) called",
+                gameUserId = message.user_id,
+                userId = message.user_id,
+                operatorId = message.operatorId,
+                txnId = message.txn_id,
+                txnRefId = message.txn_ref_id,
+                amount = amountDecimal,
+                description = message.description,
+                target = OperationsWalletPaths.CREDIT_TRANSFER,
+                createdAt = Instant.now(),
+                ip = message.ip,
+                gameId = message.game_id.toIntOrNull(),
+                txnType = message.txn_type,
+            ),
+        )
+
+        // Refund (ttype 2): bet = refunded stake, win = 0, unique refund tranid.
+        // Win settlement (ttype 1): bet = 0, win = payout amount, partner_code + user_id included for late wins.
+        return operationsWalletClient.creditTransfer(
+            token = message.token,
+            partnerCode = message.operatorId,
+            gid = message.game_id,
+            bet = if (isRefund) creditAmount else 0L,
+            win = if (isRefund) 0L else creditAmount,
+            gameType = gameType,
+            tranid = message.txn_id,
+            ttype = if (isRefund) 2 else 1,
+            userId = message.user_id,
+            roundId = message.round_id,
+        ).doOnSuccess {
+            operatorGatewayLogStream.publish(
+                OperatorGatewayLogEvent(
+                    id = "operator_credit_accepted:${message.txn_id}",
+                    eventType = "operator_credit_api_accepted",
+                    action = "Operations wallet ${if (isRefund) "refund" else "win"} (2052) accepted",
+                    gameUserId = message.user_id,
+                    userId = message.user_id,
+                    operatorId = message.operatorId,
+                    txnId = message.txn_id,
+                    txnRefId = message.txn_ref_id,
+                    amount = amountDecimal,
+                    description = message.description,
+                    target = OperationsWalletPaths.CREDIT_TRANSFER,
+                    createdAt = Instant.now(),
+                    ip = message.ip,
+                    gameId = message.game_id.toIntOrNull(),
+                    txnType = message.txn_type,
+                ),
+            )
+        }.then()
     }
 
     private fun creditViaHttp(creditUrl: String, message: OperatorCreditQueueMessage): Mono<Void> {

@@ -1,6 +1,7 @@
 package com.craft.ludo.identity
 
 import com.craft.ludo.shared.api.DomainException
+import com.craft.ludo.operator.OperationsWalletClient
 import com.craft.ludo.operator.OperatorGatewayClient
 import com.craft.ludo.session.SessionBindingService
 import com.craft.ludo.shared.config.AppProperties
@@ -37,6 +38,12 @@ data class GuestSessionDocument(
     val operatorId: String? = null,
     val operatorCurrency: String? = null,
     val operatorGameId: Int? = null,
+    val partnerCode: String? = null,
+    val gid: String? = null,
+    val gameCode: String? = null,
+    val lang: String? = null,
+    val extsess: String? = null,
+    val closeUrl: String? = null,
     val createdAt: Instant,
     val updatedAt: Instant,
     val expiresAt: Instant,
@@ -70,10 +77,26 @@ data class GuestSessionResponse(
     val displayName: String,
     val expiresAt: Instant,
     val isOperatorSession: Boolean = false,
+    val partnerCode: String? = null,
+    val gid: String? = null,
+    val gameCode: String? = null,
+    val currency: String? = null,
+    val lang: String? = null,
+    val closeUrl: String? = null,
 )
 
 data class ValidateSessionRequest(
-    val sessionToken: String,
+    val token: String? = null,
+    val sessionToken: String? = null,
+    val partnerCode: String? = null,
+    val gid: String? = null,
+    val gameCode: String? = null,
+    val username: String? = null,
+    val userId: String? = null,
+    val currency: String? = null,
+    val lang: String? = null,
+    val extsess: String? = null,
+    val closeUrl: String? = null,
     val gameId: Int? = null,
 )
 
@@ -82,6 +105,7 @@ class IdentityService(
     private val guestSessionRepository: GuestSessionRepository,
     private val walletService: WalletService,
     private val operatorGatewayClient: OperatorGatewayClient,
+    private val operationsWalletClient: OperationsWalletClient,
     private val sessionBindingService: SessionBindingService,
     private val clock: Clock,
     appProperties: AppProperties,
@@ -113,38 +137,110 @@ class IdentityService(
             .map(::toResponse)
     }
 
-    fun validateExternalSession(sessionToken: String, gameId: Int? = null): Mono<GuestSessionResponse> {
-        if (!externalSessionServiceEnabled) {
-            return Mono.error(
-                DomainException(
-                    HttpStatus.SERVICE_UNAVAILABLE,
-                    "External session service is disabled. Enable APP_SESSION_SERVICE_ENABLED or use guest mode.",
-                ),
-            )
-        }
-        val normalizedToken = sessionToken.trim()
+    fun validateExternalSession(request: ValidateSessionRequest): Mono<GuestSessionResponse> {
+        val normalizedToken = (request.token ?: request.sessionToken)?.trim().orEmpty()
         if (normalizedToken.isBlank()) {
-            return Mono.error(DomainException(HttpStatus.BAD_REQUEST, "sessionToken is required."))
+            return Mono.error(DomainException(HttpStatus.BAD_REQUEST, "token is required."))
         }
 
-        val resolvedGameId = gameId ?: operatorGatewayClient.gameId()
-        return sessionBindingService.validateAndBind(normalizedToken, resolvedGameId)
-            .flatMap { validated ->
-                walletService.initializeOperatorWallet(
-                    userId = validated.userId,
-                    balance = validated.balance,
-                    currency = validated.currency,
-                ).thenReturn(validated)
+        val partnerCode = request.partnerCode?.trim()?.uppercase()?.takeIf { it.isNotEmpty() }
+            ?: return Mono.error(DomainException(HttpStatus.BAD_REQUEST, "partner_code is required."))
+        val gid = request.gid?.trim()?.takeIf { it.isNotEmpty() }
+            ?: request.gameId?.toString()
+            ?: return Mono.error(DomainException(HttpStatus.BAD_REQUEST, "gid is required."))
+        val gameCode = request.gameCode?.trim()?.takeIf { it.isNotEmpty() }
+            ?: return Mono.error(DomainException(HttpStatus.BAD_REQUEST, "game_code is required."))
+        val rawUsername = request.username?.trim()?.takeIf { it.isNotEmpty() }
+            ?: return Mono.error(DomainException(HttpStatus.BAD_REQUEST, "username is required."))
+
+        val operatorUserId = request.userId?.trim()?.takeIf { it.isNotEmpty() }
+        val resolvedUserId = operatorUserId
+            ?.let { "${partnerCode.lowercase()}:$it" }
+            ?: "${partnerCode.lowercase()}:${rawUsername.lowercase().replace(Regex("[^a-z0-9_-]+"), "_")}"
+        val displayName = rawUsername.replace(Regex("\\s+"), " ").take(24)
+        val currency = request.currency?.trim()?.uppercase()?.takeIf { it.length == 3 } ?: "INR"
+        val lang = request.lang?.trim()?.lowercase()?.takeIf { it.isNotEmpty() } ?: "en"
+        val extsess = request.extsess?.trim()?.takeIf { it.isNotEmpty() }
+        val closeUrl = request.closeUrl?.trim()?.takeIf { it.isNotEmpty() }
+        val now = Instant.now(clock)
+        val expiresAt = now.plus(16, ChronoUnit.HOURS)
+
+        return sessionBindingService.bindLaunchSession(
+            sessionToken = normalizedToken,
+            userId = resolvedUserId,
+            displayName = displayName,
+            partnerCode = partnerCode,
+            gid = gid,
+            gameCode = gameCode,
+            operatorUserId = operatorUserId ?: resolvedUserId,
+            currency = currency,
+            lang = lang,
+            extsess = extsess,
+            closeUrl = closeUrl,
+        )
+            .then(
+                guestSessionRepository.findBySessionToken(normalizedToken)
+                    .map { existing ->
+                        existing.copy(
+                            userId = resolvedUserId,
+                            displayName = displayName,
+                            operatorToken = normalizedToken,
+                            operatorUserId = operatorUserId ?: resolvedUserId,
+                            operatorId = partnerCode,
+                            operatorCurrency = currency,
+                            operatorGameId = gid.toIntOrNull() ?: operatorGatewayClient.gameId(),
+                            partnerCode = partnerCode,
+                            gid = gid,
+                            gameCode = gameCode,
+                            lang = lang,
+                            extsess = extsess,
+                            closeUrl = closeUrl,
+                            updatedAt = now,
+                            expiresAt = expiresAt,
+                        )
+                    }
+                    .switchIfEmpty(
+                        Mono.just(
+                            GuestSessionDocument(
+                                sessionToken = normalizedToken,
+                                userId = resolvedUserId,
+                                displayName = displayName,
+                                operatorToken = normalizedToken,
+                                operatorUserId = operatorUserId ?: resolvedUserId,
+                                operatorId = partnerCode,
+                                operatorCurrency = currency,
+                                operatorGameId = gid.toIntOrNull() ?: operatorGatewayClient.gameId(),
+                                partnerCode = partnerCode,
+                                gid = gid,
+                                gameCode = gameCode,
+                                lang = lang,
+                                extsess = extsess,
+                                closeUrl = closeUrl,
+                                createdAt = now,
+                                updatedAt = now,
+                                expiresAt = expiresAt,
+                            ),
+                        ),
+                    )
+                    .flatMap(guestSessionRepository::save),
+            )
+            .flatMap { savedSession ->
+                if (operationsWalletClient.isEnabled()) {
+                    // Fetch initial balance (opType 2051) on game boot before enabling bets.
+                    operationsWalletClient.getBalance(normalizedToken, partnerCode)
+                        .flatMap { balance ->
+                            walletService.initializeOperatorWallet(
+                                userId = savedSession.userId,
+                                balance = balance,
+                                currency = currency,
+                            )
+                        }
+                        .thenReturn(savedSession)
+                } else {
+                    walletService.ensureAccount(savedSession.userId).thenReturn(savedSession)
+                }
             }
-            .map { validated ->
-                GuestSessionResponse(
-                    userId = validated.userId,
-                    sessionToken = validated.sessionToken,
-                    displayName = validated.displayName,
-                    expiresAt = Instant.now(clock).plus(16, ChronoUnit.HOURS),
-                    isOperatorSession = true,
-                )
-            }
+            .map(::toResponse)
     }
 
     fun getCurrentSession(sessionToken: String): Mono<GuestSessionResponse> {
@@ -220,6 +316,12 @@ class IdentityService(
             displayName = session.displayName,
             expiresAt = session.expiresAt,
             isOperatorSession = !session.operatorToken.isNullOrBlank(),
+            partnerCode = session.partnerCode,
+            gid = session.gid,
+            gameCode = session.gameCode,
+            currency = session.operatorCurrency,
+            lang = session.lang,
+            closeUrl = session.closeUrl,
         )
     }
 
@@ -276,7 +378,7 @@ class IdentityController(
     fun validateSession(
         @RequestBody request: ValidateSessionRequest,
     ): Mono<GuestSessionResponse> {
-        return identityService.validateExternalSession(request.sessionToken, request.gameId)
+        return identityService.validateExternalSession(request)
     }
 
     @GetMapping("/me")

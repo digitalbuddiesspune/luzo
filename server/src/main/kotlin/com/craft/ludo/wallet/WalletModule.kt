@@ -3,6 +3,7 @@ package com.craft.ludo.wallet
 import com.craft.ludo.identity.SessionPrincipalResolver
 import com.craft.ludo.identity.GuestSessionDocument
 import com.craft.ludo.identity.GuestSessionRepository
+import com.craft.ludo.operator.OperationsWalletClient
 import com.craft.ludo.operator.OperatorCreditQueueMessage
 import com.craft.ludo.operator.OperatorDebitRequest
 import com.craft.ludo.operator.OperatorGatewayClient
@@ -310,6 +311,7 @@ class WalletService(
     private val sessionBindingService: SessionBindingService,
     private val providerGameSdkClient: ProviderGameSdkClient,
     private val operatorGatewayClient: OperatorGatewayClient,
+    private val operationsWalletClient: OperationsWalletClient,
     private val mongoTemplate: ReactiveMongoTemplate,
     private val transactionalOperator: TransactionalOperator,
     private val clock: Clock,
@@ -1117,6 +1119,25 @@ class WalletService(
         userId: String,
         platformSessionToken: String? = null,
     ): Mono<WalletAccountDocument> {
+        if (operationsWalletClient.isEnabled()) {
+            return resolveOperatorSession(userId, platformSessionToken)
+                .flatMap { session ->
+                    val token = session.operatorToken?.trim().orEmpty()
+                    val partnerCode = (session.partnerCode ?: session.operatorId)?.trim().orEmpty()
+                    if (token.isBlank() || partnerCode.isBlank()) {
+                        return@flatMap walletAccountRepository.findByUserId(userId)
+                    }
+                    operationsWalletClient.getBalance(token, partnerCode)
+                        .flatMap { balance ->
+                            persistOperatorWalletBalance(
+                                userId,
+                                balance,
+                                session.operatorCurrency ?: walletCurrency,
+                            )
+                        }
+                }
+        }
+
         if (sessionBindingService.isEnabled() && !platformSessionToken.isNullOrBlank()) {
             return sessionBindingService.validateAndBind(platformSessionToken.trim())
                 .flatMap { validated ->

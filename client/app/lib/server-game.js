@@ -1,13 +1,6 @@
-import { ProviderGameSDK } from "@gamotech/game-sdk-client";
-
 const API_BASE_URL =
   process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/$/, "") ??
   "http://127.0.0.1:8082";
-const PROVIDER_API_BASE_URL =
-  (
-    process.env.NEXT_PUBLIC_PROVIDER_API_URL ??
-    process.env.NEXT_PUBLIC_PROVIDER_API_BASE_URL
-  )?.replace(/\/$/, "") ?? "https://api.dpbossking.com/api/v1";
 const OPERATOR_PLATFORM_ENABLED = ["1", "true", "enabled", "yes"].includes(
   (process.env.NEXT_PUBLIC_OPERATOR_PLATFORM_ENABLED ?? "").toLowerCase(),
 );
@@ -18,10 +11,40 @@ const CORS_DEBUG_ENABLED = ["1", "true", "enabled", "yes"].includes(
 const SESSION_STORAGE_KEY = "ludo.guest-session";
 export const OPERATOR_PLATFORM_ACCESS_MESSAGE = "This page is not accessible.";
 
-let activeProviderSdk = null;
-
 export function getProviderSdk() {
-  return activeProviderSdk;
+  return null;
+}
+
+export function getLaunchCloseUrl() {
+  const stored = readStoredSession();
+  return stored?.closeUrl || null;
+}
+
+export function exitGame(closeUrl = getLaunchCloseUrl()) {
+  if (typeof window === "undefined") {
+    return;
+  }
+  if (!closeUrl) {
+    return window.close();
+  }
+  try {
+    (window.top || window).location.href = closeUrl;
+  } catch {
+    window.location.href = closeUrl;
+  }
+}
+
+export function isSessionExpiredError(error) {
+  const status = error?.details?.status;
+  const message = String(error?.message || "").toUpperCase();
+  return (
+    status === 401 ||
+    message.includes("ERR-0011") ||
+    message.includes("ERR-0012") ||
+    message.includes("ERR-0013") ||
+    message.includes("SESSION INVALID") ||
+    message.includes("SESSION EXPIRED")
+  );
 }
 
 const WALLET_TRANSACTION_SIGNS = {
@@ -418,19 +441,27 @@ function readOperatorLaunchParams() {
   }
 
   const params = new URLSearchParams(window.location.search);
-  const sessionToken =
-    params.get("sessionToken")?.trim() ||
-    params.get("session_token")?.trim();
-  const rawGameId = params.get("game_id") ?? params.get("gameId");
-  const gameId = Number(rawGameId ?? 2);
+  const token = params.get("token")?.trim();
+  const partnerCode = params.get("partner_code")?.trim();
+  const gid = params.get("gid")?.trim();
+  const gameCode = params.get("game_code")?.trim();
+  const username = params.get("username")?.trim();
 
-  if (!sessionToken) {
+  if (!token) {
     return null;
   }
 
   return {
-    sessionToken,
-    gameId: Number.isFinite(gameId) && gameId > 0 ? gameId : 2,
+    token,
+    partnerCode: partnerCode || "",
+    gid: gid || "",
+    gameCode: gameCode || "",
+    username: username || "",
+    userId: params.get("user_id")?.trim() || null,
+    currency: params.get("currency")?.trim() || "INR",
+    lang: params.get("lang")?.trim() || "en",
+    extsess: params.get("extsess")?.trim() || null,
+    closeUrl: params.get("close_url")?.trim() || null,
   };
 }
 
@@ -445,33 +476,45 @@ function normalizeSession(sessionResponse, extra = {}) {
     displayName: sessionResponse.displayName,
     expiresAt: sessionResponse.expiresAt,
     isOperatorSession: Boolean(sessionResponse.isOperatorSession),
+    partnerCode: sessionResponse.partnerCode ?? extra.partnerCode ?? null,
+    gid: sessionResponse.gid ?? extra.gid ?? null,
+    gameCode: sessionResponse.gameCode ?? extra.gameCode ?? null,
+    currency: sessionResponse.currency ?? extra.currency ?? "INR",
+    lang: sessionResponse.lang ?? extra.lang ?? "en",
+    closeUrl: sessionResponse.closeUrl ?? extra.closeUrl ?? null,
     ...extra,
   };
 }
 
-async function attachProviderSdk(sessionToken) {
-  const providerSdk = new ProviderGameSDK({ apiBaseUrl: PROVIDER_API_BASE_URL });
-  await providerSdk.init(sessionToken);
-  providerSdk.attachUnloadHandler();
-  activeProviderSdk = providerSdk;
-  return providerSdk;
-}
-
-async function bootstrapOperatorSession(sessionToken, gameId) {
-  const providerSdk = await attachProviderSdk(sessionToken);
-
+async function bootstrapOperatorSession(launchParams) {
+  // Security Rule: never call /api/v1/wallet/* directly from the browser.
+  // Forward the launch session params to our game backend only.
   const operatorSession = await requestJson("/api/v1/identity/session/validate", {
     method: "POST",
     body: {
-      sessionToken,
-      gameId,
+      token: launchParams.token,
+      partnerCode: launchParams.partnerCode,
+      gid: launchParams.gid,
+      gameCode: launchParams.gameCode,
+      username: launchParams.username,
+      userId: launchParams.userId,
+      currency: launchParams.currency,
+      lang: launchParams.lang,
+      extsess: launchParams.extsess,
+      closeUrl: launchParams.closeUrl,
     },
   });
 
   const normalizedSession = normalizeSession(operatorSession, {
-    operatorGameId: gameId,
-    operatorId: providerSdk.operatorId,
-    playerId: providerSdk.playerId,
+    partnerCode: launchParams.partnerCode,
+    gid: launchParams.gid,
+    gameCode: launchParams.gameCode,
+    currency: launchParams.currency,
+    lang: launchParams.lang,
+    extsess: launchParams.extsess,
+    closeUrl: launchParams.closeUrl,
+    operatorId: launchParams.partnerCode,
+    playerId: launchParams.userId || operatorSession.userId,
   });
 
   storeSession(normalizedSession);
@@ -484,29 +527,26 @@ async function refreshStoredSession(storedSession) {
   });
 
   const refreshedSession = normalizeSession(currentSession, {
-    operatorGameId: storedSession.operatorGameId,
+    partnerCode: storedSession.partnerCode,
+    gid: storedSession.gid,
+    gameCode: storedSession.gameCode,
+    currency: storedSession.currency,
+    lang: storedSession.lang,
+    extsess: storedSession.extsess,
+    closeUrl: storedSession.closeUrl,
     operatorId: storedSession.operatorId,
     playerId: storedSession.playerId,
   });
-
-  if (refreshedSession.isOperatorSession || storedSession.isOperatorSession) {
-    await attachProviderSdk(refreshedSession.sessionToken);
-  }
 
   storeSession(refreshedSession);
   return refreshedSession;
 }
 
 export async function ensureGuestSession(defaultDisplayName) {
-  const operatorLaunch = OPERATOR_PLATFORM_ENABLED
-    ? readOperatorLaunchParams()
-    : null;
+  const operatorLaunch = readOperatorLaunchParams();
 
   if (operatorLaunch) {
-    return bootstrapOperatorSession(
-      operatorLaunch.sessionToken,
-      operatorLaunch.gameId,
-    );
+    return bootstrapOperatorSession(operatorLaunch);
   }
 
   const storedSession = readStoredSession();

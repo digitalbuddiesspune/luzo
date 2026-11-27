@@ -17,13 +17,16 @@ import { Dice3D } from "@/app/components/dice-3d";
 import {
   createPrivateRoom as createPrivateRoomRequest,
   ensureGuestSession,
+  exitGame,
   fetchGameLevels,
   fetchMatchSnapshot,
   fetchPrivateRoomState,
   fetchWalletOverview,
   formatRoomIdLabel,
+  getLaunchCloseUrl,
   getMatchEndNoteForRoom,
   isOperatorPlatformEnabled,
+  isSessionExpiredError,
   OPERATOR_PLATFORM_ACCESS_MESSAGE,
   joinPrivateRoom as joinPrivateRoomRequest,
   joinOnlineMatch,
@@ -3839,6 +3842,7 @@ function ProviderOpeningScreen({ message = "Loading game..." }) {
 }
 
 function OperatorAccessBlockedScreen({ message }) {
+  const closeUrl = getLaunchCloseUrl();
   return (
     <AppFrame
       screenClassName="screen-menu screen-access-blocked"
@@ -3846,6 +3850,16 @@ function OperatorAccessBlockedScreen({ message }) {
     >
       <section className="access-blocked-panel" role="alert">
         <strong>{message}</strong>
+        {closeUrl ? (
+          <button
+            type="button"
+            className="level-card-join-button"
+            style={{ marginTop: "1rem" }}
+            onClick={() => exitGame(closeUrl)}
+          >
+            <span>Return to Lobby</span>
+          </button>
+        ) : null}
       </section>
     </AppFrame>
   );
@@ -8357,6 +8371,18 @@ function OnlineBoardPageShell({ appState, configuredMaxPlayers }) {
           setStatusMessage(
             error.message || "Unable to connect to the game server.",
           );
+          // Halt wagering immediately if the operator session is invalid/expired (ERR-0011/0012/0013).
+          if (isSessionExpiredError(error)) {
+            setLobbyRoom(null);
+            setMatch(null);
+            const closeUrl = getLaunchCloseUrl();
+            if (closeUrl) {
+              exitGame(closeUrl);
+            } else {
+              navigateToMenu(router);
+            }
+            return;
+          }
           // Do not keep retrying when the player cannot afford the entry fee.
           if (isInsufficientBalanceError(error)) {
             setLobbyRoom(null);

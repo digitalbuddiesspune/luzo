@@ -119,6 +119,12 @@ app:
     credit-max-retries: ${APP_OPERATOR_CREDIT_MAX_RETRIES:5}
     credit-retry-delay-millis: ${APP_OPERATOR_CREDIT_RETRY_DELAY_MILLIS:5000}
 
+  operations-wallet:
+    enabled: ${APP_OPERATIONS_WALLET_ENABLED:false}
+    base-url: ${OPERATIONS_API_URL:${APP_OPERATIONS_WALLET_BASE_URL:https://operations.dpbossking.com}}
+    internal-key: ${OPERATIONS_INTERNAL_KEY:${INTERNAL_SERVICE_KEY:${APP_OPERATIONS_WALLET_INTERNAL_KEY:}}}
+    timeout-seconds: ${APP_OPERATIONS_WALLET_TIMEOUT_SECONDS:5}
+
   instance:
     id: ${APP_INSTANCE_ID:}
     lock-key-prefix: ${APP_INSTANCE_LOCK_KEY_PREFIX:potludo:lock}
